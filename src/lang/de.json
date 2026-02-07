@@ -1,0 +1,61 @@
+{
+  "NAS": {
+    "conditions": {
+      "list": {
+        "Anchored": {
+          "label": "Verankert",
+          "description": "<p>Kann nicht durch äußere Kräfte bewegt werden, auch nicht durch Zauber wie Telekinese.</p><p>Kann keine Aktionen ausführen, die eine Bewegung erfordern, kann aber trotzdem angreifen oder zaubern, wenn sie keine Positionsveränderung erfordern.</p>"
+        },
+        "Confused": {
+          "Effects": {
+            "1": "verhält sich normal",
+            "2": "macht nichts, außer zusammenhangslos vor sich hin zu brabbeln",
+            "3a": "zieht sein {itemName} und fügt sich selbst ${damage} schaden zu.",
+            "3b": "schlägt sich selbst mit der Faust ins Gesicht und verursacht {damage} Wuchtschaden.",
+            "4": "greift die nächste Kreatur an"
+          }
+        },
+        "Disabled": {
+          "label": "Kampfunfähig",
+          "description": "<p>Hat 0 TP oder negative TP, ist aber stabilisiert und bei Bewusstsein.</p><p>kann jede Runde eine Bewegungsaktion oder eine Standard-Aktion ausführen (nicht aber beides). kann Schnelle, Augenblickliche und Freie Aktionen ausführen.</p>"
+        },
+        "Dying": {
+          "label": "Sterbend",
+          "description": "<p>Hat negative Trefferpunkten und ist nicht stabilisiert.</p><p>Kann keine Aktionen ausführen.</p><p>Wenn Charakter negative TP = ihrem Konstitutionswert hat, stirbt er.</p>"
+        },
+        "EnergyDrained": {
+          "label": "Lebenskraftentzug",
+          "description": "<p>Hat eine oder mehrere Negative Stufen</p>"
+        },
+        "Fascinated": {
+          "label": "Fasziniert",
+          "description": "<p>Steht oder sitzt ganz ruhig und macht nichts, außer den faszinierenden Effekt zu beobachten</p><p>-4 auf Wahrnehmung</p>"
+        },
+        "FlatFooted": {
+          "label": "Auf dem falschen Fuß",
+          "description": "<p>Kann keine Gelegenheitsangriffe ausführen</p><p>Verliert GE-Bonus auf AC</p>"
+        },
+        "Immobilized": {
+          "label": "Bewegungsunfähig",
+          "description": "<p>Kann sich nicht vom Fleck bewegen</p>"
+        },
+        "Petrified": {
+          "label": "Versteinert",
+          "description": "<p>Wurde zu Stein verwandelt und ist bewusstlos</p>"
+        },
+        "Slowed": {
+          "label": "Verlangsamt",
+          "description": "<p>– 1 auf Angriffswurfe, RK und Reflexwürfe.</p><p>Kann nur eine Bewegungsaktion oder Standard-Aktion ausführen.</p><p>Grundbewegungsrate halbiert.</p>"
+        },
+        "Stable": {
+          "label": "Stabilisiert",
+          "description": "<p>hat negative Trefferpunkte, verliert aber keine weiteren und ist bewusstlos</p>"
+        },
+        "Unconscious": {
+          "label": "Bewusstlos",
+          "description": "<p>Ist durch negative TP oder nichttödlichen Schaden KO geschlagen und hilflos</p>"
+        }
+      }
+    }
+  }
+}

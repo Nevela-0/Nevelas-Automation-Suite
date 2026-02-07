@@ -1,0 +1,48 @@
+<form>
+    <h2>{{localize "NAS.forms.damagePriorityForm.title"}}</h2>
+    <p class="description">
+        {{localize "NAS.settings.damageTypePriority.hint"}}
+    </p>
+    <table class="damage-priority-table">
+        <thead>
+            <tr>
+                <th>{{localize "NAS.forms.damagePriorityForm.labels.drType"}}</th>
+                <th>
+                    <span class="tooltip" data-tooltip="{{localize 'NAS.forms.damagePriorityForm.tooltips.enhancement'}}">{{localize "NAS.forms.damagePriorityForm.labels.enhancement"}}</span>
+                </th>
+            </tr>
+        </thead>
+        <tbody>
+            {{#each priorityLevels}}
+            <tr>
+                <td>
+                    <div class="input-group">
+                        <input type="text" name="priority.{{@index}}" 
+                               value="{{this.join ', '}}" 
+                               disabled 
+                               {{#if this.length}}data-tooltip="Types<hr>{{#each this}}{{this}}<br>{{/each}}"{{/if}} />
+                        <button type="button" class="edit-row" data-index="{{@index}}">
+                            <i class="fas fa-edit"></i>
+                        </button>
+                    </div>
+                </td>
+                <td>
+                    {{@index}}
+                    <button type="button" class="delete-row" data-index="{{@index}}">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </td>
+            </tr>
+            {{/each}}
+        </tbody>
+    </table>
+    <button type="button" class="add-row">{{localize "NAS.forms.damagePriorityForm.buttons.addRow"}}</button>
+    <button type="button" class="reset-defaults">{{localize "NAS.forms.damagePriorityForm.buttons.resetDefaults"}}</button>
+    <button type="submit">{{localize "NAS.common.buttons.save"}}</button>
+</form>
+
+
+
+
+
+

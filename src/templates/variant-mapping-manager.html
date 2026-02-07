@@ -1,0 +1,36 @@
+<form>
+  <p class="notes">View and remove remembered variant assignments for spells and abilities. Check entries to remove and click Save.</p>
+  <table style="width:100%; border-collapse: collapse;">
+    <thead>
+      <tr>
+        <th style="text-align:left; border-bottom: 1px solid #ccc; padding: 4px 0;">Spell / Ability</th>
+        <th style="text-align:left; border-bottom: 1px solid #ccc; padding: 4px 0;">Allies Variant</th>
+        <th style="text-align:left; border-bottom: 1px solid #ccc; padding: 4px 0;">Foes Variant</th>
+        <th style="text-align:left; border-bottom: 1px solid #ccc; padding: 4px 0;">Switching</th>
+        <th style="text-align:left; border-bottom: 1px solid #ccc; padding: 4px 0;">Per-Target</th>
+        <th style="text-align:center; border-bottom: 1px solid #ccc; padding: 4px 0;">Remove</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{#each mappings as |m|}}
+      <tr>
+        <td style="padding: 6px 0;">{{m.name}}</td>
+        <td style="padding: 6px 0;">{{m.allies}}</td>
+        <td style="padding: 6px 0;">{{m.foes}}</td>
+        <td style="padding: 6px 0;">{{m.switching}}</td>
+        <td style="padding: 6px 0;">{{m.perTarget}}</td>
+        <td style="text-align:center; padding: 6px 0;"><input type="checkbox" name="del-{{m.key}}"/></td>
+      </tr>
+      {{/each}}
+      {{#unless mappings.length}}
+      <tr>
+        <td colspan="6" style="padding: 8px 0; color: #888;">No saved mappings.</td>
+      </tr>
+      {{/unless}}
+    </tbody>
+  </table>
+  <footer class="sheet-footer flexrow">
+    <button type="submit" name="submit"><i class="fas fa-save"></i> Save</button>
+  </footer>
+</form>
+

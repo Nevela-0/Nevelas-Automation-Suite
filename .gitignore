@@ -1,0 +1,6 @@
+
+*.zip
+packs/**/LOCK
+packs/**/LOG
+packs/**/LOG.old
+packs/**/*.log

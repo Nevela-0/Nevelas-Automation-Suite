@@ -1,0 +1,78 @@
+{
+  "id": "nevelas-automation-suite",
+  "title": "Nevela's Automation Suite",
+  "description": "Combined bundle of PF1 Automate Damage and PF1 Improved Conditions.",
+  "version": "1.0.0",
+  "compatibility": {
+    "minimum": "12",
+    "verified": "13.344"
+  },
+  "relationships": {
+    "systems": [
+      {
+        "id": "pf1",
+        "type": "system",
+        "compatibility": {
+          "minimum": "11.9"
+        }
+      }
+    ],
+    "requires": [
+      {
+        "id": "lib-wrapper",
+        "type": "module",
+        "compatibility": {}
+      },
+      {
+        "id": "socketlib",
+        "type": "module",
+        "compatibility": {}
+      }
+    ]
+  },
+  "authors": [
+    {
+      "name": "Nevela",
+      "discord": "nevela.",
+      "flags": {}
+    }
+  ],
+  "esmodules": [
+    "src/integration/moduleEntry.js"
+  ],
+  "styles": [
+    "src/templates/css/damage-type-form.css",
+    "src/templates/css/damage-priority-form.css"
+  ],
+  "languages": [
+    {
+      "lang": "en",
+      "name": "English",
+      "path": "src/lang/en.json"
+    },
+    {
+      "lang": "de",
+      "name": "Deutsch (German)",
+      "path": "src/lang/de.json"
+    }
+  ],
+  "packs": [
+    {
+      "name": "Conditions",
+      "label": "Conditions",
+      "path": "packs/conditions",
+      "type": "JournalEntry",
+      "system": "pf1"
+    }
+  ],
+
+  "packFolders": [
+    {
+      "name": "Automation Suite",
+      "packs": ["Conditions"],
+      "color": "#1F6AE1",
+      "folders": []
+    }
+  ],
+  "socket": true
+}

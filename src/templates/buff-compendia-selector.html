@@ -1,0 +1,25 @@
+<form>
+  <p class="notes">Select compendia that contain buff items to include in the automated buff search.</p>
+  
+  <div class="form-group">
+    <div class="compendia-list" style="max-height: 400px; overflow-y: auto; padding: 5px;">
+      {{#each compendia as |compendium|}}
+      <div class="compendium-row" style="display: flex; align-items: center; margin-bottom: 5px; padding: 5px; border-bottom: 1px solid #ddd;">
+        <input type="checkbox" name="compendium-{{compendium.id}}" id="compendium-{{compendium.id}}" {{#if compendium.isSelected}}checked{{/if}}>
+        <label for="compendium-{{compendium.id}}" style="margin-left: 10px; flex-grow: 1;">{{compendium.name}}</label>
+        <span class="compendium-id" style="color: #999; font-size: 0.8em;">{{compendium.id}}</span>
+      </div>
+      {{/each}}
+      <!-- Add world buffs checkbox as a separate row below the compendia -->
+      <div class="compendium-row" style="display: flex; align-items: center; margin-bottom: 5px; padding: 5px; border-bottom: 1px solid #ddd; width: 100%;">
+        <input type="checkbox" name="includeWorldBuffs" id="includeWorldBuffs" {{#if includeWorldBuffs}}checked{{/if}}>
+        <label for="includeWorldBuffs" style="margin-left: 10px; flex-grow: 1;">Include World Buffs (Items Directory)</label>
+        <span class="compendium-id" style="color: #999; font-size: 0.8em;">world</span>
+      </div>
+    </div>
+  </div>
+  
+  <button type="submit" class="save-compendia">
+    <i class="fas fa-save"></i> Save Selections
+  </button>
+</form> 

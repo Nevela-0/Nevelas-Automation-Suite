@@ -1,0 +1,51 @@
+.nas-settings-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.nas-settings-section {
+  border: 1px solid var(--color-border-light-primary, rgba(255, 255, 255, 0.12));
+  border-radius: 10px;
+  background: var(--color-bg-option, rgba(255, 255, 255, 0.03));
+  overflow: clip;
+}
+
+.nas-settings-section > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 0.75rem 0.9rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  user-select: none;
+  background: var(--color-bg-button, rgba(255, 255, 255, 0.05));
+}
+
+.nas-settings-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.nas-settings-section > summary .nas-settings-section-title {
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.nas-settings-section > summary .nas-settings-section-caret {
+  opacity: 0.8;
+  transition: transform 160ms ease;
+}
+
+.nas-settings-section[open] > summary .nas-settings-section-caret {
+  transform: rotate(90deg);
+}
+
+.nas-settings-section-body {
+  padding: 0.5rem 0.9rem 0.9rem;
+}
+
+.nas-settings-section-body .form-group:last-child {
+  margin-bottom: 0;
+}
+

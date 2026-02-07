@@ -1,0 +1,352 @@
+{
+  "NAS": {
+    "legacy": {
+      "blocked": "Nevela's Automation Suite is incompatible with the legacy module(s) {legacyList}. These modules are no longer supported. Disable them to use Nevela's Automation Suite. (The legacy migration tool remains available.)"
+    },
+    "settings": {
+      "damageTypePriority": {
+        "name": "Custom Damage Type Priority",
+        "hint": "Add custom damage types to be counted as damage reduction types. Magic is at least 1, Cold Iron and Silver types are 3, Adamantine is 4 and Alignments are 5 by default."
+      },
+      "damageTypePriorityMenu": {
+        "name": "Configure Damage Type Priority",
+        "label": "Configure",
+        "hint": "Open the configuration form to set damage type priority."
+      },
+      "customSetting": {
+        "name": "Custom Damage Types",
+        "label": "Configure Custom Damage Types",
+        "hint": "Add or edit custom damage types for the module."
+      },
+      "massiveDamage": {
+        "name": "Massive Damage Rule",
+        "hint": "Enable the optional Massive Damage rule (Pathfinder Core Rulebook p.189). When a creature takes damage from a single attack equal to or greater than its massive damage threshold, it must make a Fortitude save or die."
+      },
+      "metamagicCastTimeRule": {
+        "name": "Metamagic Cast Time",
+        "hint": "Choose how metamagic affects spontaneous casting time.",
+        "choices": {
+          "always": "Always full-round",
+          "standard": "Only standard and longer"
+        }
+      },
+      "persistentSpellTargetMode": {
+        "name": "Persistent Spell Targets",
+        "hint": "Choose how targets are determined when using the chat save button for Persistent Spell.",
+        "choices": {
+          "current": "Use current user targets",
+          "selected": "Use selected tokens",
+          "message": "Use targets stored on the chat card"
+        }
+      },
+      "saveRollTokenInteraction": {
+        "name": "Save Roll Token Interaction",
+        "hint": "Add a clickable token image to saving throw roll messages."
+      }
+    },
+    "damageTypes": {
+      "title": "Custom Damage Types"
+    },
+    "forms": {
+      "damageTypeForm": {
+        "clearTitle": "Clear all?",
+        "deleteTitle": "Delete \"{value}\"?",
+        "labels": {
+          "name": "Damage Type Name",
+          "img": "Image",
+          "category": "Category",
+          "abbr": "Abbreviation",
+          "icon": "Icon Class and Color",
+          "isModifier": "Is Modifier",
+          "flag": "Ability Score Damage",
+          "categoryPhysical": "Physical",
+          "categoryEnergy": "Energy",
+          "categoryMisc": "Misc",
+          "flagDamage": "Damage",
+          "flagDrain": "Drain",
+          "flagPenalty": "Penalty"
+        },
+        "placeholders": {
+          "name": "Enter the new damage type name here...",
+          "customCategory": "Enter a new category name...",
+          "abbr": "Enter abbreviation here...",
+          "icon": "Enter icon class here..."
+        },
+        "tooltips": {
+          "name": "Enter the name of the new damage type",
+          "img": "Select an image for the new damage type",
+          "category": "Select a category or enter a new category name.<br><br>The system has the 'Physical', 'Energy', and 'Miscellaneous' categories by default.",
+          "abbr": "Enter the abbreviation of the damage type",
+          "icon": "Enter the icon class and select a color for the new damage type",
+          "isModifier": "Check if this is a modifier",
+          "flag": "Select the type of ability score damage and the ability score"
+        },
+        "options": {
+          "selectAbility": "Select Ability",
+          "abilities": {
+            "str": "Strength",
+            "dex": "Dexterity",
+            "con": "Constitution",
+            "int": "Intelligence",
+            "wis": "Wisdom",
+            "cha": "Charisma"
+          }
+        },
+        "buttons": {
+          "clear": "Clear All"
+        },
+        "confirmations": {
+          "clearAll": "Are you sure you want to clear all saved values?",
+          "deleteValue": "Are you sure you want to delete \"{value}\"?"
+        },
+        "errors": {
+          "selectAbility": "You must select an ability score when specifying a damage type.",
+          "flagTypeRequired": "Ability damage type must be selected when assigning an ability score."
+        },
+        "editTitle": "Edit Damage Type"
+      },
+      "damagePriorityForm": {
+        "title": "Damage Priority Settings",
+        "labels": {
+          "drType": "Damage Reduction Type",
+          "enhancement": "Enhancement"
+        },
+        "tooltips": {
+          "enhancement": "Weapon Enhancement Bonus Equivalent"
+        },
+        "buttons": {
+          "addRow": "Add Row",
+          "resetDefaults": "Reset to Defaults"
+        }
+      },
+      "drTypeEditor": {
+        "title": "Edit Damage Reduction Types",
+        "labels": {
+          "drTypes": "DR Types"
+        },
+        "options": {
+          "selectType": "Select Type"
+        },
+        "placeholders": {
+          "customType": "Enter custom type"
+        },
+        "buttons": {
+          "addType": "Add Type"
+        }
+      },
+      "translationForm": {
+        "title": "Translation Config",
+        "englishName": "English Name",
+        "translation": "Translation",
+        "description": "Change the words for 'Hardness', 'Construct Traits', and 'Undead Traits' to their translations in your desired language."
+      }
+    },
+    "common": {
+      "confirmations": {
+        "clearAll": "Are you sure you want to clear all damage types?",
+        "deleteRow": "Are you sure you want to delete this row?",
+        "deleteTitle": "Delete row?",
+        "deleteValue": "Are you sure you want to delete \"{value}\"?",
+        "reload": "Some of the changed settings will only take effect after the application is reloaded. Do you want to reload now?",
+        "reloadRequired": "Reload Application?",
+        "resetDefaults": "Are you sure you want to reset to default values?",
+        "resetTitle": "Reset to Defaults?"
+      },
+      "errors": {
+        "nameRequired": "Damage type name is required.",
+        "imgOrIconRequired": "Either an image or an icon class is required.",
+        "categoryRequired": "Category is required.",
+        "invalidImgUrl": "Invalid image URL.",
+        "invalidIconClass": "Invalid icon class.",
+        "badWeaponTypeFormat": "Invalid format for weapon types."
+      },
+      "buttons": {
+        "yes": "Yes",
+        "no": "No",
+        "save": "Save",
+        "cancel": "Cancel",
+        "browse": "Browse"
+      },
+      "labels": {
+        "none": "None",
+        "confirm": "Confirm"
+      }
+    },
+    "damage": {
+      "labels": {
+        "actionSettings": "Action Damage Settings",
+        "bypassSection": "Damage Type Bypass Settings"
+      },
+      "itemSettings": {
+        "Title": "Item Damage Settings",
+        "Description": "Configure global damage automation settings for this item.",
+        "HardnessSection": "Hardness Settings"
+      },
+      "actionSettings": {
+        "Description": "Configure damage automation settings for this specific action.",
+        "GlobalActionSettings": "Action Settings",
+        "AttacksSection": "Per-Attack Settings",
+        "ToggleAttackSettings": "Toggle per-attack settings"
+      },
+      "settings": {
+        "BypassHardness": "Bypass Hardness",
+        "BypassHardnessHint": "Ignores hardness entirely when dealing damage.",
+        "IgnoreHardness": "Ignore Hardness",
+        "IgnoreHardnessHint": "Ignores a specific amount of hardness when dealing damage.",
+        "BypassImmunity": "Bypass Immunity",
+        "BypassImmunityHint": "Bypasses immunity to selected damage types.",
+        "BypassResistance": "Bypass Resistance",
+        "BypassResistanceHint": "Bypasses resistance to selected damage types.",
+        "BypassDR": "Bypass DR",
+        "BypassDRHint": "Bypasses DR for selected damage types."
+      },
+      "buttons": {
+        "GlobalSettings": "Global Damage Settings",
+        "ActionSettings": "Action Damage Settings"
+      },
+      "save": "Save Changes"
+    },
+    "conditions": {
+      "list": {
+        "anchored": {
+          "label": "Anchored",
+          "description": "<p>Fixed to a particular location.</p><p>Cannot be moved by any external force, including spells like telekinesis.</p><p>Cannot perform actions requiring movement.</p><p>Can still attack or cast spells if they do not involve changing position.</p>"
+        },
+        "burning": {
+          "label": "Burning",
+          "description": "A creature that is burning takes 1d6 fire damage immediately and at the start of each subsequent round until the flames are extinguished. Each round, the creature may attempt a DC 15 Reflex save to put out the fire (success ends the condition). Jumping into water or smothering the flames grants a +4 bonus on this save. Flammable items may also catch fire and require their own saves."
+        },
+        "concealment": {
+          "label": "Concealment",
+          "description": "<p>Miss chance applies to attacks because the target is concealed. Normal concealment has a lower success threshold than total concealment.</p>"
+        },
+        "disabled": {
+          "label": "Disabled",
+          "description": "<p>Character with 0 or stable negative hit points.</p><p>Can take a single move or standard action each round (but not both).</p><p>Moves at half speed.</p><p>Standard actions deal 1 damage after completion, risking negative hit points and dying.</p><p>Can take swift, immediate, and free actions.</p><p>Recovers hit points naturally if helped.</p><p>Otherwise, DC 10 Constitution check after 8 hours rest to start natural recovery.</p><p>Penalty on check equals negative hit point total.</p><p>Failure causes 1 hit point loss but does not cause unconsciousness.</p>"
+        },
+        "dying": {
+          "label": "Dying",
+          "description": "<p>Unconscious and near death.</p><p>Negative hit points and not stabilized.</p><p>Can take no actions.</p><p>On next turn after being reduced to negative hit points, and all subsequent turns:</p><p>- DC 10 Constitution check to become stable.</p><p>- Penalty on roll equals negative hit point total.</p><p>- Natural 20 is an automatic success.</p><p>- Failure results in losing 1 hit point.</p><p>Stable characters do not need to make this check.</p><p>If negative hit points equal Constitution score, the character dies.</p>"
+        },
+        "energyDrained": {
+          "label": "Energy Drained",
+          "description": "<p>Gains one or more negative levels.</p><p>Each negative level:</p><p>- Cumulative -1 penalty on ability checks, attack rolls, CMB, CMD, saves, and skill checks.</p><p>- Reduces current and total HP by 5.</p><p>- Treated as one level lower for level-dependent variables (e.g., spellcasting).</p><p>If negative levels equal Hit Dice, the character dies.</p><p>Temporary energy drains:</p><p>- New save each day to remove (DC same as original effect).</p><p>Permanent energy drains:</p><p>- No daily save to remove.</p><p>- Can be removed by spells like restoration.</p><p>- Remain after revival.</p><p>- Must be removed for effective revival if they equal Hit Dice.</p><p>Energy drain is not a death effect.</p><p>Death ward grants immunity to energy drain and suspends penalties while active.</p>"
+        },
+        "fascinated": {
+          "label": "Fascinated",
+          "description": "<p>Entranced by a supernatural or spell effect.</p><p>Stands or sits quietly, taking no actions other than paying attention to the effect.</p><p>-4 penalty on skill checks made as reactions (e.g., Perception checks).</p><p>Any potential threat (e.g., hostile creature approaching) allows a new saving throw.</p><p>Any obvious threat (e.g., drawing a weapon, casting a spell, aiming a ranged weapon) automatically breaks the effect.</p><p>An ally can shake the fascinated creature free as a standard action.</p>"
+        },
+        "grappled": {
+          "label": "Grappled",
+          "description": "<p>Cannot move and is treated as immobilized.</p><p>Casting or using spell-like abilities requires a concentration check (DC 10 + spell level + grappler's latest grapple check result).</p>"
+        },
+        "grappling": {
+          "label": "Grappling",
+          "description": "<p>You are controlling a grapple and are slowed.</p><p>Targets you successfully grapple gain the grappled condition.</p>"
+        },
+        "flatFooted": {
+          "label": "Flat-Footed",
+          "description": "<p>Has not yet acted during combat.</p><p>Loses Dexterity bonus to AC and CMD.</p><p>Cannot make attacks of opportunity, unless having Combat Reflexes feat or Uncanny Dodge class ability.</p><p>Characters with Uncanny Dodge retain Dexterity bonus to AC and can make attacks of opportunity before acting in the first round.</p><p>Cannot take immediate actions while flat-footed.</p>"
+        },
+        "immobilized": {
+          "label": "Immobilized",
+          "description": "<p>Unable to move from current location.</p><p>Cannot take any move actions.</p><p>Cannot reposition itself.</p><p>Can still perform actions that do not require movement (e.g., attacking, casting spells).</p>"
+        },
+        "petrified": {
+          "label": "Petrified",
+          "description": "<p>Turned to stone and considered unconscious.</p><p>If cracked or broken, but pieces are joined with the body upon returning to flesh, the character is unharmed.</p><p>If the petrified body is incomplete when returning to flesh, the body remains incomplete, resulting in permanent hit point loss and/or debilitation.</p>"
+        },
+        "slowed": {
+          "label": "Slowed",
+          "description": "<p>Movement is significantly hindered.</p><p>Movement speed is typically reduced by half.</p><p>May take fewer actions per turn, often limited to one standard action or move action.</p>"
+        },
+        "stable": {
+          "label": "Stable",
+          "description": "<p>No longer dying but still unconscious.</p><p>Stopped losing hit points each round while still having negative hit points.</p><p>If stabilized by aid (e.g., Heal check or magical healing), no longer loses hit points.</p><p>Can make a DC 10 Constitution check each hour to become conscious and disabled (penalty equals negative hit point total).</p><p>If stabilized without aid, still at risk of losing hit points.</p><p>Can make a Constitution check each hour to become stable (as if received aid), but each failed check causes 1 hit point loss.</p>"
+        },
+        "unconscious": {
+          "label": "Unconscious",
+          "description": "<p>Knocked out and helpless.</p><p>Can result from having negative hit points (but not more than the creature's Constitution score) or from nonlethal damage exceeding current hit points.</p>"
+        }
+      },
+      "confused": {
+        "effects": {
+          "1": "acts normally",
+          "2": "does nothing but babble incoherently",
+          "3a": "draws their {itemName} and inflicts {damage} points of damage to themselves with it.",
+          "3b": "strikes themselves in the face with their fists, causing {damage} points of bludgeoning damage.",
+          "4": "attacks the nearest creature"
+        }
+      },
+      "main": {
+        "GrappledTwoHands": "{name} cannot perform this action due to being grappled and it requires two hands.",
+        "GrappledLenient": "{name} is grappled but can perform the action under lenient handling.",
+        "NauseatedStrict": "{name} cannot perform this action due to being nauseated; only move actions are allowed.",
+        "NauseatedLenient": "{name} is nauseated but can perform other actions under lenient handling.",
+        "SqueezingStrict": "{name} cannot perform attack actions due to being squeezed.",
+        "SqueezingLenient": "{name} is squeezing but can perform attacks under lenient handling.",
+        "SurpriseRound": "Surprise Round",
+        "GrappleCheckbox": "Grapple",
+        "GrappleNoTargets": "Grapple requires at least one target.",
+        "GrappleFootnote": "+[[5]] circumstance bonus on grapple checks made against the same grappled target in subsequent rounds.",
+        "GrappleConcentrationDC": "Concentration DC vs grapple: {dc} (10 + spell level {spellLevel} + grapple check {grappleTotal}).",
+        "ConcealmentDialogTitle": "Choose Concealment Type",
+        "ConcealmentNormal": "Normal",
+        "ConcealmentTotal": "Total",
+        "ConcealmentFootnote": "{variant}: Miss chance roll {roll}; success on {threshold}+.",
+        "ConcealmentSelectionCanceled": "Concealment selection canceled."
+      },
+      "sockets": {
+        "MovementRestrictionRemoved": "Movement restriction removed from token.",
+        "MovementRestrictionApplied": "Movement restriction applied to token.",
+        "HardToKillChoice": "Hard to Kill Choice",
+        "ContinueFighting": "Continue Fighting",
+        "FallUnconscious": "Fall Unconscious",
+        "MaxMoveWarning": "This token cannot move more than {limitFeet} feet.",
+        "BlindMovementSpeedTitle": "Select Speed Type",
+        "BlindMovementSpeedPrompt": "Choose which speed type this movement uses.",
+        "BlindMovementSpeedInfo": "You can move up to {halfSpeed} feet without an Acrobatics check.",
+        "BlindMovementCheckTitle": "Blind Movement Check",
+        "RollAcrobatics": "Roll Acrobatics",
+        "HardToKillPrompt": "{name} has a hard to kill ability. Would you like to continue fighting or fall unconscious?",
+        "BlindMovementCheckPrompt": "{name} is blind and needs to make a DC 10 Acrobatics check to move without falling prone."
+      }
+    },
+    "buffs": {
+      "NoTargetsSelected": "{name} requires at least one target.",
+      "UnableToApplyAutomaticBuffs": "Unable to apply automatic buffs for {name} - no targets selected.",
+      "MultipleBuffOptionsFound": "Multiple buff options found for <strong>{name}</strong>. Please select which one to apply:",
+      "SelectBuffVariant": "Select Buff Variant",
+      "Select": "Select",
+      "SelectTargets": "Select which targets should receive <strong>{name}</strong>:",
+      "SelectBuffTargets": "Select Buff Targets",
+      "ApplyBuff": "Apply Buff",
+      "ApplyOnCast": "Apply on cast",
+      "ApplyOnTurn": "Apply at target's turn",
+      "ApplyOnCastShort": "On cast",
+      "ApplyOnTurnShort": "On turn",
+      "ApplyOnCastTooltip": "Apply immediately when the spell is cast.",
+      "ApplyOnTurnTooltip": "Apply at the start of the target's next turn.",
+      "Allies": "Allies",
+      "Foes": "Foes",
+      "AllowSwitchingEachRound": "Allow targets to switch variants each round",
+      "RememberForSpell": "Remember for this spell",
+      "TargetCapHint": "Max targets allowed: {cap}",
+      "TargetCapHintRemaining": "Max targets: {cap} | Remaining: {remaining}",
+      "TargetCapExceeded": "You can only select {cap} target(s) for this spell.",
+      "UpdatedExisting": "Updated existing {name} on {actor}",
+      "Applied": "Applied {name} to {actor}",
+      "FailedToApply": "Failed to apply {name}: {error}",
+      "NotEnoughSpellSlots": "Not enough spell slots to cast this spell on all targets! ({remaining} remaining, {needed} needed)"
+    },
+    "metamagic": {
+      "PersistentNoTargets": {
+        "current": "Persistent Spell: target one or more tokens.",
+        "selected": "Persistent Spell: select one or more tokens.",
+        "message": "Persistent Spell: no targets were stored on this chat card."
+      },
+      "PersistentSave": "Persistent Spell save",
+      "PersistentSaveSecond": "Persistent Spell (second save)"
+    }
+  }
+}
