@@ -239,7 +239,7 @@ Because ammunition does not have material/enhancement fully supported by the PF1
 Adds a metamagic picker to spell dialogs and automatically applies supported metamagic adjustments at cast time—reducing manual edits to spell data, DCs, ranges, and damage formulas.
 
 ### Highlights
-- Metamagic selection UI on spell dialogs (Attack Dialog → **Misc** → **Metamagic**)
+- Metamagic selection UI on spell dialogs (Attack Dialog → **Metamagic**)
 - Pulls available metamagics from the caster’s:
   - **Metamagic feats** (feat tags containing “metamagic”)
   - **Metamagic rods** in inventory (supports common rod naming patterns and checks remaining daily uses)
@@ -308,14 +308,10 @@ Adds a metamagic picker to spell dialogs and automatically applies supported met
   - Controls how targets are determined when using the **chat save button** for Persistent/Dazing workflows:
     - current user targets / selected tokens / targets stored on the chat card
 
-> **Note:** Higher-level slot consumption is automated for **spontaneous** casting. Prepared casters should still prepare metamagic spells in the appropriate slots.
-
-> **Note:** Metamagic rods are detected and filtered by remaining daily uses, but rod uses are not automatically deducted when you cast.
-
 ---
 
 ## Installation
-**Manifest URL:**
+**Manifest URL:** https://github.com/Nevela-0/Nevelas-Automation-Suite/releases/latest/download/module.json
 
 ---
 
