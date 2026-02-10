@@ -218,7 +218,7 @@
         },
         "concealment": {
           "label": "Getarnt",
-          "description": "<p>Angriffe unterliegen einer Fehlschlagchance, weil das Ziel getarnt ist. Normale Tarnung hat eine niedrigere Erfolgsschwelle als totale Tarnung.</p>"
+          "description": "<p>Angriffe unterliegen einer Fehlschlagchance, weil das Ziel getarnt ist. Normale Tarnung hat eine niedrigere Erfolgsschwelle als vollständige Tarnung.</p>"
         },
         "disabled": {
           "label": "Kampfunfähig",
