@@ -48,20 +48,6 @@ export async function handleBuffAutomation(action) {
   
   const isSelfTargeting = rangeUnits === "personal" || targetValue === "you";
   
-  if (!hasTargets && !isSelfTargeting) {
-    const mode = game.settings.get(MODULE.ID, 'buffAutomationMode');
-    
-    if (mode === "strict") {
-      console.warn(`${MODULE.ID} | Buff automation canceled: No targets selected for ${action.item.name}`);
-      action.shared.reject = true;
-      ui.notifications.warn(game.i18n.format('NAS.buffs.NoTargetsSelected', { name: action.item.name }));
-      return;
-    } else if (mode === "lenient") {
-      console.warn(`${MODULE.ID} | Buff automation skipped: No targets selected for ${action.item.name}`);
-      ui.notifications.info(game.i18n.format('NAS.buffs.UnableToApplyAutomaticBuffs', { name: action.item.name }));
-    }
-  }
-  
   const casterLevel = action.shared.rollData?.cl;
 
   const durationContext = action.shared?.nasSpellContext?.duration;
@@ -114,6 +100,19 @@ export async function handleBuffAutomation(action) {
   const matchingBuffs = await findMatchingBuffs(searchName);
   
   if (matchingBuffs.length > 0) {
+    if (!hasTargets && !isSelfTargeting) {
+      const mode = game.settings.get(MODULE.ID, 'buffAutomationMode');
+      
+      if (mode === "strict") {
+        console.warn(`${MODULE.ID} | Buff automation canceled: No targets selected for ${action.item.name}`);
+        action.shared.reject = true;
+        ui.notifications.warn(game.i18n.format('NAS.buffs.NoTargetsSelected', { name: action.item.name }));
+        return;
+      } else if (mode === "lenient") {
+        console.warn(`${MODULE.ID} | Buff automation skipped: No targets selected for ${action.item.name}`);
+        ui.notifications.info(game.i18n.format('NAS.buffs.UnableToApplyAutomaticBuffs', { name: action.item.name }));
+      }
+    }
     let selectedBuff = null;
     
     const categorizedMatches = categorizeBuffMatches(action.item.name, matchingBuffs);

@@ -16,7 +16,7 @@ export function registerActionUseWrapper() {
     async function(wrapped, ...args) {
       const itemType = this.item?.type;
       const itemSubType = this.item?.subType;
-      const useCustomLogic = (itemType === "spell" || itemType === "consumable" || (itemType === "feat" && itemSubType === "classFeat")) && !!this.action?.target?.value;
+      const useCustomLogic = (itemType === "spell" || itemType === "consumable" || (itemType === "feat" && itemSubType === "classFeat"));
       if (useCustomLogic && game.settings.get(MODULE.ID, 'automaticBuffs')) {
         const shared = this.shared;
         let reqErr = await this.checkRequirements();
