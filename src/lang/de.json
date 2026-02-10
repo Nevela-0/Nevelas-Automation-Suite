@@ -217,7 +217,7 @@
           "description": "Eine brennende Kreatur erleidet sofort und zu Beginn jeder weiteren Runde 1W6 Feuerschaden, bis die Flammen gelöscht sind. Jede Runde kann die Kreatur einen Reflexwurf SG 15 ablegen, um das Feuer zu löschen (Erfolg beendet den Zustand). Ins Wasser springen oder die Flammen ersticken gewährt einen Bonus von +4 auf diesen Wurf. Entflammbare Gegenstände können ebenfalls Feuer fangen und erfordern eigene Rettungswürfe."
         },
         "concealment": {
-          "label": "Tarnung",
+          "label": "Getarnt",
           "description": "<p>Angriffe unterliegen einer Fehlschlagchance, weil das Ziel getarnt ist. Normale Tarnung hat eine niedrigere Erfolgsschwelle als totale Tarnung.</p>"
         },
         "disabled": {
