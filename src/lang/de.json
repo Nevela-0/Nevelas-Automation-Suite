@@ -1,61 +1,352 @@
 {
   "NAS": {
+    "legacy": {
+      "blocked": "Nevela's Automation Suite ist mit den Legacy-Modulen {legacyList} nicht kompatibel. Diese Module werden nicht mehr unterstützt. Deaktiviere sie, um Nevela's Automation Suite zu verwenden. (Das Legacy-Migrationswerkzeug bleibt verfügbar.)"
+    },
+    "settings": {
+      "damageTypePriority": {
+        "name": "Benutzerdefinierte Schadensart-Priorität",
+        "hint": "Füge benutzerdefinierte Schadensarten hinzu, damit sie als Schadensreduzierungsarten zählen. Magisch hat standardmäßig mindestens 1, Kalt-Eisen und Silber haben 3, Adamantin hat 4 und Gesinnungen haben 5."
+      },
+      "damageTypePriorityMenu": {
+        "name": "Schadensart-Priorität konfigurieren",
+        "label": "Konfigurieren",
+        "hint": "Öffnet das Konfigurationsformular, um die Schadensart-Priorität festzulegen."
+      },
+      "customSetting": {
+        "name": "Benutzerdefinierte Schadensarten",
+        "label": "Benutzerdefinierte Schadensarten konfigurieren",
+        "hint": "Benutzerdefinierte Schadensarten für das Modul hinzufügen oder bearbeiten."
+      },
+      "massiveDamage": {
+        "name": "Regel für massiven Schaden",
+        "hint": "Aktiviert die optionale Regel für massiven Schaden (Pathfinder Grundregelwerk S. 189). Wenn eine Kreatur durch einen einzelnen Angriff Schaden in Höhe oder größer als ihre Schwelle für massiven Schaden erleidet, muss sie einen Zähigkeitswurf ablegen oder stirbt."
+      },
+      "metamagicCastTimeRule": {
+        "name": "Metamagie-Zauberzeit",
+        "hint": "Wähle, wie Metamagie die spontane Zauberzeit beeinflusst.",
+        "choices": {
+          "always": "Immer volle Runde",
+          "standard": "Nur Standard und länger"
+        }
+      },
+      "persistentSpellTargetMode": {
+        "name": "Ziele für Beharrlichen Zauber",
+        "hint": "Wähle, wie Ziele bestimmt werden, wenn die Chat-Rettungswurf-Schaltfläche für Beharrlichen Zauber verwendet wird.",
+        "choices": {
+          "current": "Aktuelle Benutzerziele verwenden",
+          "selected": "Ausgewählte Tokens verwenden",
+          "message": "Ziele aus der Chat-Karte verwenden"
+        }
+      },
+      "saveRollTokenInteraction": {
+        "name": "Tokenbild beim Rettungswurf",
+        "hint": "Fügt ein anklickbares Tokenbild zu Rettungswurf-Meldungen hinzu."
+      }
+    },
+    "damageTypes": {
+      "title": "Benutzerdefinierte Schadensarten"
+    },
+    "forms": {
+      "damageTypeForm": {
+        "clearTitle": "Alles löschen?",
+        "deleteTitle": "„{value}“ löschen?",
+        "labels": {
+          "name": "Name der Schadensart",
+          "img": "Bild",
+          "category": "Kategorie",
+          "abbr": "Abkürzung",
+          "icon": "Icon-Klasse und Farbe",
+          "isModifier": "Ist Modifikator",
+          "flag": "Attributsschaden",
+          "categoryPhysical": "Physisch",
+          "categoryEnergy": "Energie",
+          "categoryMisc": "Sonstiges",
+          "flagDamage": "Schaden",
+          "flagDrain": "Entzug",
+          "flagPenalty": "Malus"
+        },
+        "placeholders": {
+          "name": "Neuen Schadensartnamen hier eingeben...",
+          "customCategory": "Neuen Kategorienamen eingeben...",
+          "abbr": "Abkürzung hier eingeben...",
+          "icon": "Icon-Klasse hier eingeben..."
+        },
+        "tooltips": {
+          "name": "Gib den Namen der neuen Schadensart ein",
+          "img": "Wähle ein Bild für die neue Schadensart",
+          "category": "Wähle eine Kategorie oder gib einen neuen Kategorienamen ein.<br><br>Das System hat standardmäßig die Kategorien „Physisch“, „Energie“ und „Sonstiges“.",
+          "abbr": "Gib die Abkürzung der Schadensart ein",
+          "icon": "Gib die Icon-Klasse an und wähle eine Farbe für die neue Schadensart",
+          "isModifier": "Ankreuzen, wenn dies ein Modifikator ist",
+          "flag": "Wähle die Art des Attributsschadens und das Attribut"
+        },
+        "options": {
+          "selectAbility": "Attribut wählen",
+          "abilities": {
+            "str": "Stärke",
+            "dex": "Geschicklichkeit",
+            "con": "Konstitution",
+            "int": "Intelligenz",
+            "wis": "Weisheit",
+            "cha": "Charisma"
+          }
+        },
+        "buttons": {
+          "clear": "Alles löschen"
+        },
+        "confirmations": {
+          "clearAll": "Bist du sicher, dass du alle gespeicherten Werte löschen möchtest?",
+          "deleteValue": "Bist du sicher, dass du „{value}“ löschen möchtest?"
+        },
+        "errors": {
+          "selectAbility": "Du musst ein Attribut wählen, wenn du eine Schadensart angibst.",
+          "flagTypeRequired": "Die Art des Attributsschadens muss gewählt werden, wenn ein Attribut zugewiesen wird."
+        },
+        "editTitle": "Schadensart bearbeiten"
+      },
+      "damagePriorityForm": {
+        "title": "Schadenspriorität-Einstellungen",
+        "labels": {
+          "drType": "Art der Schadensreduzierung",
+          "enhancement": "Verbesserungsbonus"
+        },
+        "tooltips": {
+          "enhancement": "Waffenverbesserungsbonus-Äquivalent"
+        },
+        "buttons": {
+          "addRow": "Zeile hinzufügen",
+          "resetDefaults": "Auf Standard zurücksetzen"
+        }
+      },
+      "drTypeEditor": {
+        "title": "Schadensreduzierungsarten bearbeiten",
+        "labels": {
+          "drTypes": "SR-Arten"
+        },
+        "options": {
+          "selectType": "Art wählen"
+        },
+        "placeholders": {
+          "customType": "Benutzerdefinierte Art eingeben"
+        },
+        "buttons": {
+          "addType": "Art hinzufügen"
+        }
+      },
+      "translationForm": {
+        "title": "Übersetzungskonfiguration",
+        "englishName": "Englischer Name",
+        "translation": "Übersetzung",
+        "description": "Ändere die Begriffe für „Härte“, „Konstruktmerkmale“ und „Untotenmerkmale“ in ihre Übersetzung."
+      }
+    },
+    "common": {
+      "confirmations": {
+        "clearAll": "Bist du sicher, dass du alle Schadensarten löschen möchtest?",
+        "deleteRow": "Bist du sicher, dass du diese Zeile löschen möchtest?",
+        "deleteTitle": "Zeile löschen?",
+        "deleteValue": "Bist du sicher, dass du „{value}“ löschen möchtest?",
+        "reload": "Einige der geänderten Einstellungen werden erst nach dem Neuladen der Anwendung wirksam. Jetzt neu laden?",
+        "reloadRequired": "Anwendung neu laden?",
+        "resetDefaults": "Bist du sicher, dass du auf Standardwerte zurücksetzen möchtest?",
+        "resetTitle": "Auf Standard zurücksetzen?"
+      },
+      "errors": {
+        "nameRequired": "Name der Schadensart ist erforderlich.",
+        "imgOrIconRequired": "Entweder ein Bild oder eine Icon-Klasse ist erforderlich.",
+        "categoryRequired": "Kategorie ist erforderlich.",
+        "invalidImgUrl": "Ungültige Bild-URL.",
+        "invalidIconClass": "Ungültige Icon-Klasse.",
+        "badWeaponTypeFormat": "Ungültiges Format für Waffentypen."
+      },
+      "buttons": {
+        "yes": "Ja",
+        "no": "Nein",
+        "save": "Speichern",
+        "cancel": "Abbrechen",
+        "browse": "Durchsuchen"
+      },
+      "labels": {
+        "none": "Keine",
+        "confirm": "Bestätigen"
+      }
+    },
+    "damage": {
+      "labels": {
+        "actionSettings": "Aktions-Schadenseinstellungen",
+        "bypassSection": "Einstellungen zum Umgehen von Schadensarten"
+      },
+      "itemSettings": {
+        "Title": "Schadenseinstellungen für Gegenstände",
+        "Description": "Konfiguriere globale Schadensautomations-Einstellungen für diesen Gegenstand.",
+        "HardnessSection": "Härte-Einstellungen"
+      },
+      "actionSettings": {
+        "Description": "Konfiguriere Schadensautomations-Einstellungen für diese Aktion.",
+        "GlobalActionSettings": "Aktions-Einstellungen",
+        "AttacksSection": "Pro-Angriff-Einstellungen",
+        "ToggleAttackSettings": "Pro-Angriff-Einstellungen umschalten"
+      },
+      "settings": {
+        "BypassHardness": "Härte umgehen",
+        "BypassHardnessHint": "Ignoriert Härte vollständig beim Verursachen von Schaden.",
+        "IgnoreHardness": "Härte ignorieren",
+        "IgnoreHardnessHint": "Ignoriert einen bestimmten Härtewert beim Verursachen von Schaden.",
+        "BypassImmunity": "Immunität umgehen",
+        "BypassImmunityHint": "Umgeht die Immunität gegen ausgewählte Schadensarten.",
+        "BypassResistance": "Resistenz umgehen",
+        "BypassResistanceHint": "Umgeht die Resistenz gegen ausgewählte Schadensarten.",
+        "BypassDR": "SR umgehen",
+        "BypassDRHint": "Umgeht die SR für ausgewählte Schadensarten."
+      },
+      "buttons": {
+        "GlobalSettings": "Globale Schadenseinstellungen",
+        "ActionSettings": "Aktions-Schadenseinstellungen"
+      },
+      "save": "Änderungen speichern"
+    },
     "conditions": {
       "list": {
-        "Anchored": {
+        "anchored": {
           "label": "Verankert",
           "description": "<p>Kann nicht durch äußere Kräfte bewegt werden, auch nicht durch Zauber wie Telekinese.</p><p>Kann keine Aktionen ausführen, die eine Bewegung erfordern, kann aber trotzdem angreifen oder zaubern, wenn sie keine Positionsveränderung erfordern.</p>"
         },
-        "Confused": {
-          "Effects": {
-            "1": "verhält sich normal",
-            "2": "macht nichts, außer zusammenhangslos vor sich hin zu brabbeln",
-            "3a": "zieht sein {itemName} und fügt sich selbst ${damage} schaden zu.",
-            "3b": "schlägt sich selbst mit der Faust ins Gesicht und verursacht {damage} Wuchtschaden.",
-            "4": "greift die nächste Kreatur an"
-          }
+        "burning": {
+          "label": "Brennend",
+          "description": "Eine brennende Kreatur erleidet sofort und zu Beginn jeder weiteren Runde 1W6 Feuerschaden, bis die Flammen gelöscht sind. Jede Runde kann die Kreatur einen Reflexwurf SG 15 ablegen, um das Feuer zu löschen (Erfolg beendet den Zustand). Ins Wasser springen oder die Flammen ersticken gewährt einen Bonus von +4 auf diesen Wurf. Entflammbare Gegenstände können ebenfalls Feuer fangen und erfordern eigene Rettungswürfe."
         },
-        "Disabled": {
+        "concealment": {
+          "label": "Getarnt",
+          "description": "<p>Angriffe unterliegen einer Fehlschlagchance, weil das Ziel getarnt ist. Normale Tarnung hat eine niedrigere Erfolgsschwelle als vollständige Tarnung.</p>"
+        },
+        "disabled": {
           "label": "Kampfunfähig",
           "description": "<p>Hat 0 TP oder negative TP, ist aber stabilisiert und bei Bewusstsein.</p><p>kann jede Runde eine Bewegungsaktion oder eine Standard-Aktion ausführen (nicht aber beides). kann Schnelle, Augenblickliche und Freie Aktionen ausführen.</p>"
         },
-        "Dying": {
+        "dying": {
           "label": "Sterbend",
           "description": "<p>Hat negative Trefferpunkten und ist nicht stabilisiert.</p><p>Kann keine Aktionen ausführen.</p><p>Wenn Charakter negative TP = ihrem Konstitutionswert hat, stirbt er.</p>"
         },
-        "EnergyDrained": {
+        "energyDrained": {
           "label": "Lebenskraftentzug",
           "description": "<p>Hat eine oder mehrere Negative Stufen</p>"
         },
-        "Fascinated": {
+        "fascinated": {
           "label": "Fasziniert",
           "description": "<p>Steht oder sitzt ganz ruhig und macht nichts, außer den faszinierenden Effekt zu beobachten</p><p>-4 auf Wahrnehmung</p>"
         },
-        "FlatFooted": {
-          "label": "Auf dem falschen Fuß",
-          "description": "<p>Kann keine Gelegenheitsangriffe ausführen</p><p>Verliert GE-Bonus auf AC</p>"
+        "grappled": {
+          "label": "Ringend",
+          "description": "<p>Kann sich nicht bewegen und gilt als bewegungsunfähig.</p><p>Zaubern oder der Einsatz zauberähnlicher Fähigkeiten erfordert eine Konzentrationsprobe (SG 10 + Zaubergrad + letztes Ringkampf-Ergebnis des Gegners).</p>"
         },
-        "Immobilized": {
+        "grappling": {
+          "label": "Greifend",
+          "description": "<p>Du kontrollierst einen Ringkampf und bist verlangsamt.</p><p>Ziele, die du erfolgreich greifst, erhalten den Zustand „Ringend“.</p>"
+        },
+        "flatFooted": {
+          "label": "Auf dem falschen Fuß",
+          "description": "<p>Kann keine Gelegenheitsangriffe ausführen</p><p>Verliert GE-Bonus auf RK</p>"
+        },
+        "immobilized": {
           "label": "Bewegungsunfähig",
           "description": "<p>Kann sich nicht vom Fleck bewegen</p>"
         },
-        "Petrified": {
+        "petrified": {
           "label": "Versteinert",
           "description": "<p>Wurde zu Stein verwandelt und ist bewusstlos</p>"
         },
-        "Slowed": {
+        "slowed": {
           "label": "Verlangsamt",
-          "description": "<p>– 1 auf Angriffswurfe, RK und Reflexwürfe.</p><p>Kann nur eine Bewegungsaktion oder Standard-Aktion ausführen.</p><p>Grundbewegungsrate halbiert.</p>"
+          "description": "<p>– 1 auf Angriffswürfe, RK und Reflexwürfe.</p><p>Kann nur eine Bewegungsaktion oder Standard-Aktion ausführen.</p><p>Grundbewegungsrate halbiert.</p>"
         },
-        "Stable": {
+        "stable": {
           "label": "Stabilisiert",
-          "description": "<p>hat negative Trefferpunkte, verliert aber keine weiteren und ist bewusstlos</p>"
+          "description": "<p>Hat negative Trefferpunkte, verliert aber keine weiteren und ist bewusstlos</p>"
         },
-        "Unconscious": {
+        "unconscious": {
           "label": "Bewusstlos",
           "description": "<p>Ist durch negative TP oder nichttödlichen Schaden KO geschlagen und hilflos</p>"
         }
+      },
+      "confused": {
+        "effects": {
+          "1": "verhält sich normal",
+          "2": "macht nichts, außer zusammenhangslos vor sich hin zu brabbeln",
+          "3a": "zieht sein {itemName} und fügt sich selbst {damage} Schaden zu.",
+          "3b": "schlägt sich selbst mit der Faust ins Gesicht und verursacht {damage} Wuchtschaden.",
+          "4": "greift die nächste Kreatur an"
+        }
+      },
+      "main": {
+        "GrappledTwoHands": "{name} kann diese Aktion nicht ausführen, da er gegriffen ist und sie zwei Hände erfordert.",
+        "GrappledLenient": "{name} ist gegriffen, kann die Aktion aber unter nachsichtiger Handhabung ausführen.",
+        "NauseatedStrict": "{name} kann diese Aktion nicht ausführen, da er übel ist; nur Bewegungsaktionen sind erlaubt.",
+        "NauseatedLenient": "{name} ist übel, kann aber unter nachsichtiger Handhabung andere Aktionen ausführen.",
+        "SqueezingStrict": "{name} kann keine Angriffsaktionen ausführen, da er eingequetscht ist.",
+        "SqueezingLenient": "{name} ist eingequetscht, kann aber unter nachsichtiger Handhabung angreifen.",
+        "SurpriseRound": "Überraschungsrunde",
+        "GrappleCheckbox": "Ringkampf",
+        "GrappleNoTargets": "Ringkampf erfordert mindestens ein Ziel.",
+        "GrappleFootnote": "+[[5]] Situationsbonus auf Ringkampfproben gegen dasselbe gegriffene Ziel in nachfolgenden Runden.",
+        "GrappleConcentrationDC": "Konzentrations-SG gegen Ringkampf: {dc} (10 + Zaubergrad {spellLevel} + Ringkampf-Ergebnis {grappleTotal}).",
+        "ConcealmentDialogTitle": "Verschleierungsart wählen",
+        "ConcealmentNormal": "Normal (20%)",
+        "ConcealmentTotal": "Vollständig (50%)",
+        "ConcealmentFootnote": "{variant}: Fehlschlagchance-Wurf {roll}; Erfolg ab {threshold}+.",
+        "ConcealmentSelectionCanceled": "Verschleierungsauswahl abgebrochen."
+      },
+      "sockets": {
+        "MovementRestrictionRemoved": "Bewegungseinschränkung vom Token entfernt.",
+        "MovementRestrictionApplied": "Bewegungseinschränkung auf Token angewendet.",
+        "HardToKillChoice": "Schwer zu töten: Wahl",
+        "ContinueFighting": "Weiterkämpfen",
+        "FallUnconscious": "Bewusstlos werden",
+        "MaxMoveWarning": "Dieses Token kann sich nicht mehr als {limitFeet} Fuß bewegen.",
+        "BlindMovementSpeedTitle": "Geschwindigkeitsart wählen",
+        "BlindMovementSpeedPrompt": "Wähle, welche Geschwindigkeitsart diese Bewegung nutzt.",
+        "BlindMovementSpeedInfo": "Du kannst dich bis zu {halfSpeed} Fuß ohne Akrobatikprobe bewegen.",
+        "BlindMovementCheckTitle": "Blindbewegungsprobe",
+        "RollAcrobatics": "Akrobatik würfeln",
+        "HardToKillPrompt": "{name} hat die Fähigkeit „Schwer zu töten“. Möchtest du weiterkämpfen oder bewusstlos werden?",
+        "BlindMovementCheckPrompt": "{name} ist blind und muss eine Akrobatikprobe SG 10 ablegen, um sich zu bewegen, ohne zu Boden zu gehen."
       }
+    },
+    "buffs": {
+      "NoTargetsSelected": "{name} erfordert mindestens ein Ziel.",
+      "UnableToApplyAutomaticBuffs": "Automatische Stärkungen für {name} konnten nicht angewendet werden – keine Ziele ausgewählt.",
+      "MultipleBuffOptionsFound": "Mehrere Stärkungsoptionen für <strong>{name}</strong> gefunden. Bitte wähle, welche angewendet werden soll:",
+      "SelectBuffVariant": "Stärkungsvariante wählen",
+      "Select": "Auswählen",
+      "SelectTargets": "Wähle, welche Ziele <strong>{name}</strong> erhalten sollen:",
+      "SelectBuffTargets": "Stärkungsziele wählen",
+      "ApplyBuff": "Stärkung anwenden",
+      "ApplyOnCast": "Beim Wirken anwenden",
+      "ApplyOnTurn": "Zu Beginn des Zugs des Ziels anwenden",
+      "ApplyOnCastShort": "Beim Wirken",
+      "ApplyOnTurnShort": "Im Zug",
+      "ApplyOnCastTooltip": "Sofort beim Wirken des Zaubers anwenden.",
+      "ApplyOnTurnTooltip": "Zu Beginn des nächsten Zugs des Ziels anwenden.",
+      "Allies": "Verbündete",
+      "Foes": "Feinde",
+      "AllowSwitchingEachRound": "Ziele dürfen jede Runde die Variante wechseln",
+      "RememberForSpell": "Für diesen Zauber merken",
+      "TargetCapHint": "Maximale Ziele: {cap}",
+      "TargetCapHintRemaining": "Max Ziele: {cap} | Verbleibend: {remaining}",
+      "TargetCapExceeded": "Du kannst nur {cap} Ziel(e) für diesen Zauber auswählen.",
+      "UpdatedExisting": "Bestehendes {name} bei {actor} aktualisiert",
+      "Applied": "{name} auf {actor} angewendet",
+      "FailedToApply": "{name} konnte nicht angewendet werden: {error}",
+      "NotEnoughSpellSlots": "Nicht genug Zauberplätze, um diesen Zauber auf alle Ziele zu wirken! ({remaining} verbleibend, {needed} benötigt)"
+    },
+    "metamagic": {
+      "PersistentNoTargets": {
+        "current": "Beharrlicher Zauber: Wähle ein oder mehrere Tokens.",
+        "selected": "Beharrlicher Zauber: Wähle ein oder mehrere Tokens aus.",
+        "message": "Beharrlicher Zauber: Auf dieser Chat-Karte wurden keine Ziele gespeichert."
+      },
+      "PersistentSave": "Rettungswurf gegen Beharrlichen Zauber",
+      "PersistentSaveSecond": "Beharrlicher Zauber (zweiter Rettungswurf)"
     }
   }
 }
