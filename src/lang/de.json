@@ -291,8 +291,8 @@
         "GrappleFootnote": "+[[5]] Situationsbonus auf Ringkampfproben gegen dasselbe gegriffene Ziel in nachfolgenden Runden.",
         "GrappleConcentrationDC": "Konzentrations-SG gegen Ringkampf: {dc} (10 + Zaubergrad {spellLevel} + Ringkampf-Ergebnis {grappleTotal}).",
         "ConcealmentDialogTitle": "Verschleierungsart wählen",
-        "ConcealmentNormal": "Normal",
-        "ConcealmentTotal": "Total",
+        "ConcealmentNormal": "Normal (20%)",
+        "ConcealmentTotal": "Vollständig (50%)",
         "ConcealmentFootnote": "{variant}: Fehlschlagchance-Wurf {roll}; Erfolg ab {threshold}+.",
         "ConcealmentSelectionCanceled": "Verschleierungsauswahl abgebrochen."
       },
