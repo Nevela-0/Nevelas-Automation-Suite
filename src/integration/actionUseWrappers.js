@@ -69,7 +69,10 @@ export function registerActionUseWrapper() {
           if (measureResult === null) return;
         }
         shared.nasSpellContext = await collectSpellActionData(this);
-        await applyMetamagicSelections(this, shared.nasSpellContext);
+        const metamagicEnabled = game.settings.get(MODULE.ID, "enableMetamagicAutomation");
+        if (metamagicEnabled) {
+          await applyMetamagicSelections(this, shared.nasSpellContext);
+        }
         const restoreOverrides = applyActionUseOverrides(this, shared.nasSpellContext);
         try {
           await this.getTargets();
@@ -120,16 +123,18 @@ export function registerActionUseWrapper() {
           this.shared.chatData.flags ??= {};
           this.shared.chatData.flags[MODULE.ID] ??= {};
           this.shared.chatData.flags[MODULE.ID].actionOverrides ??= {};
-          this.shared.chatData.flags[MODULE.ID].metamagic ??= {};
-          if (shared.nasSpellContext?.metamagic?.persistent) {
-            this.shared.chatData.flags[MODULE.ID].metamagic.persistent = true;
-          }
-          if (shared.nasSpellContext?.metamagic?.dazing) {
-            this.shared.chatData.flags[MODULE.ID].metamagic.dazing = true;
-            this.shared.chatData.flags[MODULE.ID].metamagic.dazingRounds =
-              shared.nasSpellContext?.metamagic?.dazingRounds ?? 1;
-            this.shared.chatData.flags[MODULE.ID].metamagic.dazingSpellName =
-              shared.nasSpellContext?.metamagic?.dazingSpellName ?? "";
+          if (metamagicEnabled) {
+            this.shared.chatData.flags[MODULE.ID].metamagic ??= {};
+            if (shared.nasSpellContext?.metamagic?.persistent) {
+              this.shared.chatData.flags[MODULE.ID].metamagic.persistent = true;
+            }
+            if (shared.nasSpellContext?.metamagic?.dazing) {
+              this.shared.chatData.flags[MODULE.ID].metamagic.dazing = true;
+              this.shared.chatData.flags[MODULE.ID].metamagic.dazingRounds =
+                shared.nasSpellContext?.metamagic?.dazingRounds ?? 1;
+              this.shared.chatData.flags[MODULE.ID].metamagic.dazingSpellName =
+                shared.nasSpellContext?.metamagic?.dazingSpellName ?? "";
+            }
           }
           if (Array.isArray(shared.targets) && shared.targets.length) {
             this.shared.chatData.flags[MODULE.ID].targets = shared.targets

@@ -30,9 +30,11 @@ import { registerLegacyDamageOverride } from '../features/automation/damage/lega
 import { registerSystemApplyDamage } from '../features/automation/damage/systemApplyDamage.js';
 import { initializeSockets, initializeConditionIds } from './moduleSockets.js';
 import { initItemAttackFlagCopy } from '../features/automation/damage/flagCopy.js';
-import { handleConcealmentToggle } from '../features/automation/conditions/concealment/concealment.js';
+import { registerConcealedConditionWrappers } from '../features/automation/conditions/concealed/concealed.js';
 import { registerDamageSettingsHandlebarsHelpers } from '../common/settings/damageSettingsForms.js';
 import { registerDamageFootnoteHooks } from '../features/automation/damage/footnotes.js';
+import { hasHpUpdate } from '../features/automation/utils/healthUpdates.js';
+import { handleHtkCombatUpdate } from '../features/automation/utils/hardToKillCombat.js';
 
 const LEGACY_MODULE_IDS = [MODULE.LEGACY_AD, MODULE.LEGACY_IC];
 
@@ -190,6 +192,7 @@ Hooks.once("init", () => {
   initializeConditionIds();
   registerConditionFootnoteWrapper(isGrappleSelected);
   registerActionUseWrapper();
+  registerConcealedConditionWrappers();
 });
 
 Hooks.on("renderChatMessage", (app, html, data) => {
@@ -199,7 +202,9 @@ Hooks.on("renderChatMessage", (app, html, data) => {
   registerConfusionChatMessageHook();
   applyChatRangeOverrides(app, html);
   applyChatActivationOverrides(app, html);
-  applyEmpowerTooltipOverrides(html);
+  if (game.settings.get(MODULE.ID, "enableMetamagicAutomation")) {
+    applyEmpowerTooltipOverrides(html);
+  }
 });
 
 Hooks.on("renderChatLog", (_app, html) => {
@@ -231,15 +236,12 @@ Hooks.on('renderTokenHUD', (app, html, data) => {
   reorderTokenHUDConditions(html, data);
 });
 
-Hooks.on("pf1ToggleActorCondition", async (actor, conditionId, value) => {
-  if (isBlocked()) return;
-  await handleConcealmentToggle(actor, conditionId, value);
-});
-
 Hooks.on('renderAttackDialog', (dialog, html) => {
   if (isBlocked()) return;
   addGrappleCheckbox(dialog, html);
-  addMetamagicCheckbox(dialog, html);
+  if (game.settings.get(MODULE.ID, "enableMetamagicAutomation")) {
+    addMetamagicCheckbox(dialog, html);
+  }
 });
 
 Hooks.on('combatStart', async (combat) => {
@@ -293,6 +295,7 @@ Hooks.on('updateCombat', (combat, update, options, userId) => {
     if (game.user.isGM) {
       handleCombatTurn(combat, combatData);
       updateFlatFootedTracker(combat);
+      handleHtkCombatUpdate(combat, update);
     } else if (!game.user.isGM) {
       checkNextTokenFlatFooted(combat, combatData);
     }
@@ -302,6 +305,16 @@ Hooks.on('updateCombat', (combat, update, options, userId) => {
 Hooks.on('renderCombatTracker', (app, html, data) => {
   if (isBlocked()) return;
   handleCombatTrackerRender(app, html, data);
+});
+
+Hooks.on('preUpdateActor', (actorDocument, change, options) => {
+  try {
+    if (hasHpUpdate(change)) {
+      options._nasPrevHp = actorDocument.system?.attributes?.hp?.value;
+    }
+  } catch (_err) {
+    // ignore
+  }
 });
 
 Hooks.on('updateActor', async (actorDocument, change, options, userId) => {
@@ -323,7 +336,7 @@ Hooks.on('updateActor', async (actorDocument, change, options, userId) => {
 
   await handleDisabledOnUpdate(actorDocument, change);
   await handleEnergyDrainOnUpdate(actorDocument, change);
-  await handleUnconsciousOnUpdate(actorDocument, change);
+  await handleUnconsciousOnUpdate(actorDocument, change, options);
   await handleDeadOnUpdate(actorDocument, change);
 });
 

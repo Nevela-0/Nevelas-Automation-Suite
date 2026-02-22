@@ -266,8 +266,6 @@ export function populateDefaultTypes() {
 }
 
 async function handleReadyHook() {
-    console.log(damageConfig);
-
     const migrationKey = `migrationVersion`;
     const currentVersion = game.modules.get(MODULE.ID).version;
     let previousMigrationVersion;
@@ -376,8 +374,6 @@ function unregisterDamageTypes(damageTypesToUnregister) {
         const { key } = damageType;
         registry.unregister(MODULE.ID, key); 
     });
-
-    console.log("Unregistered damage types:", damageTypesToUnregister.map(dt => dt.key));
 }
 
 function reRegisterDamageTypes(damageTypesToReRegister) {
@@ -387,8 +383,6 @@ function reRegisterDamageTypes(damageTypesToReRegister) {
         const { key, value } = damageType;
         registry.register(MODULE.ID, key, value); 
     });
-
-    console.log("Re-registered damage types:", damageTypesToReRegister.map(dt => dt.key));
 }
 
 export const moduleConfig = {
@@ -414,6 +408,24 @@ export function registerNasSettings() {
     config: true,
     type: Boolean,
     default: false,
+  });
+
+  game.settings.register(MODULE.ID, 'enableDamageAutomation', {
+    name: game.i18n.localize("NAS.settings.enableDamageAutomation.name"),
+    hint: game.i18n.localize("NAS.settings.enableDamageAutomation.hint"),
+    scope: "world",
+    config: true,
+    type: Boolean,
+    default: true,
+  });
+
+  game.settings.register(MODULE.ID, 'enableMetamagicAutomation', {
+    name: game.i18n.localize("NAS.settings.enableMetamagicAutomation.name"),
+    hint: game.i18n.localize("NAS.settings.enableMetamagicAutomation.hint"),
+    scope: "world",
+    config: true,
+    type: Boolean,
+    default: true,
   });
 
   game.settings.register(MODULE.ID, 'automaticBuffs', {
@@ -756,6 +768,75 @@ function registerNasSettingsUi() {
   if (_nasSettingsUiRegistered) return;
   _nasSettingsUiRegistered = true;
 
+  function getSavedApplicationsScheme() {
+    let applicationsScheme = "dark";
+    try {
+      const uiConfig = game.settings.get("core", "uiConfig");
+      const scheme = uiConfig?.colorScheme?.applications;
+      if (scheme === "light") applicationsScheme = "light";
+    } catch (_err) {
+      // If core settings are unavailable for any reason, default to "dark".
+    }
+    return applicationsScheme;
+  }
+
+  function getSchemeFromUiConfigValue(value) {
+    if (value === "light") return "light";
+    if (value === "dark") return "dark";
+
+    // "" = Browser Default
+    try {
+      return globalThis.matchMedia?.("(prefers-color-scheme: light)")?.matches ? "light" : "dark";
+    } catch (_err) {
+      return "dark";
+    }
+  }
+
+  function applyNasScheme(scheme) {
+    document.querySelectorAll(".nas-settings-sections").forEach((el) => {
+      el.dataset.nasScheme = scheme;
+    });
+  }
+
+  // Live preview support: when the UIConfig window is open, changing the application color scheme
+  // should immediately update NAS settings styling (even before saving).
+  Hooks.on("renderUIConfig", (app, html) => {
+    const isJQ = typeof html?.find === "function";
+    const selector = 'select[name="core.uiConfig.colorScheme.applications"]';
+
+    if (isJQ) {
+      const $sel = html.find(selector);
+      if (!$sel?.length) return;
+
+      // Ensure idempotent binding across renders
+      $sel.off("change.nas-ui-scheme").on("change.nas-ui-scheme", function () {
+        applyNasScheme(getSchemeFromUiConfigValue(this.value));
+      });
+
+      // Apply immediately based on current (possibly unsaved) form value
+      applyNasScheme(getSchemeFromUiConfigValue($sel.val()));
+      return;
+    }
+
+    const sel = html?.querySelector?.(selector);
+    if (!sel) return;
+
+    if (!sel.dataset.nasListenerAttached) {
+      sel.dataset.nasListenerAttached = "true";
+      sel.addEventListener("change", () => {
+        applyNasScheme(getSchemeFromUiConfigValue(sel.value));
+      });
+    }
+
+    // Apply immediately based on current (possibly unsaved) form value
+    applyNasScheme(getSchemeFromUiConfigValue(sel.value));
+  });
+
+  // If the UIConfig window is closed without saving, revert NAS styling to the saved scheme.
+  Hooks.on("closeUIConfig", () => {
+    applyNasScheme(getSavedApplicationsScheme());
+  });
+
   Hooks.on('renderSettingsConfig', (app, html, data) => {
   const moduleId = MODULE.ID;
   const isJQ = typeof html?.find === "function";
@@ -824,12 +905,15 @@ function registerNasSettingsUi() {
     tabEl.prepend(container);
   }
 
+  container.dataset.nasScheme = getSavedApplicationsScheme();
+
   const sections = [
     {
       id: "general",
       title: "General",
       open: true,
       rows: [
+        () => getSettingRow("enableDamageAutomation"),
         () => getSettingRow("saveRollTokenInteraction"),
         () => getSettingRow("reorderAllConditions"),
         () => getMenuRow("migrationTool")
@@ -886,6 +970,7 @@ function registerNasSettingsUi() {
       title: "Metamagic Automation",
       open: false,
       rows: [
+        () => getSettingRow("enableMetamagicAutomation"),
         () => getSettingRow("metamagicCastTimeRule"),
         () => getSettingRow("persistentSpellTargetMode")
       ]
@@ -981,6 +1066,80 @@ function registerNasSettingsUi() {
       automaticBuffsCheckbox.dataset.nasListenerAttached = "true";
       automaticBuffsCheckbox.addEventListener("change", function () {
         toggleBuffSettingsVisibility(this.checked, dependentRows);
+      });
+    }
+  }
+
+  const enableDamageAutomationRow = getSettingRow("enableDamageAutomation");
+  const massiveDamageRow = getSettingRow("massiveDamage");
+  const damageTypePriorityMenuRow = getMenuRow("damageTypePriorityMenu");
+  const customDamageTypesMenuRow = getMenuRow("customSetting");
+
+  let enableDamageAutomationCheckbox;
+  if (isJQ) {
+    enableDamageAutomationCheckbox = enableDamageAutomationRow?.find?.("input");
+  } else {
+    enableDamageAutomationCheckbox = asElement(enableDamageAutomationRow)?.querySelector?.("input");
+  }
+
+  const damageDependentRows = [
+    massiveDamageRow,
+    damageTypePriorityMenuRow,
+    customDamageTypesMenuRow
+  ];
+
+  const damageEnabled = enableDamageAutomationCheckbox
+    ? isJQ
+      ? enableDamageAutomationCheckbox.prop("checked")
+      : enableDamageAutomationCheckbox.checked
+    : false;
+  toggleBuffSettingsVisibility(damageEnabled, damageDependentRows);
+
+  if (enableDamageAutomationCheckbox) {
+    if (isJQ) {
+      enableDamageAutomationCheckbox.off("change.nas-dmg").on("change.nas-dmg", function () {
+        toggleBuffSettingsVisibility($(this).prop("checked"), damageDependentRows);
+      });
+    } else if (!enableDamageAutomationCheckbox.dataset.nasListenerAttached) {
+      enableDamageAutomationCheckbox.dataset.nasListenerAttached = "true";
+      enableDamageAutomationCheckbox.addEventListener("change", function () {
+        toggleBuffSettingsVisibility(this.checked, damageDependentRows);
+      });
+    }
+  }
+
+  const enableMetamagicAutomationRow = getSettingRow("enableMetamagicAutomation");
+  const metamagicCastTimeRuleRow = getSettingRow("metamagicCastTimeRule");
+  const persistentSpellTargetModeRow = getSettingRow("persistentSpellTargetMode");
+
+  let enableMetamagicAutomationCheckbox;
+  if (isJQ) {
+    enableMetamagicAutomationCheckbox = enableMetamagicAutomationRow?.find?.("input");
+  } else {
+    enableMetamagicAutomationCheckbox = asElement(enableMetamagicAutomationRow)?.querySelector?.("input");
+  }
+
+  const metamagicDependentRows = [
+    metamagicCastTimeRuleRow,
+    persistentSpellTargetModeRow
+  ];
+
+  const metamagicEnabled = enableMetamagicAutomationCheckbox
+    ? isJQ
+      ? enableMetamagicAutomationCheckbox.prop("checked")
+      : enableMetamagicAutomationCheckbox.checked
+    : false;
+  toggleBuffSettingsVisibility(metamagicEnabled, metamagicDependentRows);
+
+  if (enableMetamagicAutomationCheckbox) {
+    if (isJQ) {
+      enableMetamagicAutomationCheckbox.off("change.nas-meta").on("change.nas-meta", function () {
+        toggleBuffSettingsVisibility($(this).prop("checked"), metamagicDependentRows);
+      });
+    } else if (!enableMetamagicAutomationCheckbox.dataset.nasListenerAttached) {
+      enableMetamagicAutomationCheckbox.dataset.nasListenerAttached = "true";
+      enableMetamagicAutomationCheckbox.addEventListener("change", function () {
+        toggleBuffSettingsVisibility(this.checked, metamagicDependentRows);
       });
     }
   }

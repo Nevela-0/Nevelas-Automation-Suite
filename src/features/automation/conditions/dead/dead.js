@@ -28,6 +28,9 @@ export async function handleDeadOnUpdate(actorDocument, change) {
     if (shouldApply) {
       await actorDocument.setCondition('dead', {overlay: true});
       await actorDocument.setCondition('prone', true); 
+      await actorDocument.setCondition('dying', false);
+      await actorDocument.setCondition('staggered', false);
+      await actorDocument.setCondition('unconscious', true);
     }
   }
 

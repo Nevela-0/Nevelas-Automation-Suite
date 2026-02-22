@@ -26,6 +26,9 @@ export function registerSystemApplyDamage() {
         MODULE.ID,
         "pf1.documents.actor.ActorPF.applyDamage",
         async function (wrapped, value = 0, options = {}) {
+            if (!game.settings.get(MODULE.ID, "enableDamageAutomation")) {
+                return wrapped(value, options);
+            }
             if (value === 0 || !Number.isFinite(value)) return wrapped(value, options);
 
             if (options._nasDamageDialog) return wrapped(value, options);
@@ -40,7 +43,18 @@ export function registerSystemApplyDamage() {
             if (!targets.length) return false;
 
             const isHealing = (value < 0) || options.isHealing === true;
-            const ratio = Number(options?.ratio);
+            const hasExplicitTargets = options?.targets != null;
+            const hasClickContext = options?.element != null || options?.event != null || options?.message != null;
+            if (isHealing && hasExplicitTargets && !hasClickContext) {
+                return wrapped(value, options);
+            }
+            let ratio = Number(options?.ratio);
+            if (!(Number.isFinite(ratio) && ratio > 0)) {
+                const elRatio = Number(options?.element?.dataset?.ratio);
+                if (Number.isFinite(elRatio) && elRatio > 0 && Array.isArray(options?.instances) && options.instances.length) {
+                    ratio = elRatio;
+                }
+            }
             const hasRatio = Number.isFinite(ratio) && ratio > 0 && ratio !== 1;
 
             const calcOpts = {

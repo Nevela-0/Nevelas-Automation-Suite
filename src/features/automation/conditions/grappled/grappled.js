@@ -1,5 +1,6 @@
 import { MODULE } from '../../../../common/module.js';
 import { GRAPPLE_FORM_KEY } from '../../utils/attackDialogControls.js';
+import { socket } from '../../../../integration/moduleSockets.js';
 
 const GRAPPLE_FLAG_KEY = "grappleContext";
 
@@ -53,9 +54,20 @@ export async function handleGrappleResolution(action) {
   if (attackTotal > cmdValue) {
     const targetActor = targetToken.actor;
     const attackerActor = action.token?.actor ?? action.actor;
-    await targetActor?.setCondition("grappled", true);
+    if (targetActor?.isOwner || game.user?.isGM) {
+      await targetActor?.setCondition("grappled", true);
+      await storeGrappleFlag(targetActor, attackerActor, attackTotal, cmdValue);
+    } else if (socket && targetToken?.document?.uuid) {
+      await socket.executeAsGM(
+        "applyGrappleToTarget",
+        targetToken.document.uuid,
+        attackerActor?.uuid ?? null,
+        attackTotal,
+        cmdValue
+      );
+    }
+
     await attackerActor?.setCondition("grappling", true);
-    await storeGrappleFlag(targetActor, attackerActor, attackTotal, cmdValue);
   }
 }
 

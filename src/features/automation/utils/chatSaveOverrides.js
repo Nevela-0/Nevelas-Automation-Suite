@@ -317,6 +317,7 @@ export function registerPersistentSpellSaveOverrides(html) {
   root.addEventListener(
     "click",
     async (event) => {
+      if (!game.settings.get(MODULE.ID, "enableMetamagicAutomation")) return;
       const button = event.target?.closest?.(SAVE_BUTTON_SELECTOR);
       if (!button) return;
       const message = getMessageFromEvent(event);
