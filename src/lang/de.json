@@ -4,6 +4,14 @@
       "blocked": "Nevela's Automation Suite ist mit den Legacy-Modulen {legacyList} nicht kompatibel. Diese Module werden nicht mehr unterstützt. Deaktiviere sie, um Nevela's Automation Suite zu verwenden. (Das Legacy-Migrationswerkzeug bleibt verfügbar.)"
     },
     "settings": {
+      "enableDamageAutomation": {
+        "name": "Schadensautomation aktivieren",
+        "hint": "Wenn deaktiviert, verändert Nevela's Automation Suite das PF1-Schadensanwendungs-Verhalten nicht (es wird an das System durchgereicht)."
+      },
+      "enableMetamagicAutomation": {
+        "name": "Metamagie-Automation aktivieren",
+        "hint": "Wenn deaktiviert, fügt Nevela's Automation Suite keine Metamagie-Oberfläche oder -Automatisierung hinzu."
+      },
       "damageTypePriority": {
         "name": "Benutzerdefinierte Schadensart-Priorität",
         "hint": "Füge benutzerdefinierte Schadensarten hinzu, damit sie als Schadensreduzierungsarten zählen. Magisch hat standardmäßig mindestens 1, Kalt-Eisen und Silber haben 3, Adamantin hat 4 und Gesinnungen haben 5."
@@ -216,7 +224,7 @@
           "label": "Brennend",
           "description": "Eine brennende Kreatur erleidet sofort und zu Beginn jeder weiteren Runde 1W6 Feuerschaden, bis die Flammen gelöscht sind. Jede Runde kann die Kreatur einen Reflexwurf SG 15 ablegen, um das Feuer zu löschen (Erfolg beendet den Zustand). Ins Wasser springen oder die Flammen ersticken gewährt einen Bonus von +4 auf diesen Wurf. Entflammbare Gegenstände können ebenfalls Feuer fangen und erfordern eigene Rettungswürfe."
         },
-        "concealment": {
+        "concealed": {
           "label": "Getarnt",
           "description": "<p>Angriffe unterliegen einer Fehlschlagchance, weil das Ziel getarnt ist. Normale Tarnung hat eine niedrigere Erfolgsschwelle als vollständige Tarnung.</p>"
         },
@@ -290,11 +298,11 @@
         "GrappleNoTargets": "Ringkampf erfordert mindestens ein Ziel.",
         "GrappleFootnote": "+[[5]] Situationsbonus auf Ringkampfproben gegen dasselbe gegriffene Ziel in nachfolgenden Runden.",
         "GrappleConcentrationDC": "Konzentrations-SG gegen Ringkampf: {dc} (10 + Zaubergrad {spellLevel} + Ringkampf-Ergebnis {grappleTotal}).",
-        "ConcealmentDialogTitle": "Verschleierungsart wählen",
-        "ConcealmentNormal": "Normal (20%)",
-        "ConcealmentTotal": "Vollständig (50%)",
-        "ConcealmentFootnote": "{variant}: Fehlschlagchance-Wurf {roll}; Erfolg ab {threshold}+.",
-        "ConcealmentSelectionCanceled": "Verschleierungsauswahl abgebrochen."
+        "ConcealedDialogTitle": "Tarnungsart wählen",
+        "ConcealedNormal": "Normal (20%)",
+        "ConcealedTotal": "Vollständig (50%)",
+        "ConcealedFootnote": "{variant}: Fehlschlagchance-Wurf {roll}; Erfolg ab {threshold}+.",
+        "ConcealedSelectionCanceled": "Tarnungsauswahl abgebrochen."
       },
       "sockets": {
         "MovementRestrictionRemoved": "Bewegungseinschränkung vom Token entfernt.",
@@ -302,6 +310,8 @@
         "HardToKillChoice": "Schwer zu töten: Wahl",
         "ContinueFighting": "Weiterkämpfen",
         "FallUnconscious": "Bewusstlos werden",
+        "UseFeatureYes": "Verwenden",
+        "UseFeatureNo": "Nicht verwenden",
         "MaxMoveWarning": "Dieses Token kann sich nicht mehr als {limitFeet} Fuß bewegen.",
         "BlindMovementSpeedTitle": "Geschwindigkeitsart wählen",
         "BlindMovementSpeedPrompt": "Wähle, welche Geschwindigkeitsart diese Bewegung nutzt.",
@@ -309,7 +319,17 @@
         "BlindMovementCheckTitle": "Blindbewegungsprobe",
         "RollAcrobatics": "Akrobatik würfeln",
         "HardToKillPrompt": "{name} hat die Fähigkeit „Schwer zu töten“. Möchtest du weiterkämpfen oder bewusstlos werden?",
-        "BlindMovementCheckPrompt": "{name} ist blind und muss eine Akrobatikprobe SG 10 ablegen, um sich zu bewegen, ohne zu Boden zu gehen."
+        "BlindMovementCheckPrompt": "{name} ist blind und muss eine Akrobatikprobe SG 10 ablegen, um sich zu bewegen, ohne zu Boden zu gehen.",
+        "DiehardTitle": "Unverwüstlich",
+        "DiehardPrompt": "{name} ist Unverwüstlich. Möchtest du weiterkämpfen (wie kampfunfähig) oder bewusstlos werden?",
+        "FightOnTitle": "Weiterkämpfen",
+        "FightOnPrompt": "{name} kann Weiterkämpfen nutzen, um temporäre Trefferpunkte zu erhalten. Jetzt verwenden?",
+        "OrcFerocityTitle": "Orkische Wildheit",
+        "OrcFerocityPrompt": "{name} kann Orkische Wildheit nutzen, um noch 1 Runde weiterzukämpfen. Jetzt verwenden?",
+        "AkitonianFerocityTitle": "Akitonische Wildheit",
+        "AkitonianFerocityPrompt": "{name} kann Akitonische Wildheit nutzen, um noch 1 Runde weiterzukämpfen. Jetzt verwenden?",
+        "ResolveUnstoppableTitle": "Entschlossenheit (Unaufhaltsam)",
+        "ResolveUnstoppablePrompt": "{name} kann einen Einsatz von Entschlossenheit ausgeben, um sich zu stabilisieren und bei Bewusstsein zu bleiben. Jetzt verwenden?"
       }
     },
     "buffs": {
@@ -347,6 +367,31 @@
       },
       "PersistentSave": "Rettungswurf gegen Beharrlichen Zauber",
       "PersistentSaveSecond": "Beharrlicher Zauber (zweiter Rettungswurf)"
+    },
+    "clusteredShots": {
+      "buttonLabel": "Treffersalve 🎯",
+      "labels": {
+        "normal": "Normal",
+        "critical": "Kritisch"
+      },
+      "tooltips": {
+        "include": "In Treffersalve einbeziehen",
+        "applyBeforeDr": "Schaden vor SR anwenden (Treffersalve)"
+      },
+      "warnings": {
+        "noAttacksFound": "Keine Angriffe in dieser Nachricht gefunden.",
+        "noAttacksSelected": "Keine Angriffe für Treffersalve ausgewählt. Bitte markiere mindestens einen Angriff.",
+        "noDamageFound": "Treffersalve hat keinen Schaden zum Anwenden gefunden.",
+        "selectTargets": "Bitte wähle mindestens ein Token, um Schaden anzuwenden."
+      },
+      "errors": {
+        "noMessageId": "Nachrichten-ID nicht gefunden.",
+        "noMessageData": "Nachrichtendaten nicht gefunden.",
+        "applyDamageUnavailable": "ApplyDamage ist nicht verfügbar."
+      },
+      "info": {
+        "applied": "{totalDamage} Punkte Treffersalve-Schaden auf {targets} Ziel(e) angewendet."
+      }
     }
   }
 }
