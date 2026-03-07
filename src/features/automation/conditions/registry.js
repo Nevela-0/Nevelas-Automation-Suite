@@ -99,7 +99,10 @@ export function registerConditions(registry) {
         journal: "Compendium.nevelas-automation-suite.Conditions.JournalEntry.7OPIeT3M6ahk31kn.JournalEntryPage.QeJmifftmLMo2MOl",
         flags: {},
         mechanics: {
-          changes: [],
+          changes: [
+            {"formula": "-4", "operator": "add", "target": "dexPen", "type": "untyped", "priority": 0}, 
+            {"formula": "-2", "operator": "add", "target": "attack", "type": "untyped", "priority": 0}
+          ],
           flags: []
         },
         name: game.i18n.localize("NAS.conditions.list.grappling.label"),

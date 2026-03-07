@@ -50,6 +50,22 @@
       "saveRollTokenInteraction": {
         "name": "Save Roll Token Interaction",
         "hint": "Add a clickable token image to saving throw roll messages."
+      },
+      "skipSurprisedTokens": {
+        "name": "Skip Surprised Tokens",
+        "hint": "Enable to automatically skip combatants marked as Surprised during the surprise round."
+      }
+    },
+    "combat": {
+      "buttons": {
+        "surpriseRound": {
+          "name": "Surprise Round",
+          "tooltip": "Start a surprise round"
+        },
+        "surprised": {
+          "name": "Surprised",
+          "tooltip": "Surprised"
+        }
       }
     },
     "damageTypes": {
@@ -357,7 +373,12 @@
       "UpdatedExisting": "Updated existing {name} on {actor}",
       "Applied": "Applied {name} to {actor}",
       "FailedToApply": "Failed to apply {name}: {error}",
-      "NotEnoughSpellSlots": "Not enough spell slots to cast this spell on all targets! ({remaining} remaining, {needed} needed)"
+      "NotEnoughSpellSlots": "Not enough spell slots to cast this spell on all targets! ({remaining} remaining, {needed} needed)",
+      "TargetingRejectedNoTargetsStrict": "Unable to apply automatic buffs for {name}: no valid targets were selected.",
+      "TargetingRejectedDisposition": "Unable to apply automatic buffs for {name}: all selected targets were filtered out by disposition settings.",
+      "TargetingRejectedManualSelection": "Unable to apply automatic buffs for {name}: target selection was canceled or no targets were selected.",
+      "TargetingRejectedCommunalSelection": "Unable to apply automatic buffs for {name}: communal target/duration selection was canceled.",
+      "TargetingRejectedUnknown": "Unable to apply automatic buffs for {name}: target validation failed."
     },
     "metamagic": {
       "PersistentNoTargets": {

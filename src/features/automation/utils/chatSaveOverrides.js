@@ -189,7 +189,6 @@ async function resolveTargetsFromMessage(message) {
   const uuids =
     message?.flags?.[MODULE.ID]?.targets ??
     message?.system?.targets ??
-    message?.data?.system?.targets ??
     [];
   if (!Array.isArray(uuids) || uuids.length === 0) return [];
   const resolved = await Promise.all(

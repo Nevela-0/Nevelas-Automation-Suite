@@ -519,6 +519,15 @@ export function registerNasSettings() {
     default: true,
   });
 
+  game.settings.register(MODULE.ID, 'skipSurprisedTokens', {
+    name: game.i18n.localize("NAS.settings.skipSurprisedTokens.name"),
+    hint: game.i18n.localize("NAS.settings.skipSurprisedTokens.hint"),
+    scope: "world",
+    config: true,
+    type: Boolean,
+    default: false,
+  });
+
   game.settings.register(MODULE.ID, 'blindMovementCheck', {
     name: 'Enable Blind Movement Notification',
     hint: 'Enable to notify users to roll an Acrobatics check when a blind token attempts to move.',
@@ -911,9 +920,8 @@ function registerNasSettingsUi() {
     {
       id: "general",
       title: "General",
-      open: true,
+      open: false,
       rows: [
-        () => getSettingRow("enableDamageAutomation"),
         () => getSettingRow("saveRollTokenInteraction"),
         () => getSettingRow("reorderAllConditions"),
         () => getMenuRow("migrationTool")
@@ -922,7 +930,7 @@ function registerNasSettingsUi() {
     {
       id: "buff",
       title: "Buff Automation",
-      open: true,
+      open: false,
       rows: [
         () => getSettingRow("automaticBuffs"),
         () => getMenuRow("buffCompendiaSelector"),
@@ -940,6 +948,7 @@ function registerNasSettingsUi() {
       title: "Damage Automation",
       open: false,
       rows: [
+        () => getSettingRow("enableDamageAutomation"),
         () => getSettingRow("massiveDamage"),
         () => getMenuRow("damageTypePriorityMenu"),
         () => getMenuRow("customSetting")
@@ -953,6 +962,7 @@ function registerNasSettingsUi() {
         () => getSettingRow("handleConfused"),
         () => getSettingRow("restrictMovement"),
         () => getSettingRow("autoApplyFF"),
+        () => getSettingRow("skipSurprisedTokens"),
         () => getSettingRow("blindMovementCheck"),
         () => getSettingRow("disableAtZeroHP"),
         () => getSettingRow("autoApplyED"),

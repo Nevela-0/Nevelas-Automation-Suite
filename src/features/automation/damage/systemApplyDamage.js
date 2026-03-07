@@ -1,4 +1,5 @@
 import { MODULE } from '../../../common/module.js';
+import { checkMassiveDamage } from '../../../integration/moduleSockets.js';
 import { abilityDeltaCalculation } from './ability.js';
 import { buildAbilityDmgEntries, splitAbilityInstances } from './abilityTags.js';
 import { applyNasDefenseBypass } from './nasBypass.js';
@@ -159,7 +160,31 @@ export function registerSystemApplyDamage() {
                 const applyDamageOpts = app._getTargetDamageOptions(targetModel);
                 applyDamageOpts._nasDamageDialog = true;
 
-                promises.push(wrapped.call(actor, appliedValue, applyDamageOpts));
+                promises.push((async () => {
+                    const result = await wrapped.call(actor, appliedValue, applyDamageOpts);
+                    if (result && game.settings.get(MODULE.ID, "massiveDamage")) {
+                        const token =
+                            actor?.token?.object ??
+                            actor?.token ??
+                            actor?.getActiveTokens?.(true, true)?.[0] ??
+                            actor?.getActiveTokens?.()?.[0] ??
+                            null;
+
+                        if (token) {
+                            // Mirror ActorPF.applyDamage's ratio/reduction math to get the final applied damage value.
+                            let finalDamage = Math.floor(Math.max(0, appliedValue) * (applyDamageOpts?.ratio ?? 1));
+                            finalDamage -= Math.min(finalDamage, applyDamageOpts?.reduction ?? 0);
+                            finalDamage = Math.floor(finalDamage);
+
+                            if (finalDamage > 0) {
+                                const maxHP = actor?.system?.attributes?.hp?.max ?? 0;
+                                checkMassiveDamage(finalDamage, maxHP, token);
+                            }
+                        }
+                    }
+
+                    return result;
+                })());
             }
 
             return Promise.all(promises);

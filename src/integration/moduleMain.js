@@ -3,7 +3,7 @@ import { onRenderChatMessage } from '../features/buttons/healing.js';
 import { addClusteredShotsButton } from '../features/buttons/clusteredshots.js';
 import { handleCombatTrackerRender } from '../features/buttons/surpriseround.js';
 import { DamageCommands } from '../features/commands/damageCommands.js';
-import { handleCombatTurn, handleCombatRound, handleFlatFootedOnCombatStart } from '../features/automation/combat/combat.js';
+import { handleCombatTurn, handleCombatRound, handleFlatFootedOnCombatStart, skipIneligibleSurpriseCombatants } from '../features/automation/combat/combat.js';
 import { registerConcealedConditionWrappers } from '../features/automation/conditions/concealed/concealed.js';
 import { initializeSockets, initializeConditionIds } from './moduleSockets.js';
 import { initItemAttackFlagCopy } from '../features/automation/damage/flagCopy.js';
@@ -124,11 +124,22 @@ export function registerNasModule() {
     updateFlatFootedTracker(combat);
   });
 
-  Hooks.on('updateCombat', (combat, update, options, userId) => {
-    if (((combat.previous?.round === combat.current?.round) || (combat.previous?.round === 0)) &&
+  Hooks.on('updateCombat', async (combat, update, options, userId) => {
+    const startupShortCircuit = (((combat.previous?.round === combat.current?.round) || (combat.previous?.round === 0)) &&
       ((combat.previous?.turn === combat.current?.turn) || (combat.previous?.turn === null)) &&
       (combat.previous?.tokenId === combat.turns[0]?.tokenId || combat.previous?.tokenId === null)
-    ) return;
+    );
+
+    const hasTurnUpdate = update?.turn !== undefined && update?.turn !== null;
+    const hasRoundUpdate = update?.round !== undefined && update?.round !== null;
+    const isTurnOrRoundUpdate = hasTurnUpdate || hasRoundUpdate;
+
+    if (game.user.isGM && userId === game.user.id && isTurnOrRoundUpdate && options?.nasSurpriseSkip !== true) {
+      const didSkip = await skipIneligibleSurpriseCombatants(combat);
+      if (didSkip) return;
+    }
+
+    if (startupShortCircuit) return;
 
     if (update.round !== undefined && game.user.isGM && userId === game.user.id) {
       handleCombatRound(combat, update.round);

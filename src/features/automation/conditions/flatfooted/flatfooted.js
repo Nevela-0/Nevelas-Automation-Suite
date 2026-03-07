@@ -60,6 +60,10 @@ export function handleFlatFootedCondition(combat, combatData) {
     (previousRound === currentRound && previousTurn > currentTurn);
   
   if (isMovingBackward) {
+    const isRoundBackward = previousRound > currentRound;
+    if (isRoundBackward) {
+      return;
+    }
     for (const [tokenId, trackerData] of Object.entries(ffTracker)) {
       if (!trackerData || !trackerData.removalInfo) continue;
       

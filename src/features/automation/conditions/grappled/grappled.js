@@ -1,8 +1,13 @@
 import { MODULE } from '../../../../common/module.js';
-import { GRAPPLE_FORM_KEY } from '../../utils/attackDialogControls.js';
+import {
+  GRAPPLE_CMB_ATTACK_TYPE,
+  GRAPPLE_CMB_MARKER,
+  GRAPPLE_FORM_KEY,
+} from '../../utils/attackDialogControls.js';
 import { socket } from '../../../../integration/moduleSockets.js';
 
 const GRAPPLE_FLAG_KEY = "grappleContext";
+export { GRAPPLE_CMB_ATTACK_TYPE, GRAPPLE_CMB_MARKER };
 
 export function isGrappleSelected(action) {
   return action?.formData?.[GRAPPLE_FORM_KEY] ?? action?.shared?.formData?.[GRAPPLE_FORM_KEY];
@@ -16,6 +21,26 @@ function getPrimaryTarget(action) {
 function getPrimaryAttackTotal(action) {
   const chatAttack = action?.shared?.chatAttacks?.[0];
   return chatAttack?.attack?.total ?? null;
+}
+
+function getGrappleCmbAttackTotal(action) {
+  const attacks = action?.shared?.attacks ?? [];
+  const cmbAttack = attacks.find((atk) => atk?.type === GRAPPLE_CMB_ATTACK_TYPE);
+  return cmbAttack?.chatAttack?.attack?.total ?? null;
+}
+
+export function isGrappleCmbAttack(attackLike) {
+  return attackLike?.type === GRAPPLE_CMB_ATTACK_TYPE;
+}
+
+export function createGrappleCmbAttackEntry() {
+  const cmbLabel = game.i18n.localize("PF1.CMBAbbr");
+  const grappleLabel = game.i18n.localize("NAS.conditions.main.GrappleCheckbox");
+  return {
+    type: GRAPPLE_CMB_ATTACK_TYPE,
+    label: `${cmbLabel} (${grappleLabel})`,
+    attackBonus: GRAPPLE_CMB_MARKER,
+  };
 }
 
 function getTokenCmd(targetToken) {
@@ -45,7 +70,7 @@ export async function handleGrappleResolution(action) {
     return;
   }
 
-  const attackTotal = getPrimaryAttackTotal(action);
+  const attackTotal = getGrappleCmbAttackTotal(action) ?? getPrimaryAttackTotal(action);
   if (attackTotal === null || attackTotal === undefined) return;
 
   const cmdValue = getTokenCmd(targetToken);
