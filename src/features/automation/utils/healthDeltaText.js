@@ -83,6 +83,17 @@ const CATEGORY_STYLES = {
     tokenSide: "left",
     arc: -0.3,
     strokeThickness: 3
+  },
+  absorption: {
+    positive: "#ffffff",
+    negative: "#ffffff",
+    direction: { positive: "TOP", negative: "TOP" },
+    jitter: 0.55,
+    distance: 0.55,
+    laneOffset: { x: 0, y: -0.18 },
+    tokenSide: "right",
+    arc: 0,
+    strokeThickness: 3
   }
 };
 
@@ -96,7 +107,6 @@ function combatTextMode() {
     if (COMBAT_TEXT_MODES.has(mode)) return mode;
   }
 
-  // Compatibility for worlds that enabled the first boolean version before modes existed.
   if (settingRegistered("enhancedCombatText") && game.settings.get(MODULE.ID, "enhancedCombatText") === true) {
     return "enhanced";
   }
@@ -117,6 +127,7 @@ function categoryForDeltaKey(key = "") {
   if (root === "vigor" && branch === "temp") return "temp";
   if (root === "hp" && branch === "nonlethal") return "nonlethal";
   if (root === "energyDrain") return "energyDrain";
+  if (root === "absorption") return "absorption";
   if (["hp", "vigor", "wounds"].includes(root)) return root;
   if (parts.some((part) => ["damage", "drain", "userPenalty", "penalty"].includes(part))) return "ability";
   return null;
@@ -254,7 +265,6 @@ function renderCinematicTextInternal(actor, options = {}, textData = {}, style, 
   try {
     if (game.settings.get("core", "scrollingStatusText") !== true) return true;
   } catch (_err) {
-    // If the core setting is unavailable, let the renderer continue.
   }
 
   const token = resolveActorToken(actor);
@@ -344,6 +354,22 @@ function renderCinematicText(actor, options = {}, textData = {}, style, context)
 }
 
 function styleHealthDeltaText(actor, options = {}, textData = {}) {
+  const context = consumeCombatTextContext(actor);
+  if (context?.nasTemporaryHpSpent > 0 && !options._nasTemporaryHpMerged) {
+    const nativeTempHpSpent = options.key === "hp.temp"
+      ? Math.max(0, Math.floor(Math.abs(Number(options.value) || 0)))
+      : 0;
+    if (nativeTempHpSpent > 0) {
+      const totalTempHpSpent = context.nasTemporaryHpSpent + nativeTempHpSpent;
+      options.label = temporaryHpCombatTextLabel(totalTempHpSpent);
+      options.value = -totalTempHpSpent;
+    } else {
+      const tempLabel = temporaryHpCombatTextLabel(context.nasTemporaryHpSpent);
+      options.label = options.label ? `${tempLabel} / ${options.label}` : tempLabel;
+    }
+    options._nasTemporaryHpMerged = true;
+  }
+
   const mode = combatTextMode();
   if (mode === "off") return;
 
@@ -355,8 +381,103 @@ function styleHealthDeltaText(actor, options = {}, textData = {}) {
 
   if (mode !== "cinematic" || !canRenderCinematicText()) return;
 
-  const context = consumeCombatTextContext(actor);
   if (renderCinematicText(actor, options, textData, style, context)) return false;
+}
+
+function absorptionCombatTextLabel(amount) {
+  const value = Math.max(0, Math.floor(Number(amount) || 0));
+  const key = "NAS.features.automation.chatSummary.absorptionCombatText";
+  if (globalThis.game?.i18n?.has?.(key)) return game.i18n.format(key, { amount: value });
+  return `Absorbed ${value}`;
+}
+
+function temporaryHpCombatTextLabel(amount, { positive = false } = {}) {
+  const value = Math.max(0, Math.floor(Number(amount) || 0));
+  const signed = `${positive ? "+" : "-"}${value}`;
+  const key = "PF1.ActiveFeedback.Deltas.TempHP";
+  if (globalThis.game?.i18n?.has?.(key)) return game.i18n.format(key, { value: signed });
+  return `${signed} Temp. HP`;
+}
+
+export async function showAbsorptionCombatText(actor, amount) {
+  const value = Math.max(0, Math.floor(Number(amount) || 0));
+  if (!actor || value <= 0) return false;
+
+  const token = resolveActorToken(actor);
+  const origin = token?.center ?? token?.object?.center;
+  if (!origin || !globalThis.canvas?.interface?.createScrollingText) return false;
+
+  const label = absorptionCombatTextLabel(value);
+  const textData = {
+    anchor: globalThis.CONST?.TEXT_ANCHOR_POINTS?.CENTER,
+    direction: globalThis.CONST?.TEXT_ANCHOR_POINTS?.TOP,
+    fontSize: Math.max((globalThis.canvas?.grid?.size ?? 72) / 3, 24),
+    fill: "#ffffff",
+    stroke: 0x000000,
+    strokeThickness: 2.5,
+    jitter: 0.5
+  };
+  const options = {
+    label,
+    positive: true,
+    color: "#ffffff",
+    value,
+    key: "absorption.prevented"
+  };
+
+  const hookResult = globalThis.Hooks?.call?.("pf1HealthDeltaRender", actor, options, textData);
+  if (hookResult === false) return true;
+  await globalThis.canvas.interface.createScrollingText(origin, label, textData);
+  return true;
+}
+
+async function showTemporaryHpDeltaCombatText(actor, amount, { positive = false } = {}) {
+  const value = Math.max(0, Math.floor(Number(amount) || 0));
+  if (!actor || value <= 0) {
+    return false;
+  }
+
+  const token = resolveActorToken(actor);
+  const origin = token?.center ?? token?.object?.center;
+  if (!origin || !globalThis.canvas?.interface?.createScrollingText) {
+    return false;
+  }
+
+  const textData = {
+    anchor: globalThis.CONST?.TEXT_ANCHOR_POINTS?.CENTER,
+    direction: positive
+      ? globalThis.CONST?.TEXT_ANCHOR_POINTS?.TOP
+      : globalThis.CONST?.TEXT_ANCHOR_POINTS?.RIGHT,
+    fontSize: Math.max((globalThis.canvas?.grid?.size ?? 72) / 3, 24),
+    fill: positive ? "#8cff2f" : "#ff8a2a",
+    stroke: 0x000000,
+    strokeThickness: 2.5,
+    jitter: 0.85,
+    distance: Math.max((globalThis.canvas?.grid?.size ?? 72) * 0.55, 24)
+  };
+  const label = temporaryHpCombatTextLabel(value, { positive });
+  const options = {
+    label,
+    key: "hp.temp",
+    value: positive ? value : -value,
+    positive
+  };
+  const hookResult = globalThis.Hooks?.call?.("pf1HealthDeltaRender", actor, options, textData);
+  if (hookResult === false) return true;
+  try {
+    await globalThis.canvas.interface.createScrollingText(origin, label, textData);
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
+export async function showTemporaryHpCombatText(actor, amount) {
+  return showTemporaryHpDeltaCombatText(actor, amount, { positive: false });
+}
+
+export async function showTemporaryHpGainCombatText(actor, amount) {
+  return showTemporaryHpDeltaCombatText(actor, amount, { positive: true });
 }
 
 export function registerHealthDeltaTextEnhancer() {

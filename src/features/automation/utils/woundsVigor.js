@@ -1,4 +1,5 @@
 import { MODULE } from '../../../common/module.js';
+import { getCreatureTypeState } from './creatureTypeUtils.js';
 
 function getPf1HealthConfig() {
   return game.settings.get('pf1', 'healthConfig');
@@ -27,131 +28,8 @@ export function isWoundsVigorActive(actor) {
   return actorUsesWoundsVigor(actor);
 }
 
-function parseAliasList(value) {
-  if (Array.isArray(value)) {
-    return value
-      .map((entry) => String(entry ?? '').trim().toLowerCase())
-      .filter(Boolean);
-  }
-  const text = String(value ?? '');
-  return text
-    .split(/[,;|]/)
-    .map((entry) => entry.trim().toLowerCase())
-    .filter(Boolean);
-}
-
-function addCollectionValues(out, source) {
-  if (!source) return;
-  if (typeof source === 'string') {
-    parseAliasList(source).forEach((entry) => out.add(entry));
-    return;
-  }
-  if (Array.isArray(source)) {
-    source.forEach((entry) => {
-      const text = String(entry ?? '').trim().toLowerCase();
-      if (text) out.add(text);
-    });
-    return;
-  }
-  if (typeof source.forEach === 'function') {
-    source.forEach((entry) => {
-      const text = String(entry ?? '').trim().toLowerCase();
-      if (text) out.add(text);
-    });
-    return;
-  }
-  if (typeof source === 'object') {
-    Object.values(source).forEach((entry) => addCollectionValues(out, entry));
-  }
-}
-
-function collectCreatureTypeEvidence(actor) {
-  const out = new Set();
-  const traits = actor?.system?.traits ?? {};
-
-  // Trait-based evidence (condition immunities + PF1 type/subtype sets).
-  addCollectionValues(out, traits?.ci?.names);
-  addCollectionValues(out, traits?.ci?.custom);
-  addCollectionValues(out, traits?.creatureTypes?.standard);
-  addCollectionValues(out, traits?.creatureTypes?.total);
-  addCollectionValues(out, traits?.creatureTypes?.names);
-  addCollectionValues(out, traits?.creatureSubtypes?.standard);
-  addCollectionValues(out, traits?.creatureSubtypes?.total);
-  addCollectionValues(out, traits?.creatureSubtypes?.names);
-
-  // Class/race evidence for edge cases where PF1 booleans are stale or wrong.
-  const classes = actor?.classes ?? {};
-  Object.entries(classes).forEach(([key, cls]) => {
-    const classKey = String(key ?? '').trim().toLowerCase();
-    if (classKey) out.add(classKey);
-    const className = String(cls?.name ?? '').trim().toLowerCase();
-    if (className) out.add(className);
-  });
-
-  const raceName = String(actor?.race?.name ?? actor?.system?.details?.race ?? '').trim().toLowerCase();
-  if (raceName) out.add(raceName);
-
-  return Array.from(out);
-}
-
-function matchNeedles(evidence, needles) {
-  if (!evidence.length || !needles.length) return false;
-  return evidence.some((entry) => needles.some((needle) => entry.includes(needle)));
-}
-
-function getTypeNeedles(kind) {
-  const translations = game.settings.get(MODULE.ID, 'translations') || {};
-  const translatedTrait = String(translations?.[kind] ?? `${kind} traits`).trim().toLowerCase();
-
-  const classAliasKey = kind === 'construct' ? 'constructClassNames' : 'undeadClassNames';
-  const raceAliasKey = kind === 'construct' ? 'constructRaceNames' : 'undeadRaceNames';
-  const classAliases = parseAliasList(translations?.[classAliasKey]);
-  const raceAliases = parseAliasList(translations?.[raceAliasKey]);
-
-  const needles = new Set([
-    kind,
-    `${kind} traits`,
-    translatedTrait,
-    ...classAliases,
-    ...raceAliases
-  ].map((entry) => String(entry ?? '').trim().toLowerCase()).filter(Boolean));
-
-  return Array.from(needles);
-}
-
-function resolveTypeByBooleanAndEvidence({ boolValue, evidence, needles }) {
-  const hasEvidence = evidence.length > 0;
-  const fromEvidence = matchNeedles(evidence, needles);
-  if (!hasEvidence) return Boolean(boolValue);
-  if (fromEvidence !== Boolean(boolValue)) return fromEvidence;
-  return fromEvidence;
-}
-
 export function getWvCreatureTypeState(actor) {
-  const traits = actor?.system?.traits ?? {};
-  const boolConstruct = Boolean(traits?.construct);
-  const boolUndead = Boolean(traits?.undead);
-  const boolLiving = traits?.living;
-  const evidence = collectCreatureTypeEvidence(actor);
-
-  // String evidence is preferred whenever it contradicts booleans.
-  const isConstruct = resolveTypeByBooleanAndEvidence({
-    boolValue: boolConstruct,
-    evidence,
-    needles: getTypeNeedles('construct')
-  });
-  const isUndead = resolveTypeByBooleanAndEvidence({
-    boolValue: boolUndead,
-    evidence,
-    needles: getTypeNeedles('undead')
-  });
-
-  const livingFromTypes = !(isConstruct || isUndead);
-  const isLiving = (typeof boolLiving === 'boolean' && boolLiving === livingFromTypes)
-    ? boolLiving
-    : livingFromTypes;
-
-  return { isConstruct, isUndead, isLiving };
+  return getCreatureTypeState(actor);
 }
 
 export function isWvNoWoundsActor(actor) {

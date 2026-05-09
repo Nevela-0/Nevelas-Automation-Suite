@@ -1,13 +1,19 @@
 import { MODULE } from "../../../common/module.js";
+import { createNasId } from "../utils/nasIds.js";
 import { elementFromHtmlLike } from "../../../common/foundryCompat.js";
 import { socket } from "../../../integration/moduleSockets.js";
+import {
+  canUserSeeTokenEffectBadge,
+  refreshTokenEffectBadgesForActor,
+  refreshTokenEffectBadgesForScene,
+  registerTokenEffectBadgeProvider
+} from "../utils/tokenEffectBadges.js";
 import { tokenCanSeeToken, tokenDistance } from "../utils/tokenVisibility.js";
 
 export const MIRROR_IMAGE_SPELL_UUID = "Compendium.pf1.spells.Item.4jsss37x0pplib8f";
 export const MIRROR_IMAGE_BUFF_UUID = "Compendium.nevelas-automation-suite.Buffs.Item.01rgplbC3MNbskNF";
 
 const MIRROR_IMAGE_FLAG = "mirrorImage";
-const MIRROR_IMAGE_BADGE_NAME = "nasMirrorImageCountBadge";
 const MIRROR_IMAGE_INLINE_ROLL_FLAG = "nasMirrorImageInlineRoll";
 const TOUCH_ATTACK_TYPES = new Set(["msak", "rsak", "twak"]);
 const IMAGE_RESULTS_THAT_BLOCK_DAMAGE = new Set(["imageHit", "nearMissImageDestroyed", "missNoImage"]);
@@ -185,16 +191,11 @@ function getMirrorImageStateFromBuff(buff) {
 }
 
 export function refreshMirrorImageTokenEffects(actor) {
-  const tokens = actor?.getActiveTokens?.(true, true) ?? actor?.getActiveTokens?.() ?? [];
-  for (const token of tokens) {
-    token?.drawEffects?.();
-  }
+  refreshTokenEffectBadgesForActor(actor);
 }
 
 export function refreshMirrorImageSceneTokenEffects() {
-  for (const token of canvas?.tokens?.placeables ?? []) {
-    if (getMirrorImageBuff(token?.actor, { includeInactive: true })) token?.drawEffects?.();
-  }
+  refreshTokenEffectBadgesForScene((token) => Boolean(getMirrorImageBuff(token?.actor, { includeInactive: true })));
 }
 
 export function isMirrorImageBuff(item) {
@@ -487,7 +488,7 @@ async function resolveAgainstMirrorImage({
   attackIndex,
   action,
   recordFullMiss = false,
-  operationId = foundry.utils.randomID(16)
+  operationId = createNasId(16)
 } = {}) {
   if (!sourceActor || !defenderActor || !Number.isFinite(Number(attackTotal))) return null;
   if (!attackerCanBeFooled({ sourceActor, targetActor: defenderActor, sourceToken, targetToken })) return null;
@@ -935,88 +936,19 @@ export function renderMirrorImageChatControls(message, htmlLike) {
   });
 }
 
-function clearMirrorImageBadges(token) {
-  const effects = token?.effects;
-  if (!effects?.children) return;
-  const stack = [...effects.children];
-  while (stack.length) {
-    const child = stack.pop();
-    if (!child) continue;
-    if (child.name === MIRROR_IMAGE_BADGE_NAME) {
-      child.parent?.removeChild?.(child);
-      child.destroy?.({ children: true });
-      continue;
+export function registerMirrorImageTokenEffectBadgeProvider() {
+  registerTokenEffectBadgeProvider({
+    id: "mirrorImage",
+    getBadgesForToken(token) {
+      const buff = getMirrorImageBuff(token?.actor);
+      const state = getMirrorImageStateFromBuff(buff);
+      if (!buff || !state.active || state.images <= 0) return [];
+      return [{
+        item: buff,
+        value: state.images,
+        visible: canUserSeeTokenEffectBadge(buff),
+        name: "count"
+      }];
     }
-    if (child.children?.length) stack.push(...child.children);
-  }
-}
-
-function texturePath(displayObject) {
-  const texture = displayObject?.texture;
-  return String(
-    texture?.baseTexture?.resource?.src
-    ?? texture?.baseTexture?.cacheId
-    ?? texture?.source?.resource?.src
-    ?? texture?.source?.label
-    ?? texture?.textureCacheIds?.[0]
-    ?? ""
-  );
-}
-
-function normalizePath(value) {
-  return String(value ?? "").replace(/\\/g, "/").toLowerCase();
-}
-
-function findMirrorImageEffectIcon(token, buff) {
-  const effects = token?.effects;
-  if (!effects?.children || !buff?.img) return null;
-  const needle = normalizePath(buff.img);
-  return effects.children.find((child) => {
-    const path = normalizePath(texturePath(child));
-    return path && (path === needle || path.endsWith(needle) || needle.endsWith(path));
-  }) ?? null;
-}
-
-function makeMirrorImageBadge(icon, images) {
-  const iconSize = Math.max(16, Math.min(Number(icon?.width) || 32, Number(icon?.height) || 32));
-  const text = new PIXI.Text(String(images), {
-    fontFamily: "Arial",
-    fontSize: Math.max(18, Math.round(iconSize * 0.56)),
-    fontWeight: "bold",
-    fill: 0xff2020,
-    stroke: 0x000000,
-    strokeThickness: Math.max(4, Math.round(iconSize * 0.06)),
-    align: "center"
   });
-  text.name = MIRROR_IMAGE_BADGE_NAME;
-  text.anchor.set(0.5);
-  text.position.set(iconSize * 0.86, iconSize * 0.22);
-  return text;
-}
-
-function drawMirrorImageCountBadge(token) {
-  clearMirrorImageBadges(token);
-  const buff = getMirrorImageBuff(token?.actor);
-  const state = getMirrorImageStateFromBuff(buff);
-  if (!buff || !state.active || state.images <= 0) return;
-  const icon = findMirrorImageEffectIcon(token, buff);
-  if (!icon) return;
-  const badge = makeMirrorImageBadge(icon, state.images);
-  icon.addChild(badge);
-}
-
-export function registerMirrorImageTokenEffectBadges() {
-  if (!globalThis.libWrapper || !globalThis.Token?.prototype?.drawEffects) return;
-  libWrapper.register(
-    MODULE.ID,
-    "Token.prototype.drawEffects",
-    async function (wrapped, ...args) {
-      const result = await wrapped.apply(this, args);
-      try {
-        drawMirrorImageCountBadge(this);
-      } catch (_err) {}
-      return result;
-    },
-    "WRAPPER"
-  );
 }

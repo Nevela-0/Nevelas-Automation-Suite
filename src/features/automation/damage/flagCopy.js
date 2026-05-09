@@ -48,6 +48,12 @@ function itemAttackFromItemFlagCopy(wrapped, item) {
                     idMap
                 );
             }
+            if (reactive.buffSaveByAction != null && typeof reactive.buffSaveByAction === "object" && !Array.isArray(reactive.buffSaveByAction)) {
+                reactive.buffSaveByAction = remapItemReactiveOnHitIdKeyedByActionId(
+                    reactive.buffSaveByAction,
+                    idMap
+                );
+            }
         }
     }
 

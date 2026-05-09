@@ -1,5 +1,6 @@
 import { MODULE } from "../../../common/module.js";
 import { elementFromHtmlLike } from "../../../common/foundryCompat.js";
+import { getRuntimeSpellLevel } from "../utils/spellLevels.js";
 
 function isSpellActor(actor) {
   return actor && actor.documentName === "Actor";
@@ -119,7 +120,10 @@ export function enforceSpellAbilityMinimumOnActionUse(actionUse) {
   const item = actionUse?.item ?? null;
   if (!item || item.type !== "spell") return true;
   const actor = actionUse?.actor ?? actionUse?.token?.actor ?? null;
-  const eligibility = evaluateSpellItemAbilityEligibility(actor, item, { honorNoAbilityLimit: true });
+  const eligibility = evaluateSpellItemAbilityEligibility(actor, item, {
+    spellLevel: getRuntimeSpellLevel(actionUse, item),
+    honorNoAbilityLimit: true
+  });
   if (eligibility.allowed) return true;
 
   notifyBlocked("NAS.spellcasting.actions.cast", item.name ?? game.i18n.localize("PF1.Spell"), eligibility);

@@ -23,9 +23,10 @@ export function recordCombatTextContext(actor, context = {}) {
   pruneExpiredContexts();
 
   const entries = contextsByActorUuid.get(key) ?? [];
-  entries.push({
+    entries.push({
     isCritical: context.isCritical === true,
     critMult: Math.max(0, Number(context.critMult) || 0),
+    nasTemporaryHpSpent: Math.max(0, Math.floor(Number(context.nasTemporaryHpSpent) || 0)),
     messageUuid: context.messageUuid ?? null,
     attackIndex: Number.isInteger(Number(context.attackIndex)) ? Number(context.attackIndex) : null,
     timestamp: now()

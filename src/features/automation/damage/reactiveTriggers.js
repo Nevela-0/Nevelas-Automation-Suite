@@ -1,14 +1,27 @@
 import { MODULE } from "../../../common/module.js";
+import { getStoredBuffCasterLevel } from "../utils/spellLevels.js";
+import { createNasId } from "../utils/nasIds.js";
 import { chatMessageStyle } from "../../../common/foundryCompat.js";
 import { toDamagePartModel } from "./instances.js";
 import { applyReactiveDamageToActor, toggleReactiveBuff, toggleReactiveCondition } from "../../../integration/moduleSockets.js";
 import { actorUsesWoundsVigor, isWvNoWoundsActor } from "../utils/woundsVigor.js";
+import { getCreatureTypeState } from "../utils/creatureTypeUtils.js";
+import { grantNasTemporaryHp } from "../buffs/temporaryHpPools.js";
+import {
+  canUserSeeTokenEffectBadge,
+  refreshTokenEffectBadgesForActor,
+  refreshTokenEffectBadgesForScene,
+  registerTokenEffectBadgeProvider
+} from "../utils/tokenEffectBadges.js";
 
 const REACTIVE_FLAG_KEY = "itemReactiveEffects";
+const ON_STRUCK_POOL_KEY = "onStruckPool";
+const DEFAULT_TEMP_HP_BUFF_UUID = "Compendium.nevelas-automation-suite.Buffs.Item.ZlhaaFOfhZ3v2ct1";
 
 function localize(path) {
   return game.i18n.localize(`NAS.reactive.${path}`);
 }
+
 
 function escHtml(value) {
   return foundry.utils.escapeHTML(String(value ?? ""));
@@ -51,10 +64,10 @@ function actorChatName(actor) {
 
 function formatDamageTypeNames(typeIds) {
   const ids = Array.isArray(typeIds) ? typeIds.map((id) => String(id ?? "").trim()).filter(Boolean) : [];
-  if (!ids.length) return localize("damageTypeUntyped");
+  if (!ids.length) return game.i18n.localize("PF1.DamageTypes.untyped.Label");
   const labels = ids.map((raw) => {
     const id = raw || "untyped";
-    if (id === "untyped") return localize("damageTypeUntyped");
+    if (id === "untyped") return game.i18n.localize("PF1.DamageTypes.untyped.Label");
     for (const [, value] of pf1?.registry?.damageTypes?.entries?.() ?? []) {
       if (String(value?.id ?? "") === id) return String(value?.name ?? id);
     }
@@ -126,8 +139,26 @@ function normalizeDamageTypes(effect = {}) {
   return one ? [one] : ["untyped"];
 }
 
+function normalizeTemporaryHpStackingMode(value) {
+  const mode = String(value ?? "replaceSameSource");
+  return ["replaceSameSource", "keepHigherSameSource", "stackSeparate"].includes(mode) ? mode : "replaceSameSource";
+}
+
+function normalizeTemporaryHpCompatibilityMode(value) {
+  const mode = String(value ?? "stacksWithAll");
+  return ["stacksWithAll", "noNative", "noNas", "noAny"].includes(mode) ? mode : "stacksWithAll";
+}
+
+function normalizeTemporaryHpCapMode(value) {
+  const mode = String(value ?? "none");
+  return ["none", "sourceMaxHp", "sourceNormalMaxHp", "targetHpPlusCon"].includes(mode) ? mode : "none";
+}
+
 function normalizeEffect(effect = {}) {
   const damageTypes = normalizeDamageTypes(effect);
+  const temporaryHpDuration = effect?.temporaryHpDuration && typeof effect.temporaryHpDuration === "object"
+    ? foundry.utils.deepClone(effect.temporaryHpDuration)
+    : null;
   return {
     type: String(effect?.type ?? ""),
     mode: String(effect?.mode ?? "formula"),
@@ -137,8 +168,101 @@ function normalizeEffect(effect = {}) {
     damageTypes,
     buffUuid: String(effect?.buffUuid ?? ""),
     conditionId: String(effect?.conditionId ?? ""),
+    asTemporaryHp: effect?.asTemporaryHp === true,
+    temporaryHpDuration,
+    temporaryHpStackingMode: normalizeTemporaryHpStackingMode(effect?.temporaryHpStackingMode),
+    temporaryHpCompatibilityMode: normalizeTemporaryHpCompatibilityMode(effect?.temporaryHpCompatibilityMode),
+    temporaryHpCapMode: normalizeTemporaryHpCapMode(effect?.temporaryHpCapMode),
     message: effect?.message !== false
   };
+}
+
+function normalizeOnStruckSourceKind(value) {
+  const kind = String(value ?? "anyMelee");
+  if (["any", "anyMelee", "meleeWeapon", "meleeNoReach", "reachMelee", "naturalAttack", "unarmedStrike", "spell"].includes(kind)) return kind;
+  if (kind === "naturalWeapon") return "naturalAttack";
+  if (kind === "nonWeapon") return "spell";
+  return "anyMelee";
+}
+
+function normalizeAttackerCreatureKind(value) {
+  const kind = String(value ?? "any");
+  return ["any", "living", "undead", "construct", "nonliving"].includes(kind) ? kind : "any";
+}
+
+function normalizeSaveConfig(raw = {}) {
+  const type = String(raw?.type ?? raw?.saveType ?? "").toLowerCase();
+  const normalizeOutcome = (value) => {
+    const effectKind = String(value?.effectKind ?? "");
+    return {
+      effectKind: ["applyBuff", "applyCondition"].includes(effectKind) ? effectKind : "none",
+      buffUuid: String(value?.buffUuid ?? ""),
+      conditionId: String(value?.conditionId ?? "")
+    };
+  };
+  return {
+    enabled: raw?.enabled === true && ["fort", "ref", "will"].includes(type),
+    type: ["fort", "ref", "will"].includes(type) ? type : "",
+    dcFormula: String(raw?.dcFormula ?? raw?.dc ?? ""),
+    skipDialog: raw?.skipDialog === true,
+    onSuccess: ["none", "negates", "half"].includes(String(raw?.onSuccess ?? "")) ? String(raw.onSuccess) : "negates",
+    effects: {
+      success: normalizeOutcome(raw?.effects?.success ?? raw?.successEffect),
+      failure: normalizeOutcome(raw?.effects?.failure ?? raw?.failureEffect)
+    }
+  };
+}
+
+function normalizeOnStruckDamageRule(raw = {}, fallback = {}) {
+  const damageTypes = normalizeDamageTypes({
+    damageTypes: raw?.damageTypes ?? raw?.damageTypeIds ?? fallback.damageTypes,
+    damageType: raw?.damageType ?? fallback.damageType
+  });
+  return {
+    id: String(raw?.id ?? createNasId()),
+    enabled: raw?.enabled !== false,
+    mode: String(raw?.mode ?? fallback.mode ?? "formula") === "percentOfFinalDamage" ? "percentOfFinalDamage" : "formula",
+    value: Number(raw?.value ?? fallback.value) || 0,
+    formula: String(raw?.formula ?? fallback.formula ?? "1d6"),
+    damageType: String(raw?.damageType ?? damageTypes[0] ?? "untyped"),
+    damageTypes,
+    sourceKind: normalizeOnStruckSourceKind(raw?.sourceKind ?? fallback.sourceKind),
+    onlyIfDamaged: raw?.onlyIfDamaged === true,
+    attackerCreatureKind: normalizeAttackerCreatureKind(raw?.attackerCreatureKind),
+    save: normalizeSaveConfig(raw?.save),
+    spendPool: raw?.spendPool === true,
+    message: raw?.message !== false
+  };
+}
+
+function normalizeOnStruckPool(raw = {}) {
+  return {
+    enabled: raw?.enabled === true,
+    totalFormula: String(raw?.totalFormula ?? ""),
+    remaining: Number.isFinite(Number(raw?.remaining)) ? Math.max(0, Math.floor(Number(raw.remaining))) : null,
+    capacity: Number.isFinite(Number(raw?.capacity)) ? Math.max(0, Math.floor(Number(raw.capacity))) : null,
+    dischargeAtZero: raw?.dischargeAtZero === true,
+    showBadge: raw?.showBadge === true
+  };
+}
+
+function summarizeOnStruckPool(raw) {
+  const pool = normalizeOnStruckPool(raw?.pool ?? raw?.[ON_STRUCK_POOL_KEY] ?? {});
+  const rules = Array.isArray(raw?.rules) ? raw.rules.map((rule) => normalizeOnStruckDamageRule(rule)) : [];
+  return {
+    enabled: raw?.enabled === true,
+    pool,
+    ruleCount: rules.length,
+    spendPoolRuleCount: rules.filter((rule) => rule.spendPool === true).length
+  };
+}
+
+function rulesFromLegacyEffects(effects = [], filters = {}) {
+  return effects
+    .filter((effect) => String(effect?.type ?? "") === "damageAttacker")
+    .map((effect) => normalizeOnStruckDamageRule(effect, {
+      sourceKind: filters?.meleeOnly === false ? "any" : filters?.excludeReach === false ? "anyMelee" : "meleeNoReach"
+    }));
 }
 
 const TOGGLE_EFFECT_TYPES = new Set([
@@ -152,8 +276,15 @@ const TOGGLE_EFFECT_TYPES = new Set([
   "removeBuffTarget"
 ]);
 
-function effectActsOnTarget(effect) {
-  return String(effect?.type ?? "").endsWith("Target");
+function effectActsOnTarget(effect, context = {}) {
+  const type = String(effect?.type ?? "");
+  if (type.endsWith("Target")) return true;
+  if (type === "grantTemporaryHp") {
+    const mode = String(effect?.mode ?? "");
+    if (mode === "percentOfExcessHealing") return true;
+    if (mode === "formula" && context?.finalHealing > 0) return true;
+  }
+  return false;
 }
 
 function buildReactiveLineHtml({ effect, magnitude, affectedActor, triggerKind: _triggerKind }) {
@@ -178,7 +309,13 @@ function buildReactiveLineHtml({ effect, magnitude, affectedActor, triggerKind: 
   }
 
   if (effectType === "healAttacker") {
+    if (effect?.asTemporaryHp === true) {
+      return game.i18n.format("NAS.reactive.chatSummary.lineTemporaryHp", { actor, amount: magnitude });
+    }
     return game.i18n.format("NAS.reactive.chatSummary.lineHeal", { actor, amount: magnitude });
+  }
+  if (effectType === "grantTemporaryHp") {
+    return game.i18n.format("NAS.reactive.chatSummary.lineTemporaryHp", { actor, amount: magnitude });
   }
   if (effectType === "damageAttacker") {
     const types = escHtml(formatDamageTypeNames(effect?.damageTypes));
@@ -223,7 +360,9 @@ function postReactiveChatSummary({ ownerActor, otherActor, ownerItemPlain, trigg
 }
 
 function buildOnHitFromRaw(raw) {
-  if (!raw || raw.enabled !== true || !Array.isArray(raw.effects) || raw.effects.length === 0) return null;
+  if (!raw || raw.enabled !== true || !Array.isArray(raw.effects) || raw.effects.length === 0) {
+    return null;
+  }
   return {
     effects: raw.effects.map(normalizeEffect)
   };
@@ -235,7 +374,9 @@ function getOnHitConfig(sourceItem, actionId) {
   const fromOverride = buildOnHitFromRaw(overrideRaw);
   if (fromOverride) return fromOverride;
   const baseRaw = flags?.onHitByAction?.[actionId] ?? null;
-  return buildOnHitFromRaw(baseRaw);
+  const fromActionBase = buildOnHitFromRaw(baseRaw);
+  if (fromActionBase) return fromActionBase;
+  return buildOnHitFromRaw(flags?.onHit);
 }
 
 function isItemOnStruckActive(item) {
@@ -253,14 +394,17 @@ function getOnStruckConfigs(targetActor) {
     if (!isItemOnStruckActive(item)) continue;
     const flags = getReactiveFlags(item);
     const raw = flags?.onStruck ?? null;
-    if (!raw || raw.enabled !== true || !Array.isArray(raw.effects) || raw.effects.length === 0) continue;
+    if (!raw || raw.enabled !== true) continue;
+    const effects = Array.isArray(raw.effects) ? raw.effects.map(normalizeEffect) : [];
+    const rules = Array.isArray(raw.rules) && raw.rules.length
+      ? raw.rules.map((rule) => normalizeOnStruckDamageRule(rule))
+      : rulesFromLegacyEffects(effects, raw?.filters);
+    if (!effects.length && !rules.length) continue;
     out.push({
       sourceItem: item,
-      filters: {
-        meleeOnly: raw?.filters?.meleeOnly !== false,
-        excludeReach: raw?.filters?.excludeReach !== false
-      },
-      effects: raw.effects.map(normalizeEffect)
+      effects,
+      rules,
+      pool: normalizeOnStruckPool(raw?.pool ?? raw?.[ON_STRUCK_POOL_KEY] ?? {})
     });
   }
   return out;
@@ -291,14 +435,86 @@ function isReachContext(options = {}) {
   return resolveRangeUnits(options) === "reach";
 }
 
-function buildRollData({ sourceActor, targetActor, finalDamage = 0 }) {
+function sourceItemFromOptions(options = {}) {
+  const action = options?.action;
+  return options?.item ?? action?.item ?? options?.message?.itemSource ?? null;
+}
+
+function isNaturalAttackContext(options = {}) {
+  const item = sourceItemFromOptions(options);
+  const action = options?.action;
+  const candidates = [
+    item?.subType,
+    item?.system?.subType,
+    item?.system?.weaponType,
+    item?.system?.weaponSubtype,
+    action?.weaponType,
+    action?.weaponSubtype,
+    action?.attackType
+  ].map((value) => String(value ?? "").toLowerCase());
+  return candidates.some((value) => value.includes("natural"));
+}
+
+function isUnarmedStrikeContext(options = {}) {
+  const item = sourceItemFromOptions(options);
+  const action = options?.action;
+  const candidates = [
+    item?.name,
+    action?.name,
+    item?.system?.weaponType,
+    item?.system?.weaponSubtype,
+    action?.weaponType,
+    action?.weaponSubtype
+  ].map((value) => String(value ?? "").toLowerCase());
+  return candidates.some((value) => value.includes("unarmed"));
+}
+
+function isWeaponContext(options = {}) {
+  const item = sourceItemFromOptions(options);
+  const action = options?.action;
+  const type = item?.type ?? action?.item?.type;
+  const subType = item?.subType ?? item?.system?.subType ?? action?.item?.subType;
+  return type === "weapon" || (type === "attack" && ["weapon", "natural"].includes(String(subType ?? "")));
+}
+
+function sourceMatchesOnStruckRule(rule, options = {}) {
+  const kind = normalizeOnStruckSourceKind(rule?.sourceKind);
+  const melee = isMeleeContext(options);
+  const reach = isReachContext(options);
+  const actionType = resolveActionType(options);
+  if (kind === "any") return true;
+  if (kind === "spell") return actionType === "msak" || actionType === "rsak" || sourceItemFromOptions(options)?.type === "spell";
+  if (!melee) return false;
+  if (kind === "anyMelee") return true;
+  if (kind === "meleeNoReach") return !reach;
+  if (kind === "reachMelee") return reach;
+  if (kind === "naturalAttack") return isNaturalAttackContext(options);
+  if (kind === "unarmedStrike") return isUnarmedStrikeContext(options);
+  if (kind === "meleeWeapon") return isWeaponContext(options) && !isNaturalAttackContext(options) && !isUnarmedStrikeContext(options);
+  return true;
+}
+
+function creatureMatchesOnStruckRule(rule, sourceActor) {
+  const kind = normalizeAttackerCreatureKind(rule?.attackerCreatureKind);
+  if (kind === "any") return true;
+  const state = getCreatureTypeState(sourceActor);
+  if (kind === "living") return state.isLiving;
+  if (kind === "undead") return state.isUndead;
+  if (kind === "construct") return state.isConstruct;
+  if (kind === "nonliving") return state.isUndead || state.isConstruct;
+  return true;
+}
+
+function buildRollData({ sourceActor, targetActor, finalDamage = 0, excessHealing = 0, finalHealing = 0 }) {
   const sourceRollData = sourceActor?.getRollData?.() ?? {};
   const targetRollData = targetActor?.getRollData?.() ?? {};
   return {
     ...targetRollData,
     ...sourceRollData,
     nas: {
-      finalDamage: Number(finalDamage) || 0
+      finalDamage: Number(finalDamage) || 0,
+      excessHealing: Number(excessHealing) || 0,
+      finalHealing: Number(finalHealing) || 0
     },
     attacker: sourceRollData,
     target: targetRollData
@@ -313,6 +529,11 @@ async function evaluateMagnitude(effect, context) {
     const out = Math.floor((base * pct) / 100);
     return out;
   }
+  if (mode === "percentOfExcessHealing") {
+    const pct = Number(effect?.value) || 0;
+    const base = Math.max(0, Number(context?.excessHealing) || 0);
+    return Math.floor((base * pct) / 100);
+  }
   if (mode === "formula") {
     const formula = String(effect?.formula ?? "").trim();
     if (!formula) return 0;
@@ -326,10 +547,97 @@ async function evaluateMagnitude(effect, context) {
   return 0;
 }
 
+function numericActorHpValue(actor) {
+  const value = Number(actor?.system?.attributes?.hp?.value);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function numericActorHpMax(actor) {
+  const value = Number(actor?.system?.attributes?.hp?.max);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function numericActorConstitution(actor) {
+  const ability = actor?.system?.abilities?.con ?? {};
+  for (const value of [ability.total, ability.value, ability.base]) {
+    const number = Number(value);
+    if (Number.isFinite(number)) return number;
+  }
+  return 0;
+}
+
+function resolveTemporaryHpPrivateCap(effect, metadata = {}) {
+  const mode = normalizeTemporaryHpCapMode(effect?.temporaryHpCapMode);
+  if (mode === "none") return null;
+  if (mode === "sourceMaxHp" || mode === "sourceNormalMaxHp") {
+    return Math.max(0, Math.floor(numericActorHpMax(metadata.sourceActor ?? metadata.affectedActor)));
+  }
+  if (mode === "targetHpPlusCon") {
+    const target = metadata.targetActor;
+    const preHp = Number.isFinite(Number(metadata.targetPreHp)) ? Number(metadata.targetPreHp) : numericActorHpValue(target);
+    return Math.max(0, Math.floor(preHp + numericActorConstitution(target)));
+  }
+  return null;
+}
+
+async function evaluateNumberFormula(formula, context, fallback = 0) {
+  const text = String(formula ?? "").trim();
+  if (!text) return fallback;
+  try {
+    const roll = await new Roll(text, context.rollData).evaluate();
+    return Math.max(0, Math.floor(Number(roll?.total) || 0));
+  } catch (_err) {
+    return fallback;
+  }
+}
+
 function buildDamageInstances(amount, effect) {
   const typesRaw = normalizeDamageTypes(effect);
   const types = typesRaw.length ? typesRaw : ["untyped"];
   return [toDamagePartModel({ types, value: amount, formula: String(amount) })];
+}
+
+function extractRollTotal(rollResult) {
+  if (!rollResult) return null;
+  const direct = Number(rollResult.total);
+  if (Number.isFinite(direct)) return direct;
+  const first = Number(rollResult?.rolls?.[0]?.total);
+  if (Number.isFinite(first)) return first;
+  const nested = Number(rollResult?.roll?.total);
+  if (Number.isFinite(nested)) return nested;
+  return null;
+}
+
+async function resolveSavingThrowResult(rule, sourceActor, context, options = {}) {
+  const save = normalizeSaveConfig(rule?.save);
+  if (!save.enabled) return { multiplier: 1, outcome: "none" };
+  if (!sourceActor?.isOwner) {
+    ui.notifications?.warn?.(game.i18n.format("NAS.reactive.warnings.saveUnavailable", {
+      actor: actorChatName(sourceActor)
+    }));
+    return { multiplier: 0, outcome: "skipped" };
+  }
+  const dc = await evaluateNumberFormula(save.dcFormula, context, 0);
+  if (dc <= 0) return { multiplier: 1, outcome: "none" };
+  let result = null;
+  try {
+    result = await sourceActor.rollSavingThrow(save.type, {
+      dc,
+      event: options?.event,
+      reference: options?.reference ?? options?.message,
+      skipDialog: save.skipDialog
+    });
+  } catch (_err) {
+    ui.notifications?.warn?.(game.i18n.format("NAS.reactive.warnings.saveFailed", {
+      actor: actorChatName(sourceActor)
+    }));
+    return { multiplier: 0, outcome: "skipped" };
+  }
+  const total = extractRollTotal(result);
+  if (total == null || total < dc) return { multiplier: 1, outcome: "failure" };
+  if (save.onSuccess === "half") return { multiplier: 0.5, outcome: "success" };
+  if (save.onSuccess === "none") return { multiplier: 1, outcome: "success" };
+  return { multiplier: 0, outcome: "success" };
 }
 
 function getHealthSnapshotForDelta(actor) {
@@ -391,6 +699,28 @@ async function applyToActor(actor, effect, magnitude, metadata = {}) {
   }
   if (!Number.isFinite(magnitude) || magnitude <= 0) return undefined;
   const isHeal = effect.type === "healAttacker";
+  const isTemporaryHpGrant = effect.type === "grantTemporaryHp" || (isHeal && effect?.asTemporaryHp === true);
+  if (isTemporaryHpGrant) {
+    const rawAmount = Math.max(0, Math.floor(Number(magnitude) || 0));
+    const cap = resolveTemporaryHpPrivateCap(effect, { ...metadata, affectedActor: actor });
+    const amount = cap == null ? rawAmount : Math.min(rawAmount, cap);
+    if (amount <= 0) {
+      return undefined;
+    }
+    const pool = await grantNasTemporaryHp(actor, {
+      amount,
+      sourceItemUuid: metadata.ownerItemUuid ?? "",
+      sourceBuffUuid: DEFAULT_TEMP_HP_BUFF_UUID,
+      sourceKey: metadata.ownerItemUuid ? `item:${metadata.ownerItemUuid}` : "",
+      duration: effect.temporaryHpDuration ?? null,
+      stackingMode: effect.temporaryHpStackingMode,
+      compatibilityMode: effect.temporaryHpCompatibilityMode,
+      label: metadata.ownerItemName ?? metadata.source ?? game.i18n.localize("PF1.TempHP"),
+      showBadge: false,
+      clearDuration: true
+    });
+    return pool ? Math.max(0, Math.floor(Number(pool.gainedAmount ?? amount) || 0)) : undefined;
+  }
   const value = isHeal ? -Math.abs(magnitude) : Math.abs(magnitude);
   const options = {
     dialog: false,
@@ -413,24 +743,232 @@ async function applyToActor(actor, effect, magnitude, metadata = {}) {
   return undefined;
 }
 
-async function applyEffects({ sourceActor, targetActor, effects, finalDamage, options, triggerMeta }) {
-  void options;
+async function applySaveOutcomeEffect(actor, outcomeEffect, metadata = {}) {
+  const kind = String(outcomeEffect?.effectKind ?? "none");
+  if (kind === "applyBuff") {
+    const buffUuid = String(outcomeEffect?.buffUuid ?? "").trim();
+    if (!buffUuid) return undefined;
+    return applyToActor(actor, { type: "applyBuffAttacker", buffUuid, message: true }, 1, metadata);
+  }
+  if (kind === "applyCondition") {
+    const conditionId = String(outcomeEffect?.conditionId ?? "").trim();
+    if (!conditionId) return undefined;
+    return applyToActor(actor, { type: "applyConditionAttacker", conditionId, message: true }, 1, metadata);
+  }
+  return undefined;
+}
+
+function buildSaveOutcomeEffectLine(outcomeEffect, actor) {
+  const kind = String(outcomeEffect?.effectKind ?? "none");
+  if (kind === "applyBuff") {
+    return buildReactiveLineHtml({
+      effect: { type: "applyBuffAttacker", buffUuid: outcomeEffect.buffUuid },
+      magnitude: 1,
+      affectedActor: actor,
+      triggerKind: "onStruck"
+    });
+  }
+  if (kind === "applyCondition") {
+    return buildReactiveLineHtml({
+      effect: { type: "applyConditionAttacker", conditionId: outcomeEffect.conditionId },
+      magnitude: 1,
+      affectedActor: actor,
+      triggerKind: "onStruck"
+    });
+  }
+  return null;
+}
+
+function onStruckPoolUsesTotal(config) {
+  return config?.pool?.enabled === true || (config?.rules ?? []).some((rule) => rule?.spendPool === true);
+}
+
+function numericCandidate(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? Math.floor(number) : null;
+}
+
+function matchingSpellCasterLevel(actor, item) {
+  const itemName = String(item?.name ?? "").trim().toLowerCase();
+  const itemImg = String(item?.img ?? "");
+  const matches = (actor?.items ?? []).filter((candidate) => {
+    if (candidate?.type !== "spell") return false;
+    const sameName = itemName && String(candidate.name ?? "").trim().toLowerCase() === itemName;
+    const sameImg = itemImg && String(candidate.img ?? "") === itemImg;
+    return sameName || sameImg;
+  });
+
+  const candidates = [];
+  for (const spell of matches) {
+    const spellRollData = spell.getRollData?.() ?? {};
+    candidates.push(
+      numericCandidate(spellRollData?.cl),
+      numericCandidate(spell?.casterLevel),
+      numericCandidate(spell?.system?.cl)
+    );
+    const bookId = spell?.system?.spellbook;
+    if (bookId) {
+      const book = actor?.system?.attributes?.spells?.spellbooks?.[bookId];
+      candidates.push(numericCandidate(book?.cl?.total), numericCandidate(book?.cl?.autoSpellLevelTotal));
+    }
+  }
+
+  return Math.max(0, ...candidates.filter((value) => value != null));
+}
+
+function strongestActorSpellbookCasterLevel(actor) {
+  const candidates = [];
+  for (const book of Object.values(actor?.system?.attributes?.spells?.spellbooks ?? {})) {
+    if (book?.inUse === false) continue;
+    candidates.push(numericCandidate(book?.cl?.total), numericCandidate(book?.cl?.autoSpellLevelTotal));
+  }
+  return Math.max(0, ...candidates.filter((value) => value != null));
+}
+
+function resolveOnStruckPoolCasterLevel(actor, item, actorData = {}) {
+  const itemData = item?.getRollData?.() ?? {};
+  const storedBuffCl = numericCandidate(getStoredBuffCasterLevel(item, actor));
+  const matchingSpellCl = matchingSpellCasterLevel(actor, item);
+  const actorSpellbookCl = strongestActorSpellbookCasterLevel(actor);
+  const actorDataCl = numericCandidate(actorData?.cl);
+  const itemRollDataCl = numericCandidate(itemData?.cl);
+  const itemLevel = numericCandidate(item?.system?.level);
+  return storedBuffCl || itemLevel || itemRollDataCl || matchingSpellCl || actorSpellbookCl || actorDataCl || 0;
+}
+
+function rollDataForOnStruckPool(ownerActor, ownerItem, context = {}) {
+  const actorData = ownerActor?.getRollData?.() ?? {};
+  const itemData = ownerItem?.getRollData?.() ?? {};
+  const cl = resolveOnStruckPoolCasterLevel(ownerActor, ownerItem, actorData);
+  return {
+    ...actorData,
+    cl,
+    item: itemData,
+    nas: {
+      ...(actorData?.nas ?? {}),
+      finalDamage: Math.max(0, Number(context.finalDamage) || 0)
+    },
+    target: actorData
+  };
+}
+
+async function remainingForOnStruckPool(item, pool, context = {}) {
+  if (!pool?.enabled) return null;
+  if (Number.isFinite(Number(pool.remaining)) && Number.isFinite(Number(pool.capacity))) {
+    if (pool.remaining > 0 || pool.dischargeAtZero !== true) return Math.max(0, Math.floor(Number(pool.remaining)));
+  }
+  const rollData = rollDataForOnStruckPool(item?.actor, item, context);
+  const total = await evaluateNumberFormula(pool.totalFormula, { rollData }, 0);
+  await item.update({
+    [`flags.${MODULE.ID}.${REACTIVE_FLAG_KEY}.onStruck.pool.remaining`]: total,
+    [`flags.${MODULE.ID}.${REACTIVE_FLAG_KEY}.onStruck.pool.capacity`]: total
+  }, { render: false });
+  return total;
+}
+
+async function updateOnStruckPool(item, remaining, pool) {
+  const normalizedRemaining = Math.max(0, Math.floor(Number(remaining) || 0));
+  const updates = {
+    [`flags.${MODULE.ID}.${REACTIVE_FLAG_KEY}.onStruck.pool.remaining`]: normalizedRemaining
+  };
+  if (pool?.dischargeAtZero === true && normalizedRemaining <= 0) {
+    if (item?.type === "buff") updates["system.active"] = false;
+    if (item?.type === "equipment") updates["system.equipped"] = false;
+  }
+  await item.update(updates, { render: false });
+  refreshTokenEffectBadgesForActor(item?.actor);
+}
+
+async function applyOnStruckDamageRules({ sourceActor, targetActor, entry, finalDamage, options, triggerMeta }) {
+  const rules = entry?.rules ?? [];
+  if (!rules.length) return [];
+  const lineHtmls = [];
+  const rollData = buildRollData({ sourceActor, targetActor, finalDamage });
+  const pool = entry.pool ?? {};
+
+  for (const rule of rules) {
+    if (rule?.enabled === false) continue;
+    if (rule.onlyIfDamaged && Math.max(0, Number(finalDamage) || 0) <= 0) continue;
+    if (!sourceMatchesOnStruckRule(rule, options)) continue;
+    if (!creatureMatchesOnStruckRule(rule, sourceActor)) continue;
+
+    let magnitude = await evaluateMagnitude({ ...rule, type: "damageAttacker" }, { finalDamage, rollData });
+    if (magnitude <= 0) continue;
+    const saveResult = await resolveSavingThrowResult(rule, sourceActor, { rollData }, options);
+    if (saveResult.outcome === "success" || saveResult.outcome === "failure") {
+      const save = normalizeSaveConfig(rule.save);
+      const outcomeEffect = save.effects?.[saveResult.outcome];
+      await applySaveOutcomeEffect(sourceActor, outcomeEffect, {
+        source: triggerMeta.sourceTag,
+        attackerUuid: sourceActor?.uuid ?? null
+      });
+      if (rule.message !== false) {
+        const outcomeLine = buildSaveOutcomeEffectLine(outcomeEffect, sourceActor);
+        if (outcomeLine) lineHtmls.push(outcomeLine);
+      }
+    }
+    if (saveResult.multiplier <= 0) continue;
+    magnitude = Math.floor(magnitude * saveResult.multiplier);
+    if (magnitude <= 0) continue;
+
+    if (rule.spendPool && pool.enabled) {
+      const remaining = await remainingForOnStruckPool(triggerMeta.ownerItem, pool, { finalDamage });
+      if (remaining <= 0) continue;
+      magnitude = Math.min(magnitude, remaining);
+      if (magnitude <= 0) continue;
+    }
+
+    const actualApplied = await applyToActor(sourceActor, { ...rule, type: "damageAttacker" }, magnitude, {
+      source: triggerMeta.sourceTag,
+      attackerUuid: sourceActor?.uuid ?? null
+    });
+    const actualDamage = Number.isFinite(actualApplied) ? Math.max(0, Math.floor(actualApplied)) : magnitude;
+
+    if (rule.spendPool && pool.enabled && actualDamage > 0) {
+      const freshPool = normalizeOnStruckPool(triggerMeta.ownerItem?.flags?.[MODULE.ID]?.[REACTIVE_FLAG_KEY]?.onStruck?.pool ?? pool);
+      const remaining = await remainingForOnStruckPool(triggerMeta.ownerItem, freshPool, { finalDamage });
+      await updateOnStruckPool(triggerMeta.ownerItem, remaining - actualDamage, freshPool);
+    }
+
+    if (rule.message !== true) continue;
+    const line = buildReactiveLineHtml({
+      effect: { ...rule, type: "damageAttacker" },
+      magnitude: actualDamage,
+      affectedActor: sourceActor,
+      triggerKind: "onStruck"
+    });
+    if (line) lineHtmls.push(line);
+  }
+
+  return lineHtmls;
+}
+
+async function applyEffects({ sourceActor, targetActor, effects, finalDamage, finalHealing = 0, excessHealing = 0, options, triggerMeta }) {
   const { kind, ownerActor, otherActor, ownerItem, sourceTag } = triggerMeta;
   const ownerItemPlain = displayNameForOwnerItem(ownerItem, kind);
   const lineHtmls = [];
-  const rollData = buildRollData({ sourceActor, targetActor, finalDamage });
+  const rollData = buildRollData({ sourceActor, targetActor, finalDamage, finalHealing, excessHealing });
 
   for (const effect of effects) {
     const isToggleEffect = TOGGLE_EFFECT_TYPES.has(effect?.type);
-    const magnitude = isToggleEffect ? 1 : await evaluateMagnitude(effect, { finalDamage, rollData });
+    const magnitude = isToggleEffect ? 1 : await evaluateMagnitude(effect, { finalDamage, finalHealing, excessHealing, rollData });
     if (!isToggleEffect && magnitude <= 0) continue;
-    const affectedActor = effectActsOnTarget(effect) ? targetActor : sourceActor;
+    const affectedActor = effectActsOnTarget(effect, { finalHealing }) ? targetActor : sourceActor;
     const effType = String(effect.type ?? "");
-    const actualApplied = await applyToActor(affectedActor, effect, magnitude, { source: sourceTag, attackerUuid: sourceActor?.uuid ?? null });
-    const lineMagnitude = (effType === "healAttacker" || effType === "damageAttacker") && Number.isFinite(actualApplied) ? actualApplied : magnitude;
+    const actualApplied = await applyToActor(affectedActor, effect, magnitude, {
+      source: sourceTag,
+      attackerUuid: sourceActor?.uuid ?? null,
+      ownerItemUuid: ownerItem?.uuid ?? "",
+      ownerItemName: ownerItemPlain,
+      sourceActor,
+      targetActor,
+      targetPreHp: triggerMeta?.targetPreHp
+    });
+    const lineMagnitude = (effType === "healAttacker" || effType === "damageAttacker" || effType === "grantTemporaryHp") && Number.isFinite(actualApplied) ? actualApplied : magnitude;
 
     if (effect.message !== true) continue;
     if (!isToggleEffect && magnitude <= 0) continue;
+    if ((effType === "healAttacker" || effType === "damageAttacker" || effType === "grantTemporaryHp") && Number.isFinite(actualApplied) && actualApplied <= 0) continue;
     const line = buildReactiveLineHtml({
       effect,
       magnitude: lineMagnitude,
@@ -438,6 +976,18 @@ async function applyEffects({ sourceActor, targetActor, effects, finalDamage, op
       triggerKind: kind
     });
     if (line) lineHtmls.push(line);
+  }
+
+  if (kind === "onStruck" && Array.isArray(triggerMeta?.damageRules) && triggerMeta.damageRules.length) {
+    const ruleLines = await applyOnStruckDamageRules({
+      sourceActor,
+      targetActor,
+      entry: { rules: triggerMeta.damageRules, pool: triggerMeta.pool },
+      finalDamage,
+      options,
+      triggerMeta
+    });
+    lineHtmls.push(...ruleLines);
   }
 
   if (lineHtmls.length) {
@@ -457,7 +1007,10 @@ export async function applyReactiveEffectsForHit({
   sourceItem,
   targetActor,
   options = {},
-  finalDamage = 0
+  finalDamage = 0,
+  finalHealing = 0,
+  excessHealing = 0,
+  targetPreHp = null
 } = {}) {
   if (!sourceActor || !targetActor) return;
   if (options?._nasReactiveEffect) return;
@@ -470,28 +1023,28 @@ export async function applyReactiveEffectsForHit({
       targetActor,
       effects: onHit.effects,
       finalDamage,
+      finalHealing,
+      excessHealing,
       options,
       triggerMeta: {
         kind: "onHit",
         ownerActor: sourceActor,
         otherActor: targetActor,
         ownerItem: sourceItem,
-        sourceTag: "onHit"
+        sourceTag: "onHit",
+        targetPreHp
       }
     });
   }
 
-  const meleeContext = isMeleeContext(options);
-  const reachContext = isReachContext(options);
+  if (options?._nasReactiveHealing === true) return;
+
   const onStruckConfigs = getOnStruckConfigs(targetActor);
   for (const entry of onStruckConfigs) {
-    const filters = entry.filters ?? {};
-    if (filters.meleeOnly && !meleeContext) continue;
-    if (filters.excludeReach && reachContext) continue;
     await applyEffects({
       sourceActor,
       targetActor,
-      effects: entry.effects,
+      effects: entry.effects.filter((effect) => String(effect?.type ?? "") !== "damageAttacker"),
       finalDamage,
       options,
       triggerMeta: {
@@ -499,8 +1052,96 @@ export async function applyReactiveEffectsForHit({
         ownerActor: targetActor,
         otherActor: sourceActor,
         ownerItem: entry.sourceItem,
-        sourceTag: "onStruck"
+        sourceTag: "onStruck",
+        damageRules: entry.rules,
+        pool: entry.pool
       }
     });
+  }
+}
+
+export function hasOnStruckDischargeData(item) {
+  const raw = item?.flags?.[MODULE.ID]?.[REACTIVE_FLAG_KEY]?.onStruck;
+  return Boolean(raw?.pool?.enabled === true || raw?.[ON_STRUCK_POOL_KEY]?.enabled === true);
+}
+
+export function hasOnStruckReactiveData(item) {
+  return Boolean(item?.flags?.[MODULE.ID]?.[REACTIVE_FLAG_KEY]?.onStruck);
+}
+
+export async function initializeOnStruckReactiveItem(item) {
+  const raw = item?.flags?.[MODULE.ID]?.[REACTIVE_FLAG_KEY]?.onStruck;
+  if (!raw?.enabled) return false;
+  const rules = Array.isArray(raw.rules) ? raw.rules.map((rule) => normalizeOnStruckDamageRule(rule)) : [];
+  const pool = normalizeOnStruckPool(raw.pool ?? raw[ON_STRUCK_POOL_KEY] ?? {});
+  if (!pool.enabled || !rules.some((rule) => rule.spendPool === true)) {
+    refreshTokenEffectBadgesForActor(item?.actor);
+    return false;
+  }
+  if (Number.isFinite(Number(pool.remaining)) && Number(pool.remaining) > 0 && Number.isFinite(Number(pool.capacity))) {
+    refreshTokenEffectBadgesForActor(item?.actor);
+    return false;
+  }
+  await remainingForOnStruckPool(item, pool, { finalDamage: 0 });
+  refreshTokenEffectBadgesForActor(item?.actor);
+  return true;
+}
+
+export async function resetOnStruckReactiveItem(item) {
+  const raw = item?.flags?.[MODULE.ID]?.[REACTIVE_FLAG_KEY]?.onStruck;
+  if (!raw?.enabled) return false;
+  const pool = normalizeOnStruckPool(raw.pool ?? raw[ON_STRUCK_POOL_KEY] ?? {});
+  if (!pool.enabled) {
+    refreshTokenEffectBadgesForActor(item?.actor);
+    return false;
+  }
+  const rollData = rollDataForOnStruckPool(item?.actor, item, { finalDamage: 0 });
+  const total = await evaluateNumberFormula(pool.totalFormula, { rollData }, 0);
+  await item.update({
+    [`flags.${MODULE.ID}.${REACTIVE_FLAG_KEY}.onStruck.pool.remaining`]: total,
+    [`flags.${MODULE.ID}.${REACTIVE_FLAG_KEY}.onStruck.pool.capacity`]: total
+  }, { render: false });
+  refreshTokenEffectBadgesForActor(item?.actor);
+  return true;
+}
+
+export function registerOnStruckTokenEffectBadgeProvider() {
+  registerTokenEffectBadgeProvider({
+    id: "onStruck",
+    getBadgesForToken(token) {
+      const badges = [];
+      for (const item of token?.actor?.items ?? []) {
+        const raw = item?.flags?.[MODULE.ID]?.[REACTIVE_FLAG_KEY]?.onStruck;
+        if (!raw) continue;
+        const active = isItemOnStruckActive(item);
+        const pool = normalizeOnStruckPool(raw.pool ?? raw[ON_STRUCK_POOL_KEY] ?? {});
+        if (!active) continue;
+        if (!raw?.enabled) continue;
+        if (!pool.enabled || !pool.showBadge || !Number.isFinite(Number(pool.remaining)) || pool.remaining <= 0) continue;
+        badges.push({
+          item,
+          value: pool.remaining,
+          visible: canUserSeeTokenEffectBadge(item),
+          name: item.id
+        });
+      }
+      return badges;
+    }
+  });
+}
+
+export function refreshOnStruckSceneTokenEffects() {
+  refreshTokenEffectBadgesForScene((token) => (token?.actor?.items ?? []).some((item) => hasOnStruckReactiveData(item)));
+}
+
+export async function initializeOnStruckSceneItems() {
+  const seen = new Set();
+  for (const token of canvas?.tokens?.placeables ?? []) {
+    const actor = token?.actor;
+    if (!actor || seen.has(actor.uuid)) continue;
+    seen.add(actor.uuid);
+    for (const item of actor.items ?? []) {
+      if (hasOnStruckReactiveData(item)) await initializeOnStruckReactiveItem(item);
+    }
   }
 }
