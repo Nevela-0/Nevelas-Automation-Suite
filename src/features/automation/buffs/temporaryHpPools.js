@@ -1,0 +1,950 @@
+import { MODULE } from "../../../common/module.js";
+import { socket } from "../../../integration/moduleSockets.js";
+import { applyBuffToTargets } from "./buffs.js";
+import { refreshTokenEffectBadgesForActor } from "../utils/tokenEffectBadges.js";
+import { showTemporaryHpCombatText, showTemporaryHpGainCombatText } from "../utils/healthDeltaText.js";
+import { createNasId, ensureNasId } from "../utils/nasIds.js";
+
+const REACTIVE_FLAG_KEY = "itemReactiveEffects";
+const TEMP_HP_FLAG_KEY = "temporaryHp";
+const TEMP_HP_STACKING_MODES = new Set(["replaceSameSource", "keepHigherSameSource", "stackSeparate"]);
+const TEMP_HP_COMPATIBILITY_MODES = new Set(["stacksWithAll", "noNative", "noNas", "noAny"]);
+
+function flagPath(path) {
+  return `flags.${MODULE.ID}.${REACTIVE_FLAG_KEY}.${TEMP_HP_FLAG_KEY}.${path}`;
+}
+
+function numberOrZero(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(0, Math.floor(number)) : 0;
+}
+
+function normalizeTemporaryHpStackingMode(value) {
+  const mode = String(value ?? "replaceSameSource");
+  return TEMP_HP_STACKING_MODES.has(mode) ? mode : "replaceSameSource";
+}
+
+function normalizeTemporaryHpCompatibilityMode(value) {
+  const mode = String(value ?? "stacksWithAll");
+  return TEMP_HP_COMPATIBILITY_MODES.has(mode) ? mode : "stacksWithAll";
+}
+
+function now() {
+  return Date.now();
+}
+
+function isSourceItemActive(item) {
+  if (!item) return false;
+  if (item.type === "buff") return item.system?.active === true;
+  if (item.type === "equipment") {
+    const equipped = item.system?.equipped === true;
+    const quantity = Number(item.system?.quantity ?? 1);
+    return equipped && quantity > 0 && item.isBroken !== true;
+  }
+  return true;
+}
+
+function tempHpConfig(item) {
+  const raw = item?.flags?.[MODULE.ID]?.[REACTIVE_FLAG_KEY]?.[TEMP_HP_FLAG_KEY] ?? {};
+  return {
+    enabled: raw?.enabled === true,
+    poolId: String(raw?.poolId ?? `legacy-${item?.id ?? createNasId()}`),
+    sourceKey: deriveTempHpSourceKey({
+      sourceKey: raw?.sourceKey,
+      sourceItemUuid: raw?.sourceItemUuid,
+      sourceBuffUuid: raw?.sourceBuffUuid,
+      item
+    }),
+    remaining: numberOrZero(raw?.remaining),
+    max: numberOrZero(raw?.max),
+    sourceItemUuid: String(raw?.sourceItemUuid ?? ""),
+    sourceBuffUuid: String(raw?.sourceBuffUuid ?? ""),
+    label: String(raw?.label ?? item?.name ?? ""),
+    duration: foundry.utils.deepClone(raw?.duration ?? null),
+    stackingMode: normalizeTemporaryHpStackingMode(raw?.stackingMode),
+    compatibilityMode: normalizeTemporaryHpCompatibilityMode(raw?.compatibilityMode),
+    createdAt: Number.isFinite(Number(raw?.createdAt)) ? Number(raw.createdAt) : 0,
+    showBadge: raw?.showBadge !== false
+  };
+}
+
+function deriveTempHpSourceKey({ sourceKey = "", sourceItemUuid = "", sourceBuffUuid = "", item = null } = {}) {
+  const explicit = String(sourceKey ?? "").trim();
+  if (explicit) return explicit;
+  const itemUuid = String(sourceItemUuid ?? "").trim();
+  if (itemUuid) return `item:${itemUuid}`;
+  const buffUuid = String(sourceBuffUuid ?? "").trim();
+  if (buffUuid) return `buff:${buffUuid}`;
+  if (item?.uuid) return `buff:${item.uuid}`;
+  return `pool:${createNasId()}`;
+}
+
+function normalizeTempHpPoolEntry(entry = {}, item = null) {
+  return {
+    enabled: entry?.enabled !== false,
+    poolId: ensureNasId(entry?.poolId ?? `legacy-${item?.id ?? ""}`),
+    sourceKey: deriveTempHpSourceKey({
+      sourceKey: entry?.sourceKey,
+      sourceItemUuid: entry?.sourceItemUuid,
+      sourceBuffUuid: entry?.sourceBuffUuid,
+      item
+    }),
+    remaining: numberOrZero(entry?.remaining),
+    max: numberOrZero(entry?.max),
+    sourceItemUuid: String(entry?.sourceItemUuid ?? ""),
+    sourceBuffUuid: String(entry?.sourceBuffUuid ?? ""),
+    label: String(entry?.label ?? item?.name ?? ""),
+    duration: foundry.utils.deepClone(entry?.duration ?? null),
+    stackingMode: normalizeTemporaryHpStackingMode(entry?.stackingMode),
+    compatibilityMode: normalizeTemporaryHpCompatibilityMode(entry?.compatibilityMode),
+    createdAt: Number.isFinite(Number(entry?.createdAt)) ? Number(entry.createdAt) : 0,
+    showBadge: entry?.showBadge !== false
+  };
+}
+
+function tempHpPoolEntries(item) {
+  const raw = item?.flags?.[MODULE.ID]?.[REACTIVE_FLAG_KEY]?.[TEMP_HP_FLAG_KEY] ?? {};
+  if (Array.isArray(raw?.pools)) {
+    return raw.pools.map((pool) => normalizeTempHpPoolEntry(pool, item));
+  }
+  if (!hasTemporaryHpData(item)) return [];
+  return [normalizeTempHpPoolEntry(tempHpConfig(item), item)];
+}
+
+function serializeTempHpPool(pool) {
+  return {
+    enabled: pool?.enabled !== false,
+    poolId: ensureNasId(pool?.poolId),
+    sourceKey: String(pool?.sourceKey ?? ""),
+    remaining: numberOrZero(pool?.remaining),
+    max: numberOrZero(pool?.max),
+    sourceItemUuid: String(pool?.sourceItemUuid ?? ""),
+    sourceBuffUuid: String(pool?.sourceBuffUuid ?? ""),
+    label: String(pool?.label ?? ""),
+    duration: foundry.utils.deepClone(pool?.duration ?? null),
+    stackingMode: normalizeTemporaryHpStackingMode(pool?.stackingMode),
+    compatibilityMode: normalizeTemporaryHpCompatibilityMode(pool?.compatibilityMode),
+    createdAt: Number.isFinite(Number(pool?.createdAt)) ? Number(pool.createdAt) : now(),
+    showBadge: pool?.showBadge !== false
+  };
+}
+
+function aggregateTempHpPools(pools = []) {
+  const active = pools.filter((pool) => pool?.enabled !== false);
+  return {
+    enabled: active.length > 0,
+    remaining: active.reduce((sum, pool) => sum + numberOrZero(pool.remaining), 0),
+    max: active.reduce((sum, pool) => sum + numberOrZero(pool.max), 0)
+  };
+}
+
+function tempHpPoolUpdate(pools = []) {
+  const serialized = pools.map((pool) => serializeTempHpPool(pool));
+  const aggregate = aggregateTempHpPools(serialized);
+  return {
+    [flagPath("enabled")]: aggregate.enabled,
+    [flagPath("remaining")]: aggregate.remaining,
+    [flagPath("max")]: aggregate.max,
+    [flagPath("pools")]: serialized
+  };
+}
+
+function hasTemporaryHpData(item) {
+  return Boolean(item?.flags?.[MODULE.ID]?.[REACTIVE_FLAG_KEY]?.[TEMP_HP_FLAG_KEY]);
+}
+
+function actorSourceItemByUuid(actor, uuid) {
+  const target = String(uuid ?? "").trim();
+  if (!actor || !target) return null;
+  return actor.items?.find?.((item) => item.uuid === target || item.id === target) ?? null;
+}
+
+function actorSourceItemBySourceId(actor, sourceUuid) {
+  const target = String(sourceUuid ?? "").trim();
+  if (!actor || !target) return null;
+  return actor.items?.find?.((item) => {
+    const source =
+      item.flags?.[MODULE.ID]?.sourceId
+      ?? item.flags?.core?.sourceId
+      ?? item._stats?.compendiumSource
+      ?? "";
+    return String(source) === target;
+  }) ?? null;
+}
+
+async function resolveItemDocumentByUuid(uuid) {
+  if (!uuid) return null;
+  try {
+    return await fromUuid(uuid);
+  } catch (_err) {
+    return null;
+  }
+}
+
+function buffApplicationFromDocument(doc) {
+  if (!doc) return null;
+  const pack = doc.pack ?? String(doc.uuid ?? "").match(/^Compendium\.([^.]+(?:\.[^.]+)*)\.Item\./)?.[1] ?? null;
+  return {
+    name: doc.name,
+    id: doc.id,
+    pack,
+    document: doc
+  };
+}
+
+function actorTargetForBuffApplication(actor) {
+  const token = actor?.getActiveTokens?.(true, true)?.[0] ?? actor?.getActiveTokens?.()?.[0] ?? null;
+  return token ?? { actor, id: actor?.id, document: actor };
+}
+
+function temporaryHpBuffName(baseName, sourceName = "") {
+  const base = String(baseName || game.i18n.localize("PF1.TempHP") || "Temporary HP").trim();
+  const source = String(sourceName ?? "").trim();
+  if (!source) return base;
+  return `${base} (${source})`;
+}
+
+function actorSourceItemByNameAndSourceId(actor, name, sourceUuid) {
+  const targetName = String(name ?? "").trim();
+  const targetSource = String(sourceUuid ?? "").trim();
+  if (!actor || !targetName || !targetSource) return null;
+  return actor.items?.find?.((item) => {
+    if (item.name !== targetName) return false;
+    const source =
+      item.flags?.[MODULE.ID]?.sourceId
+      ?? item.flags?.core?.sourceId
+      ?? item._stats?.compendiumSource
+      ?? "";
+    return String(source) === targetSource;
+  }) ?? null;
+}
+
+async function ensureSourceItem(actor, { sourceBuffUuid = "", sourceItemUuid = "", duration = null, clearDuration = false, sourceName = "" } = {}) {
+  const sourceUuid = String(sourceBuffUuid || sourceItemUuid || "").trim();
+  if (!actor || !sourceUuid) return null;
+  const doc = await resolveItemDocumentByUuid(sourceUuid);
+  const buff = buffApplicationFromDocument(doc);
+  const appliedBuffName = buff ? temporaryHpBuffName(buff.name, sourceName) : "";
+  if (buff) {
+    const durationForBuff = duration ?? (clearDuration ? null : undefined);
+    await applyBuffToTargets({ ...buff, name: appliedBuffName }, [actorTargetForBuffApplication(actor)], durationForBuff, undefined, { silent: true });
+    const applied =
+      actorSourceItemByNameAndSourceId(actor, appliedBuffName, sourceUuid)
+      ?? actorSourceItemByUuid(actor, sourceUuid)
+      ?? actorSourceItemBySourceId(actor, sourceUuid);
+    return applied;
+  }
+
+  const byUuid = actorSourceItemByUuid(actor, sourceUuid);
+  if (byUuid) {
+    if (byUuid.type === "buff" && byUuid.system?.active !== true) await byUuid.update({ "system.active": true }, { render: false });
+    return byUuid;
+  }
+
+  const bySource = actorSourceItemBySourceId(actor, sourceUuid);
+  if (bySource) {
+    if (bySource.type === "buff" && bySource.system?.active !== true) await bySource.update({ "system.active": true }, { render: false });
+    return bySource;
+  }
+  return null;
+}
+
+function poolDescriptor(item, pool = null) {
+  const config = pool ? normalizeTempHpPoolEntry(pool, item) : tempHpConfig(item);
+  return {
+    item,
+    itemUuid: item.uuid,
+    itemId: item.id,
+    itemName: item.name,
+    poolId: config.poolId,
+    sourceKey: config.sourceKey,
+    remaining: config.remaining,
+    max: config.max,
+    label: config.label || item.name,
+    duration: config.duration,
+    stackingMode: config.stackingMode,
+    compatibilityMode: config.compatibilityMode,
+    sourceItemUuid: config.sourceItemUuid,
+    sourceBuffUuid: config.sourceBuffUuid,
+    createdAt: config.createdAt,
+    showBadge: config.showBadge
+  };
+}
+
+export function getNasTemporaryHpPools(actor) {
+  const pools = [];
+  for (const item of actor?.items ?? []) {
+    if (!hasTemporaryHpData(item) || !isSourceItemActive(item)) continue;
+    for (const config of tempHpPoolEntries(item)) {
+      if (!config.enabled || config.remaining <= 0) continue;
+      pools.push(poolDescriptor(item, config));
+    }
+  }
+  return pools.sort((a, b) =>
+    (a.createdAt || 0) - (b.createdAt || 0)
+    || String(a.itemId).localeCompare(String(b.itemId))
+    || String(a.poolId).localeCompare(String(b.poolId))
+  );
+}
+
+function blocksOtherNas(pool) {
+  const mode = normalizeTemporaryHpCompatibilityMode(pool?.compatibilityMode);
+  return mode === "noNas" || mode === "noAny";
+}
+
+function blocksNative(pool) {
+  const mode = normalizeTemporaryHpCompatibilityMode(pool?.compatibilityMode);
+  return mode === "noNative" || mode === "noAny";
+}
+
+function poolsAreNasIncompatible(a, b) {
+  if (!a || !b) return false;
+  if (String(a.poolId) === String(b.poolId)) return false;
+  return blocksOtherNas(a) || blocksOtherNas(b);
+}
+
+export function getEffectiveNasTemporaryHpPools(actor) {
+  let pools = getNasTemporaryHpPools(actor);
+  const native = nativeActorTempHp(actor);
+
+  if (pools.some(blocksOtherNas)) {
+    const highest = [...pools].sort((a, b) =>
+      numberOrZero(b.remaining) - numberOrZero(a.remaining)
+      || (a.createdAt || 0) - (b.createdAt || 0)
+      || String(a.poolId).localeCompare(String(b.poolId))
+    )[0];
+    pools = highest ? [highest] : [];
+  }
+
+  const nativeStacking = pools.filter((pool) => !blocksNative(pool));
+  const nativeBlocking = pools.filter(blocksNative);
+  const nativeBlockingTotal = nativeBlocking.reduce((total, pool) => total + numberOrZero(pool.remaining), 0);
+  return nativeBlockingTotal > native ? [...nativeStacking, ...nativeBlocking] : nativeStacking;
+}
+
+export function getNasTemporaryHpTotal(actor) {
+  return getEffectiveNasTemporaryHpPools(actor).reduce((total, pool) => total + numberOrZero(pool.remaining), 0);
+}
+
+function getEffectiveTemporaryHpTotal(actor) {
+  const native = nativeActorTempHp(actor);
+  const pools = getEffectiveNasTemporaryHpPools(actor);
+  const nativeStackingTotal = pools
+    .filter((pool) => !blocksNative(pool))
+    .reduce((total, pool) => total + numberOrZero(pool.remaining), 0);
+  const nativeBlockingTotal = pools
+    .filter(blocksNative)
+    .reduce((total, pool) => total + numberOrZero(pool.remaining), 0);
+  return native + nativeStackingTotal + Math.max(0, nativeBlockingTotal - native);
+}
+
+function getEffectiveNasTemporaryHpContribution(actor) {
+  return Math.max(0, getEffectiveTemporaryHpTotal(actor) - nativeActorTempHp(actor));
+}
+
+export function actorHasNasTemporaryHp(actor) {
+  return getNasTemporaryHpTotal(actor) > 0;
+}
+
+async function discardLowerIncompatibleNasPools(actor, incoming = {}) {
+  if (!actor) return;
+  const incomingRemaining = numberOrZero(incoming.remaining);
+  if (incomingRemaining <= 0) return;
+  for (const item of actor.items ?? []) {
+    if (!hasTemporaryHpData(item) || !isSourceItemActive(item)) continue;
+    const pools = tempHpPoolEntries(item);
+    let changed = false;
+    const nextPools = pools.map((pool) => {
+      const samePool = item.uuid === incoming.itemUuid && pool.poolId === incoming.poolId;
+      if (samePool) return pool;
+      if (!poolsAreNasIncompatible(pool, incoming)) return pool;
+      if (numberOrZero(pool.remaining) >= incomingRemaining) return pool;
+      changed = true;
+      return { ...pool, enabled: false, remaining: 0 };
+    });
+    if (!changed) continue;
+    const activeRemaining = nextPools.some((pool) => pool.enabled !== false && numberOrZero(pool.remaining) > 0);
+    const updates = tempHpPoolUpdate(nextPools);
+    if (!activeRemaining && item.type === "buff") updates["system.active"] = false;
+    await item.update(updates, { render: false });
+  }
+}
+
+function tokenObjectForDisplay(token) {
+  return token?.object ?? token?.token?.object ?? token?.token ?? token ?? null;
+}
+
+function activeTokenObjectsForActor(actor) {
+  if (!actor) return [];
+  const candidates = [];
+  try {
+    candidates.push(...(actor.getActiveTokens?.(true, false) ?? []));
+  } catch (_err) {
+    // Some Foundry versions do not support the second argument.
+  }
+  try {
+    candidates.push(...(actor.getActiveTokens?.(true, true) ?? []));
+  } catch (_err) {
+    // Some Foundry versions do not support the second argument.
+  }
+  try {
+    candidates.push(...(actor.getActiveTokens?.() ?? []));
+  } catch (_err) {
+    // Some Foundry versions do not expose active token lookup.
+  }
+
+  const objects = [];
+  const seen = new Set();
+  for (const candidate of candidates) {
+    const object = tokenObjectForDisplay(candidate);
+    if (!object) continue;
+    const key = object?.document?.uuid ?? object?.uuid ?? object?.id ?? candidate?.uuid ?? candidate?.id;
+    if (key && seen.has(key)) continue;
+    if (key) seen.add(key);
+    objects.push(object);
+  }
+  return objects;
+}
+
+export function refreshNasTemporaryHpDisplay(actor) {
+  if (!actor) return;
+  const tokens = activeTokenObjectsForActor(actor);
+  actor.sheet?.render?.(false);
+  refreshTokenEffectBadgesForActor(actor);
+  for (const token of tokens) token?.drawBars?.();
+}
+
+export async function grantNasTemporaryHp(actor, {
+  amount = 0,
+  sourceItemUuid = "",
+  sourceBuffUuid = "",
+  sourceKey = "",
+  duration = null,
+  label = "",
+  showBadge = true,
+  showCombatText = true,
+  clearDuration = false,
+  stackingMode = "replaceSameSource",
+  compatibilityMode = "stacksWithAll"
+} = {}) {
+  const total = numberOrZero(amount);
+  if (!actor || total <= 0) return null;
+  const normalizedStackingMode = normalizeTemporaryHpStackingMode(stackingMode);
+  const normalizedCompatibilityMode = normalizeTemporaryHpCompatibilityMode(compatibilityMode);
+  const beforeEffectiveTotal = getEffectiveTemporaryHpTotal(actor);
+  const native = nativeActorTempHp(actor);
+  const sourceName = String(label ?? "").trim();
+
+  if ((normalizedCompatibilityMode === "noNative" || normalizedCompatibilityMode === "noAny") && native >= total) {
+    refreshNasTemporaryHpDisplay(actor);
+    return {
+      gainedAmount: 0,
+      skipped: true,
+      reason: "native-temp-hp-higher"
+    };
+  }
+
+  const incompatibleNasPools = getNasTemporaryHpPools(actor).filter((pool) => {
+    const incoming = { poolId: "__incoming__", compatibilityMode: normalizedCompatibilityMode };
+    return poolsAreNasIncompatible(pool, incoming);
+  });
+  const highestIncompatibleNas = Math.max(0, ...incompatibleNasPools.map((pool) => numberOrZero(pool.remaining)));
+  if (highestIncompatibleNas >= total) {
+    refreshNasTemporaryHpDisplay(actor);
+    return {
+      gainedAmount: 0,
+      skipped: true,
+      reason: "nas-temp-hp-higher"
+    };
+  }
+  if (normalizedCompatibilityMode === "noNas" || normalizedCompatibilityMode === "noAny") {
+    const projectedEffectiveTotal = (normalizedCompatibilityMode === "noAny" || normalizedCompatibilityMode === "noNative")
+      ? Math.max(native, total)
+      : native + total;
+    if (projectedEffectiveTotal <= beforeEffectiveTotal) {
+      refreshNasTemporaryHpDisplay(actor);
+      return {
+        gainedAmount: 0,
+        skipped: true,
+        reason: "effective-temp-hp-not-improved"
+      };
+    }
+  }
+
+  const canModify = game.user?.isGM || actor.isOwner;
+  if (!canModify) {
+    if (!socket) return null;
+    const result = await socket.executeAsGM("grantNasTemporaryHpSocket", actor.uuid, {
+      amount: total,
+      sourceItemUuid,
+      sourceBuffUuid,
+      sourceKey,
+      duration,
+      label,
+      showBadge,
+      showCombatText: false,
+      clearDuration,
+      stackingMode: normalizedStackingMode,
+      compatibilityMode: normalizedCompatibilityMode
+    });
+    const gained = numberOrZero(result?.gainedAmount ?? total);
+    if (result && gained > 0 && showCombatText !== false) await showTemporaryHpGainCombatText(actor, gained);
+    return result;
+  }
+
+  const item = await ensureSourceItem(actor, { sourceBuffUuid, sourceItemUuid, duration, clearDuration, sourceName });
+  if (!item) {
+    return null;
+  }
+  const displayLabel = String(label || item.name || game.i18n.localize("PF1.TempShort"));
+  const resolvedSourceKey = deriveTempHpSourceKey({ sourceKey, sourceItemUuid, sourceBuffUuid, item });
+  const currentPools = tempHpPoolEntries(item);
+  const sameSourcePools = currentPools.filter((pool) => pool.sourceKey === resolvedSourceKey);
+  const existingPool = sameSourcePools
+    .sort((a, b) => numberOrZero(b.remaining) - numberOrZero(a.remaining) || (a.createdAt || 0) - (b.createdAt || 0))[0];
+  if (normalizedStackingMode === "keepHigherSameSource" && existingPool && numberOrZero(existingPool.remaining) >= total) {
+    refreshNasTemporaryHpDisplay(actor);
+    return {
+      ...poolDescriptor(item, existingPool),
+      gainedAmount: 0
+    };
+  }
+  const nextPool = serializeTempHpPool({
+    enabled: true,
+    poolId: normalizedStackingMode === "stackSeparate" ? createNasId() : existingPool?.poolId ?? createNasId(),
+    sourceKey: resolvedSourceKey,
+    remaining: total,
+    max: total,
+    sourceItemUuid: String(sourceItemUuid ?? ""),
+    sourceBuffUuid: String(sourceBuffUuid ?? ""),
+    label: displayLabel,
+    duration: duration ? foundry.utils.deepClone(duration) : null,
+    stackingMode: normalizedStackingMode,
+    compatibilityMode: normalizedCompatibilityMode,
+    createdAt: now(),
+    showBadge: showBadge !== false
+  });
+  const nextPools = normalizedStackingMode === "stackSeparate"
+    ? [...currentPools, nextPool]
+    : [
+        ...currentPools.filter((pool) => pool.sourceKey !== resolvedSourceKey),
+        nextPool
+      ];
+  await item.update({
+    ...tempHpPoolUpdate(nextPools),
+    [flagPath("poolId")]: nextPool.poolId,
+    [flagPath("sourceKey")]: resolvedSourceKey,
+    [flagPath("sourceItemUuid")]: String(sourceItemUuid ?? ""),
+    [flagPath("sourceBuffUuid")]: String(sourceBuffUuid ?? ""),
+    [flagPath("label")]: displayLabel,
+    [flagPath("duration")]: duration ? foundry.utils.deepClone(duration) : null,
+    [flagPath("stackingMode")]: normalizedStackingMode,
+    [flagPath("compatibilityMode")]: normalizedCompatibilityMode,
+    [flagPath("createdAt")]: nextPool.createdAt,
+    [flagPath("showBadge")]: showBadge !== false
+  }, { render: false });
+
+  await discardLowerIncompatibleNasPools(actor, {
+    poolId: nextPool.poolId,
+    itemUuid: item.uuid,
+    remaining: nextPool.remaining,
+    compatibilityMode: nextPool.compatibilityMode
+  });
+
+  refreshNasTemporaryHpDisplay(actor);
+  const gainedAmount = Math.max(0, getEffectiveTemporaryHpTotal(actor) - beforeEffectiveTotal);
+  if (showCombatText !== false && gainedAmount > 0) await showTemporaryHpGainCombatText(actor, gainedAmount);
+  return {
+    ...poolDescriptor(item, nextPool),
+    gainedAmount
+  };
+}
+
+export async function spendNasTemporaryHp(actor, damageAmount = 0, options = {}) {
+  const incoming = numberOrZero(damageAmount);
+  if (!actor || incoming <= 0) {
+    return { remainingDamage: incoming, spentPools: [], changed: false };
+  }
+
+  const canModify = game.user?.isGM || actor.isOwner;
+  if (!canModify) {
+    if (!socket) return { remainingDamage: incoming, spentPools: [], changed: false };
+    const result = await socket.executeAsGM("spendNasTemporaryHpSocket", actor.uuid, incoming, options ?? {});
+    const spent = (result?.spentPools ?? []).reduce((sum, pool) => sum + numberOrZero(pool?.spent), 0);
+    if (spent > 0 && options?._nasTemporaryHpCombatText !== false) {
+      const shown = await showTemporaryHpCombatText(actor, spent);
+    }
+    return result;
+  }
+
+  let remainingDamage = incoming;
+  const spentPools = [];
+  for (const pool of getEffectiveNasTemporaryHpPools(actor)) {
+    if (remainingDamage <= 0) break;
+    const spend = Math.min(remainingDamage, numberOrZero(pool.remaining));
+    if (spend <= 0) continue;
+    const nextRemaining = numberOrZero(pool.remaining) - spend;
+    const itemPools = tempHpPoolEntries(pool.item).map((entry) => entry.poolId === pool.poolId
+      ? { ...entry, remaining: nextRemaining, enabled: nextRemaining > 0 }
+      : entry
+    );
+    const activeRemaining = itemPools.some((entry) => entry.enabled !== false && numberOrZero(entry.remaining) > 0);
+    const updates = tempHpPoolUpdate(itemPools);
+    if (!activeRemaining && pool.item?.type === "buff") updates["system.active"] = false;
+    await pool.item.update(updates, { render: false });
+    spentPools.push({
+      itemUuid: pool.itemUuid,
+      itemName: pool.itemName,
+      poolId: pool.poolId,
+      sourceKey: pool.sourceKey,
+      label: pool.label,
+      spent: spend,
+      remaining: nextRemaining
+    });
+    remainingDamage -= spend;
+  }
+
+  if (spentPools.length) {
+    refreshNasTemporaryHpDisplay(actor);
+    const spent = spentPools.reduce((sum, pool) => sum + numberOrZero(pool?.spent), 0);
+    if (spent > 0 && options?._nasTemporaryHpCombatText !== false) {
+      const shown = await showTemporaryHpCombatText(actor, spent);
+    }
+  }
+  return {
+    remainingDamage,
+    spentPools,
+    changed: spentPools.length > 0
+  };
+}
+
+export async function initializeNasTemporaryHpItem(item) {
+  if (!item || !hasTemporaryHpData(item)) {
+    return false;
+  }
+  const config = tempHpConfig(item);
+  if (!config.enabled) {
+    return false;
+  }
+  if (!isSourceItemActive(item)) {
+    refreshNasTemporaryHpDisplay(item.actor);
+    return false;
+  }
+  if (config.remaining > 0) {
+    refreshNasTemporaryHpDisplay(item.actor);
+    return false;
+  }
+  if (config.max <= 0) {
+    return false;
+  }
+  const pools = tempHpPoolEntries(item);
+  const nextPools = pools.length
+    ? pools.map((pool) => ({ ...pool, enabled: true, remaining: numberOrZero(pool.max) }))
+    : [{ ...config, enabled: true, remaining: config.max }];
+  await item.update(tempHpPoolUpdate(nextPools), { render: false });
+  refreshNasTemporaryHpDisplay(item.actor);
+  return true;
+}
+
+export async function resetNasTemporaryHpItem(item) {
+  if (!item || !hasTemporaryHpData(item)) return false;
+  const config = tempHpConfig(item);
+  if (!config.enabled || !isSourceItemActive(item) || config.max <= 0) {
+    refreshNasTemporaryHpDisplay(item?.actor);
+    return false;
+  }
+  const pools = tempHpPoolEntries(item);
+  const nextPools = pools.length
+    ? pools.map((pool) => ({ ...pool, enabled: true, remaining: numberOrZero(pool.max) }))
+    : [{ ...config, enabled: true, remaining: config.max }];
+  await item.update(tempHpPoolUpdate(nextPools), { render: false });
+  refreshNasTemporaryHpDisplay(item.actor);
+  return true;
+}
+
+export function hpBarDataWithNasTemporaryHp(token, data) {
+  if (data?.attribute !== "attributes.hp") return data;
+  const effectiveTemp = getEffectiveTemporaryHpTotal(token?.actor);
+  const nativeDataTemp = numberOrZero(data?.temp);
+  if (effectiveTemp <= nativeDataTemp) return data;
+  const cloned = foundry.utils.deepClone(data);
+  cloned.temp = effectiveTemp;
+  cloned._nasTemporaryHpIncluded = true;
+  cloned.value = Number(cloned.value) || 0;
+  cloned.max = Number(cloned.max) || 0;
+  return cloned;
+}
+
+function htmlRootFromRenderArg(html) {
+  if (html instanceof HTMLElement) return html;
+  if (html?.jquery) return html[0];
+  if (Array.isArray(html)) return html[0];
+  return html?.[0] ?? html ?? null;
+}
+
+function nativeActorTempHp(actor) {
+  return numberOrZero(actor?.system?.attributes?.hp?.temp);
+}
+
+function nativeTempHpSheetValue(actor) {
+  const native = nativeActorTempHp(actor);
+  return native > 0 ? String(native) : "";
+}
+
+function totalTempHpSheetValue(actor) {
+  const total = getEffectiveTemporaryHpTotal(actor);
+  return total > 0 ? String(total) : "";
+}
+
+function setSheetFieldValue(input, value) {
+  if (!input) return;
+  const text = String(value ?? "");
+  input.textContent = text;
+  if ("value" in input) input.value = text;
+}
+
+function setTempHpSheetDisplay(input, actor) {
+  if (!input) {
+    return;
+  }
+  if (document.activeElement === input) {
+    return;
+  }
+  input.dataset.nasNativeTempHp = nativeTempHpSheetValue(actor);
+  input.dataset.nasTemporaryHpTotal = String(getNasTemporaryHpTotal(actor));
+  input.dataset.nasTemporaryHpDisplayMode = "total";
+  setSheetFieldValue(input, totalTempHpSheetValue(actor));
+}
+
+function setTempHpSheetNativeEditValue(input, actor) {
+  if (!input) return;
+  input.dataset.nasNativeTempHp = nativeTempHpSheetValue(actor);
+  input.dataset.nasTemporaryHpTotal = String(getNasTemporaryHpTotal(actor));
+  input.dataset.nasTemporaryHpDisplayMode = "native";
+  setSheetFieldValue(input, nativeTempHpSheetValue(actor));
+}
+
+function renderTemporaryHpSheetDisplay(app, html, hookContext = {}) {
+  const actor = app?.actor ?? app?.document;
+  if (!actor) {
+    return;
+  }
+  const root = htmlRootFromRenderArg(html);
+  const input = root?.querySelector?.('.hp-temp-input[name="system.attributes.hp.temp"]');
+  if (!input) {
+    return;
+  }
+  setTempHpSheetDisplay(input, actor);
+  if (input.dataset.nasTemporaryHpListeners === "true") return;
+  input.dataset.nasTemporaryHpListeners = "true";
+  const showNative = (event) => {
+    setTempHpSheetNativeEditValue(input, actor);
+  };
+  const showTotal = (event) => {
+    queueMicrotask(() => {
+      setTempHpSheetDisplay(input, actor);
+    });
+  };
+  input.addEventListener("pointerdown", showNative, { capture: true });
+  input.addEventListener("focusin", showNative);
+  input.addEventListener("blur", showTotal);
+  input.addEventListener("focusout", showTotal);
+}
+
+let tempHpSheetDocumentListenersRegistered = false;
+
+function actorFromTempHpInput(input) {
+  const appId = Number(input?.closest?.("[data-appid]")?.dataset?.appid);
+  const app = Number.isFinite(appId) ? ui.windows?.[appId] : null;
+  const actor = app?.actor ?? app?.document ?? null;
+  return actor?.documentName === "Actor" || actor?.type ? actor : null;
+}
+
+function restoreTempHpSheetDisplayFromEventTarget(target) {
+  const input = target?.closest?.('.hp-temp-input[name="system.attributes.hp.temp"]');
+  if (!input) return;
+  const actor = actorFromTempHpInput(input);
+  const appRoot = input.closest?.("[data-appid]");
+  const appId = appRoot?.dataset?.appid;
+  globalThis.setTimeout?.(() => {
+    const root = appId ? document.querySelector(`[data-appid="${CSS.escape(appId)}"]`) : appRoot;
+    const currentInput = root?.querySelector?.('.hp-temp-input[name="system.attributes.hp.temp"]') ?? input;
+    if (document.activeElement !== currentInput) setTempHpSheetDisplay(currentInput, actor);
+  }, 0);
+}
+
+function registerTemporaryHpSheetDocumentListeners() {
+  if (tempHpSheetDocumentListenersRegistered) return;
+  tempHpSheetDocumentListenersRegistered = true;
+  const handler = (event) => {
+    const input = event.target?.closest?.('.hp-temp-input[name="system.attributes.hp.temp"]');
+    if (!input) return;
+    const actor = actorFromTempHpInput(input);
+    if (event.type === "pointerdown" || event.type === "focusin") {
+      setTempHpSheetNativeEditValue(input, actor);
+    } else if (event.type === "blur" || event.type === "focusout") {
+      restoreTempHpSheetDisplayFromEventTarget(event.target);
+    }
+  };
+  for (const eventName of ["pointerdown", "focusin", "blur", "focusout", "input", "change"]) {
+    document.addEventListener(eventName, handler, true);
+  }
+}
+
+let tooltipObserverRegistered = false;
+
+function tooltipActor() {
+  const element = game.tooltip?.element;
+  if (!element) return null;
+  const appIds = [];
+  for (const node of [element, ...Array.from(element.parents?.() ?? [])]) {
+    for (const value of [
+      node?.dataset?.appid,
+      node?.dataset?.appId,
+      node?.closest?.("[data-appid]")?.dataset?.appid,
+      node?.closest?.("[data-app-id]")?.dataset?.appId,
+      String(node?.id ?? "").replace(/^app-/, "")
+    ]) {
+      const appId = Number(value);
+      if (Number.isFinite(appId) && !appIds.includes(appId)) appIds.push(appId);
+    }
+  }
+  for (const appId of appIds) {
+    const app = ui.windows?.[appId];
+    const actor = app?.actor ?? app?.document;
+    if (actor?.type) return actor;
+  }
+
+  const actorId = element.closest?.("[data-actor-id]")?.dataset?.actorId
+    ?? element.closest?.("[data-document-id]")?.dataset?.documentId;
+  if (actorId) {
+    const actor = game.actors?.get?.(actorId);
+    if (actor) return actor;
+  }
+
+  const title = element.closest?.(".app")?.querySelector?.(".window-title")?.textContent?.trim()
+    ?? element.closest?.("[data-appid]")?.querySelector?.(".window-title")?.textContent?.trim();
+  if (title) {
+    const actor = game.actors?.find?.((candidate) => candidate.name === title);
+    if (actor) return actor;
+  }
+
+  return null;
+}
+
+function tooltipHasHpBreakdown(tooltip) {
+  return Array.from(tooltip?.querySelectorAll?.(".path") ?? [])
+    .some((el) => (el.textContent ?? "").trim() === "@attributes.hp.temp");
+}
+
+function insertAfter(reference, ...nodes) {
+  let after = reference;
+  for (const node of nodes) {
+    after?.parentElement?.insertBefore(node, after.nextSibling);
+    after = node;
+  }
+}
+
+function appendNasTemporaryHpTooltip() {
+  const tooltip = game.tooltip?.tooltip ?? document.getElementById("tooltip");
+  if (!tooltip) {
+    return;
+  }
+  const alreadyEnhanced = Array.from(tooltip.querySelectorAll(".path"))
+    .some((el) => (el.textContent ?? "").trim() === "NAS temporary HP");
+  if (alreadyEnhanced) {
+    tooltip.dataset.nasTemporaryHpEnhanced = "true";
+    return;
+  }
+  delete tooltip.dataset.nasTemporaryHpEnhanced;
+  const paths = Array.from(tooltip.querySelectorAll(".path")).map((el) => (el.textContent ?? "").trim());
+  const hasHpBreakdown = tooltipHasHpBreakdown(tooltip);
+  const activeElement = game.tooltip?.element;
+  if (!hasHpBreakdown) {
+    return;
+  }
+  const actor = tooltipActor();
+  const nasTotal = getNasTemporaryHpTotal(actor);
+  if (nasTotal <= 0) {
+    return;
+  }
+
+  const tempPath = Array.from(tooltip.querySelectorAll(".path"))
+    .find((el) => (el.textContent ?? "").trim() === "@attributes.hp.temp");
+  const tempValue = tempPath?.nextElementSibling;
+  if (tempPath && tempValue?.classList?.contains("value")) {
+    const path = document.createElement("span");
+    path.className = "path";
+    path.textContent = "NAS temporary HP";
+    const value = document.createElement("span");
+    value.className = "value";
+    value.textContent = `+${nasTotal}`;
+    insertAfter(tempValue, path, value);
+  }
+
+  const fromSources = Array.from(tooltip.querySelectorAll("h4"))
+    .find((el) => (el.textContent ?? "").trim().toLowerCase() === "from sources");
+  if (fromSources) {
+    for (const pool of getNasTemporaryHpPools(actor)) {
+      const flavor = document.createElement("span");
+      flavor.className = "flavor";
+      flavor.textContent = pool.label || pool.itemName || "NAS Temporary HP";
+      const value = document.createElement("span");
+      value.className = "value untyped";
+      value.textContent = `+${pool.remaining}`;
+      fromSources.parentElement?.append(flavor, value);
+    }
+  }
+
+  tooltip.dataset.nasTemporaryHpEnhanced = "true";
+}
+
+function registerNasTemporaryHpTooltipEnhancer() {
+  if (tooltipObserverRegistered) return;
+  const tooltip = game.tooltip?.tooltip ?? document.getElementById("tooltip");
+  if (!tooltip) {
+    return;
+  }
+  const observer = new MutationObserver(() => {
+    queueMicrotask(appendNasTemporaryHpTooltip);
+  });
+  observer.observe(tooltip, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ["class"]
+  });
+  tooltipObserverRegistered = true;
+}
+
+export function registerNasTemporaryHpPools() {
+
+  registerNasTemporaryHpTooltipEnhancer();
+  for (const hookName of ["renderActorSheet", "renderActorSheetPF", "renderActorSheetPFCharacter", "renderActorSheetPFNPC"]) {
+    Hooks.on(hookName, (app, html, data) => renderTemporaryHpSheetDisplay(app, html, {
+      hookName,
+      dataKeys: data && typeof data === "object" ? Object.keys(data).sort() : []
+    }));
+  }
+  registerTemporaryHpSheetDocumentListeners();
+  Hooks.on("updateItem", async (item, change) => {
+    if (!hasTemporaryHpData(item)) {
+      return;
+    }
+    const activeChanged = foundry.utils.hasProperty(change, "system.active");
+    const equippedChanged = foundry.utils.hasProperty(change, "system.equipped");
+    if (foundry.utils.getProperty(change, "system.active") === true || foundry.utils.getProperty(change, "system.equipped") === true) {
+      await resetNasTemporaryHpItem(item);
+      return;
+    }
+    if (activeChanged || equippedChanged) {
+      refreshNasTemporaryHpDisplay(item.actor);
+      return;
+    }
+    refreshNasTemporaryHpDisplay(item.actor);
+  });
+  Hooks.on("deleteItem", (item) => {
+    if (!hasTemporaryHpData(item)) return;
+    refreshNasTemporaryHpDisplay(item.actor);
+  });
+}

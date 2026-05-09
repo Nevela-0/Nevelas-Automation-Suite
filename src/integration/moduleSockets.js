@@ -59,6 +59,8 @@ export function initializeSockets() {
     socket.register("applyReactiveDamageToActorSocket", applyReactiveDamageToActorSocket);
     socket.register("toggleReactiveConditionSocket", toggleReactiveConditionSocket);
     socket.register("toggleReactiveBuffSocket", toggleReactiveBuffSocket);
+    socket.register("grantNasTemporaryHpSocket", grantNasTemporaryHpSocket);
+    socket.register("spendNasTemporaryHpSocket", spendNasTemporaryHpSocket);
     socket.register("setMirrorImageBuffStateSocket", applyMirrorImageStateSocket);
     socket.register("undoMirrorImageOperationSocket", undoMirrorImageOperationSocket);
 }
@@ -816,4 +818,18 @@ async function toggleReactiveConditionSocket(actorUuid, conditionId, enabled) {
 
 async function toggleReactiveBuffSocket(actorUuid, buffUuid, enabled) {
     return setReactiveBuffState(actorUuid, buffUuid, enabled === true);
+}
+
+async function grantNasTemporaryHpSocket(actorUuid, data = {}) {
+    const actor = await resolveActorByUuid(actorUuid);
+    if (!actor) return null;
+    const { grantNasTemporaryHp } = await import('../features/automation/buffs/temporaryHpPools.js');
+    return grantNasTemporaryHp(actor, data ?? {});
+}
+
+async function spendNasTemporaryHpSocket(actorUuid, damageAmount = 0, options = {}) {
+    const actor = await resolveActorByUuid(actorUuid);
+    if (!actor) return { remainingDamage: Math.max(0, Math.floor(Number(damageAmount) || 0)), spentPools: [], changed: false };
+    const { spendNasTemporaryHp } = await import('../features/automation/buffs/temporaryHpPools.js');
+    return spendNasTemporaryHp(actor, Number(damageAmount) || 0, options ?? {});
 }

@@ -10,7 +10,232 @@ import { isWoundsVigorActive, isWoundsVigorAutomationEnabled, isWvNoWoundsActor 
 import { getCasterLevelEquivalentFromFormula, getDiceCountFromFormula, getDiceCountFromRoll } from '../utils/formulaUtils.js';
 import { applyReactiveEffectsForHit, resolveSourceActorFromOptions } from './reactiveTriggers.js';
 import { resolveMirrorImageForApplyDamage } from '../buffs/mirrorImage.js';
+import { applyDamageAbsorption, postDamageAbsorptionChatSummary } from '../buffs/damageAbsorption.js';
+import { spendNasTemporaryHp } from '../buffs/temporaryHpPools.js';
 import { recordCombatTextContext } from '../utils/combatTextContext.js';
+import { showAbsorptionCombatText, showTemporaryHpCombatText } from '../utils/healthDeltaText.js';
+import { getRuntimeCasterLevel, rollDataWithRuntimeLevels } from '../utils/spellLevels.js';
+
+async function callApplyDamageNoop(wrapped, actor, options = {}) {
+    return wrapped.call(actor, 0, {
+        ...options,
+        ratio: 1,
+        reduction: 0,
+        asWounds: false,
+        _nasAbsorptionApplied: true
+    });
+}
+
+async function applyDamageAfterNasTemporaryHp(wrapped, actor, value = 0, options = {}) {
+    if (!actor || options?._nasTemporaryHpApplied) return { handled: false };
+    if (options?.asWounds === true) return { handled: false };
+    const amount = Number(value) || 0;
+    const isHealing = amount < 0 || options?.isHealing === true;
+    if (isHealing || amount <= 0) return { handled: false };
+
+    const rawFinalDamage = Math.floor(Math.max(0, Math.floor(Math.max(0, amount) * (options?.ratio ?? 1))));
+    const finalDamage = Math.max(0, rawFinalDamage - Math.min(rawFinalDamage, options?.reduction ?? 0));
+    if (finalDamage <= 0) return { handled: false };
+
+    const tempHp = await spendNasTemporaryHp(actor, finalDamage, {
+        ...options,
+        _nasTemporaryHpCombatText: false
+    });
+    if (!tempHp?.changed) return { handled: false };
+    const remaining = Math.max(0, Math.floor(Number(tempHp.remainingDamage) || 0));
+    const spent = (tempHp.spentPools ?? []).reduce((sum, pool) => {
+        return sum + Math.max(0, Math.floor(Number(pool?.spent) || 0));
+    }, 0);
+    if (remaining <= 0) {
+        await callApplyDamageNoop(wrapped, actor, {
+            ...options,
+            _nasTemporaryHpApplied: true
+        });
+        await showTemporaryHpCombatText(actor, spent);
+        return { handled: true, result: true, spentPools: tempHp.spentPools ?? [] };
+    }
+
+    if (spent > 0) {
+        recordCombatTextContext(actor, {
+            nasTemporaryHpSpent: spent,
+            isCritical: options?.isCritical === true,
+            critMult: options?.critMult,
+            messageUuid: options?.message?.uuid ?? options?.messageUuid ?? null,
+            attackIndex: options?.attackIndex
+        });
+    }
+    const result = await wrapped.call(actor, remaining, {
+        ...options,
+        ratio: 1,
+        reduction: 0,
+        _nasTemporaryHpApplied: true
+    });
+    return { handled: true, result, spentPools: tempHp.spentPools ?? [] };
+}
+
+function actorHasAbsorptionData(actor) {
+    return (actor?.items ?? []).some((item) => {
+        if (item?.type !== "buff") return false;
+        return Boolean(item?.flags?.[MODULE.ID]?.itemReactiveEffects?.absorption);
+    });
+}
+
+function summarizeApplyDamageInstance(instance) {
+    return {
+        value: instance?.value,
+        type: instance?.type,
+        typeIds: instance?.typeIds ?? instance?.types,
+        damageType: instance?.damageType,
+        damageTypes: instance?.damageTypes,
+        material: instance?.material,
+        materials: instance?.materials,
+        alignment: instance?.alignment,
+        alignments: instance?.alignments,
+        bypass: instance?.bypass,
+        bypasses: instance?.bypasses,
+        formula: instance?.formula,
+        keys: instance && typeof instance === "object" ? Object.keys(instance).sort() : []
+    };
+}
+
+function summarizeReductionOptions(options = {}) {
+    const out = {};
+    for (const key of Object.keys(options).sort()) {
+        if (/dr|reduc|resist|bypass|immune|vulner|type|instance|damage/i.test(key)) {
+            const value = options[key];
+            out[key] = Array.isArray(value)
+                ? value.map((entry) => typeof entry === "object" ? summarizeApplyDamageInstance(entry) : entry)
+                : value;
+        }
+    }
+    return out;
+}
+
+function typeValuesFrom(value) {
+    if (!value) return [];
+    if (Array.isArray(value)) return value.flatMap(typeValuesFrom);
+    if (value instanceof Set) return Array.from(value).flatMap(typeValuesFrom);
+    if (value?.values) return typeValuesFrom(value.values);
+    if (value?.value) return typeValuesFrom(value.value);
+    if (value?.id) return [String(value.id).toLowerCase()];
+    return [String(value).toLowerCase()];
+}
+
+function damageTypesFromApplyDamageOptions(options = {}) {
+    const ids = new Set();
+    for (const instance of options.instances ?? []) {
+        for (const key of ["typeIds", "types", "type", "damageType", "damageTypes"]) {
+            for (const id of typeValuesFrom(instance?.[key])) {
+                if (id) ids.add(id);
+            }
+        }
+    }
+    return [...ids];
+}
+
+function drBypassTypesFromEntry(entry = {}) {
+    return typeValuesFrom(entry?.types).filter(Boolean);
+}
+
+function drEntryBypassed(entry, damageTypes = []) {
+    const bypassTypes = drBypassTypesFromEntry(entry);
+    if (!bypassTypes.length) return false;
+    const attackTypes = new Set(damageTypes.map((type) => String(type).toLowerCase()));
+    if (String(entry?.operator ?? "true").toLowerCase() === "false") {
+        return bypassTypes.every((type) => attackTypes.has(type));
+    }
+    return bypassTypes.some((type) => attackTypes.has(type));
+}
+
+function isNasAbsorptionResistanceEntry(entry = {}) {
+    return entry?.nas?.source === "damageAbsorption";
+}
+
+function nativeDamageReductionForApplyDamage(actor, value, options = {}, { ignoreNasAbsorption = false } = {}) {
+    if (Number.isFinite(Number(options?.reduction)) && Number(options.reduction) > 0) {
+        return { reduction: 0, reason: "already-has-reduction" };
+    }
+    if (options?.asWounds || value <= 0) return { reduction: 0, reason: "not-hp-damage" };
+
+    const damageTypes = damageTypesFromApplyDamageOptions(options);
+    const entries = Array.isArray(actor?.system?.traits?.dr?.value) ? actor.system.traits.dr.value : [];
+    const candidates = [];
+    for (const entry of entries) {
+        if (ignoreNasAbsorption && isNasAbsorptionResistanceEntry(entry)) continue;
+        const amount = Math.max(0, Math.floor(Number(entry?.amount ?? entry?.value) || 0));
+        if (amount <= 0) continue;
+        const bypassed = drEntryBypassed(entry, damageTypes);
+        candidates.push({
+            entry: foundry.utils.deepClone(entry),
+            amount,
+            bypassed
+        });
+    }
+    const reduction = Math.min(value, Math.max(0, ...candidates.filter((candidate) => !candidate.bypassed).map((candidate) => candidate.amount)));
+    return { reduction, damageTypes, candidates };
+}
+
+function resistanceEntryMatchesDamageTypes(entry, damageTypes = []) {
+    const resistanceTypes = typeValuesFrom(entry?.types).filter(Boolean);
+    if (!resistanceTypes.length) return false;
+    const attackTypes = new Set(damageTypes.map((type) => String(type).toLowerCase()));
+    if (String(entry?.operator ?? "true").toLowerCase() === "false") {
+        return resistanceTypes.every((type) => attackTypes.has(type));
+    }
+    return resistanceTypes.some((type) => attackTypes.has(type));
+}
+
+function nativeEnergyResistanceForApplyDamage(actor, value, options = {}, { ignoreNasAbsorption = false } = {}) {
+    if (Number.isFinite(Number(options?.reduction)) && Number(options.reduction) > 0) {
+        return { reduction: 0, reason: "already-has-reduction" };
+    }
+    if (options?.asWounds || options?.asNonlethal || value <= 0) return { reduction: 0, reason: "not-energy-hp-damage" };
+
+    const damageTypes = damageTypesFromApplyDamageOptions(options);
+    if (!damageTypes.some((type) => isEnergyTypeId(type))) return { reduction: 0, damageTypes, reason: "not-energy" };
+
+    const entries = Array.isArray(actor?.system?.traits?.eres?.value) ? actor.system.traits.eres.value : [];
+    const candidates = [];
+    for (const entry of entries) {
+        if (ignoreNasAbsorption && isNasAbsorptionResistanceEntry(entry)) continue;
+        const amount = Math.max(0, Math.floor(Number(entry?.amount ?? entry?.value) || 0));
+        if (amount <= 0) continue;
+        const matches = resistanceEntryMatchesDamageTypes(entry, damageTypes);
+        candidates.push({
+            entry: foundry.utils.deepClone(entry),
+            amount,
+            matches
+        });
+    }
+    const reduction = Math.min(value, Math.max(0, ...candidates.filter((candidate) => candidate.matches).map((candidate) => candidate.amount)));
+    return { reduction, damageTypes, candidates };
+}
+
+function additionalReductionAfterAbsorption(actor, value, options = {}, absorption = {}) {
+    const remaining = Math.max(0, Math.floor(Number(value) || 0));
+    if (remaining <= 0) return 0;
+
+    let reduction = 0;
+    if (Math.max(0, Number(absorption?.drReduction) || 0) > 0) {
+        const nativeDr = nativeDamageReductionForApplyDamage(actor, remaining, { ...options, reduction: 0 }, { ignoreNasAbsorption: true });
+        reduction = Math.max(reduction, Math.max(0, nativeDr.reduction - Math.max(0, Math.floor(Number(absorption.drReduction) || 0))));
+    }
+    if (Math.max(0, Number(absorption?.erReduction) || 0) > 0) {
+        const nativeEr = nativeEnergyResistanceForApplyDamage(actor, remaining, { ...options, reduction: 0 }, { ignoreNasAbsorption: true });
+        reduction = Math.max(reduction, nativeEr.reduction);
+    }
+    return Math.min(remaining, reduction);
+}
+
+function buildConvertedDamageInstances(amount, damageType) {
+    const value = Math.max(0, Math.floor(Number(amount) || 0));
+    const type = String(damageType ?? "untyped").trim() || "untyped";
+    return [{
+        formula: String(value),
+        types: { values: [type], custom: "" },
+        type: { values: [type], custom: "" }
+    }];
+}
 
 function getConfiguredWoundDamageTypeIds() {
     const fallback = ['negative', 'positive'];
@@ -129,6 +354,12 @@ function isLifeEnergyContext(options, instances) {
 }
 
 function inferCasterLevel(options, actor) {
+    const runtimeCasterLevel = getRuntimeCasterLevel(options?.action, options?.item);
+    if (Number.isFinite(runtimeCasterLevel) && runtimeCasterLevel > 0) return Math.floor(runtimeCasterLevel);
+
+    const fromActionShared = Number(options?.action?.shared?.rollData?.cl);
+    if (Number.isFinite(fromActionShared) && fromActionShared > 0) return Math.floor(fromActionShared);
+
     const fromAction = Number(options?.action?.getRollData?.()?.cl);
     if (Number.isFinite(fromAction) && fromAction > 0) return Math.floor(fromAction);
 
@@ -158,11 +389,12 @@ function looksCasterLevelScaled(options, instances) {
 }
 
 function getRuleWoundMagnitude(options, instances, actor, fallbackValue) {
-    const rollData = options?.action?.getRollData?.()
+    const casterLevel = inferCasterLevel(options, actor);
+    const rollData = rollDataWithRuntimeLevels(options?.action?.shared?.rollData
+        ?? options?.action?.getRollData?.()
         ?? options?.item?.getRollData?.()
         ?? actor?.getRollData?.()
-        ?? {};
-    const casterLevel = inferCasterLevel(options, actor);
+        ?? {}, { casterLevel });
     const diceCount = countDiceFromMessageParts(options) || countDiceFromInstances(instances, rollData);
     if (diceCount > 0) return diceCount;
 
@@ -267,6 +499,16 @@ function recordDamageCombatTextContext(actor, options = {}) {
         messageUuid: options?.message?.uuid ?? options?.reference ?? null,
         attackIndex: options?.attackIndex
     });
+}
+
+function numericHpValue(actor) {
+    const value = Number(actor?.system?.attributes?.hp?.value);
+    return Number.isFinite(value) ? value : 0;
+}
+
+function numericHpMax(actor) {
+    const value = Number(actor?.system?.attributes?.hp?.max);
+    return Number.isFinite(value) ? value : 0;
 }
 
 function tokenDocumentKey(tokenDocument) {
@@ -472,7 +714,34 @@ export async function applyNasHeadlessDamage(value = 0, options = {}) {
             applyDamageOpts._nasDamageDialog = true;
 
             recordDamageCombatTextContext(actor, options);
-            promises.push(actor.applyDamage(appliedValue, applyDamageOpts));
+            promises.push((async () => {
+                const targetPreHp = numericHpValue(actor);
+                const targetMaxHp = numericHpMax(actor);
+                const requestedHealing = Math.max(0, Math.abs(Number(appliedValue) || 0));
+                const result = await actor.applyDamage(appliedValue, applyDamageOpts);
+                const targetPostHp = numericHpValue(actor);
+                const finalHealing = Math.max(0, Math.floor(targetPostHp - targetPreHp));
+                const excessByDelta = Math.max(0, Math.floor(requestedHealing - finalHealing));
+                const excessByMax = Math.max(0, Math.floor(targetPreHp + requestedHealing - targetMaxHp));
+                const excessHealing = Math.max(excessByDelta, excessByMax);
+                const willCallReactive = Boolean(sourceActor && sourceItem && requestedHealing > 0 && (result || excessHealing > 0));
+                if (willCallReactive) {
+                    await applyReactiveEffectsForHit({
+                        sourceActor,
+                        sourceItem,
+                        targetActor: actor,
+                        options: {
+                            ...options,
+                            _nasReactiveHealing: true
+                        },
+                        finalDamage: 0,
+                        finalHealing,
+                        excessHealing,
+                        targetPreHp
+                    });
+                }
+                return result;
+            })());
         }
 
         return { handled: true, result: Promise.all(promises) };
@@ -545,8 +814,79 @@ export async function applyNasHeadlessDamage(value = 0, options = {}) {
 
             const preVigor = Number(actor?.system?.attributes?.vigor?.value ?? 0) || 0;
             const preTemp = Number(actor?.system?.attributes?.vigor?.temp ?? 0) || 0;
+            const targetPreHp = numericHpValue(actor);
+            const originalApplyDamageOpts = applyDamageOpts;
+            let convertedNonlethal = 0;
+            let convertedTypedApplied = 0;
+            let absorptionChanged = false;
+            const rawFinalDamage = Math.floor(Math.max(0, Math.floor(Math.max(0, appliedValue) * (originalApplyDamageOpts?.ratio ?? 1))));
+            const incomingFinalDamage = Math.floor(
+                rawFinalDamage - Math.min(rawFinalDamage, originalApplyDamageOpts?.reduction ?? 0)
+            );
+            const absorption = await applyDamageAbsorption({
+                actor,
+                value: rawFinalDamage,
+                applyDamageOptions: originalApplyDamageOpts,
+                sourceOptions: options
+            });
+            applyDamageOpts._nasAbsorptionApplied = true;
+            if (absorption?.changed) {
+                absorptionChanged = true;
+                appliedValue = Math.max(0, Math.floor(Number(absorption.value) || 0));
+                convertedNonlethal = Math.max(0, Math.floor(Number(absorption.convertedNonlethal) || 0));
+                applyDamageOpts.ratio = 1;
+                applyDamageOpts.reduction = additionalReductionAfterAbsorption(actor, appliedValue, originalApplyDamageOpts, absorption);
+                postDamageAbsorptionChatSummary({
+                    actor,
+                    otherActor: sourceActor,
+                    incomingDamage: rawFinalDamage,
+                    events: absorption.events
+                });
+                await showAbsorptionCombatText(actor, absorption.damageReduction);
+            }
+
             recordDamageCombatTextContext(actor, options);
-            const result = await actor.applyDamage(appliedValue, applyDamageOpts);
+            let result = appliedValue > 0 ? await actor.applyDamage(appliedValue, applyDamageOpts) : false;
+            if (convertedNonlethal > 0) {
+                recordDamageCombatTextContext(actor, options);
+                const nonlethalResult = await actor.applyDamage(convertedNonlethal, {
+                    ...applyDamageOpts,
+                    ratio: 1,
+                    reduction: 0,
+                    asWounds: false,
+                    asNonlethal: true,
+                    _nasDamageDialog: true,
+                    _nasAbsorptionApplied: true
+                });
+                result = Boolean(result || nonlethalResult);
+            }
+            for (const converted of absorption?.convertedDamage ?? []) {
+                const amount = Math.max(0, Math.floor(Number(converted?.amount) || 0));
+                if (amount <= 0) continue;
+                const convertedInstances = buildConvertedDamageInstances(amount, converted.damageType);
+                const convertedResistance = nativeEnergyResistanceForApplyDamage(actor, amount, {
+                    ...applyDamageOpts,
+                    instances: convertedInstances,
+                    asWounds: false,
+                    asNonlethal: false,
+                    reduction: 0
+                });
+                const convertedApplied = Math.max(0, amount - convertedResistance.reduction);
+                convertedTypedApplied += convertedApplied;
+                if (convertedApplied <= 0) continue;
+                recordDamageCombatTextContext(actor, options);
+                const convertedResult = await actor.applyDamage(amount, {
+                    ...applyDamageOpts,
+                    ratio: 1,
+                    reduction: convertedResistance.reduction,
+                    instances: convertedInstances,
+                    asWounds: false,
+                    asNonlethal: false,
+                    _nasDamageDialog: true,
+                    _nasAbsorptionApplied: true
+                });
+                result = Boolean(result || convertedResult);
+            }
 
             const critBonus = resolveCriticalWoundBonus({
                 options,
@@ -567,7 +907,7 @@ export async function applyNasHeadlessDamage(value = 0, options = {}) {
 
             let finalDamage = Math.floor(Math.max(0, appliedValue) * (applyDamageOpts?.ratio ?? 1));
             finalDamage -= Math.min(finalDamage, applyDamageOpts?.reduction ?? 0);
-            finalDamage = Math.floor(finalDamage);
+            finalDamage = Math.floor(finalDamage) + (absorptionChanged ? convertedNonlethal + convertedTypedApplied : 0);
 
             if (result && finalDamage >= 0 && !isHealing) {
                 await applyReactiveEffectsForHit({
@@ -575,7 +915,8 @@ export async function applyNasHeadlessDamage(value = 0, options = {}) {
                     sourceItem,
                     targetActor: actor,
                     options,
-                    finalDamage
+                    finalDamage,
+                    targetPreHp
                 });
             }
 
@@ -649,6 +990,119 @@ export function registerSystemApplyDamage() {
         MODULE.ID,
         "pf1.documents.actor.ActorPF.prototype.applyDamage",
         async function (wrapped, value = 0, options = {}) {
+            if (actorHasAbsorptionData(this)) {
+            }
+            let nasWrappedCallCount = 0;
+            const isHealing = (value < 0) || options?.isHealing === true;
+            const applyNasTempHp = async (damageValue, damageOptions = {}) => applyDamageAfterNasTemporaryHp(wrapped, this, damageValue, damageOptions);
+            if (
+                actorHasAbsorptionData(this)
+                && !options?._nasAbsorptionApplied
+                && !isHealing
+                && !Boolean(options?.asWounds)
+            ) {
+                const rawFinalDamage = Math.floor(Math.max(0, Math.floor(Math.max(0, value) * (options?.ratio ?? 1))));
+                const nativeDr = nativeDamageReductionForApplyDamage(this, rawFinalDamage, { ...options, reduction: 0 }, { ignoreNasAbsorption: true });
+                const incomingFinalDamage = Math.max(0, rawFinalDamage - Math.min(rawFinalDamage, options?.reduction ?? 0) - nativeDr.reduction);
+                const absorption = await applyDamageAbsorption({
+                    actor: this,
+                    value: rawFinalDamage,
+                    applyDamageOptions: options,
+                    sourceOptions: options
+                });
+                if (absorption?.changed) {
+                    const remainingDamage = Math.max(0, Math.floor(Number(absorption.value) || 0));
+                    const convertedNonlethal = Math.max(0, Math.floor(Number(absorption.convertedNonlethal) || 0));
+                    const nonlethalReduction = Math.max(0, Math.floor(Number(absorption.nonlethalReduction) || 0));
+                    postDamageAbsorptionChatSummary({
+                        actor: this,
+                        incomingDamage: rawFinalDamage,
+                        events: absorption.events
+                    });
+                    await showAbsorptionCombatText(this, absorption.damageReduction);
+
+                    let result = false;
+                    const remainingReduction = additionalReductionAfterAbsorption(this, remainingDamage, options, absorption);
+                    if (remainingDamage > 0) {
+                        nasWrappedCallCount += 1;
+                        const tempResult = await applyNasTempHp(remainingDamage, {
+                            ...options,
+                            ratio: 1,
+                            reduction: remainingReduction,
+                            _nasAbsorptionApplied: true
+                        });
+                        result = tempResult.handled ? tempResult.result : await wrapped.call(this, remainingDamage, {
+                            ...options,
+                            ratio: 1,
+                            reduction: remainingReduction,
+                            _nasAbsorptionApplied: true
+                        });
+                    }
+                    if (convertedNonlethal > 0) {
+                        nasWrappedCallCount += 1;
+                        const nonlethalOptions = {
+                            ...options,
+                            ratio: 1,
+                            reduction: 0,
+                            asWounds: false,
+                            asNonlethal: true,
+                            _nasAbsorptionApplied: true
+                        };
+                        const tempResult = await applyNasTempHp(convertedNonlethal, nonlethalOptions);
+                        const nonlethalResult = tempResult.handled ? tempResult.result : await wrapped.call(this, convertedNonlethal, nonlethalOptions);
+                        result = Boolean(result || nonlethalResult);
+                    }
+                    for (const converted of absorption?.convertedDamage ?? []) {
+                        const amount = Math.max(0, Math.floor(Number(converted?.amount) || 0));
+                        if (amount <= 0) continue;
+                        const convertedInstances = buildConvertedDamageInstances(amount, converted.damageType);
+                        const convertedResistance = nativeEnergyResistanceForApplyDamage(this, amount, {
+                            ...options,
+                            instances: convertedInstances,
+                            asWounds: false,
+                            asNonlethal: false,
+                            reduction: 0
+                        });
+                        if (amount - convertedResistance.reduction <= 0) {
+                            result = true;
+                            continue;
+                        }
+                        nasWrappedCallCount += 1;
+                        const convertedOptions = {
+                            ...options,
+                            ratio: 1,
+                            reduction: convertedResistance.reduction,
+                            instances: convertedInstances,
+                            asWounds: false,
+                            asNonlethal: false,
+                            _nasAbsorptionApplied: true
+                        };
+                        const tempResult = await applyNasTempHp(amount, convertedOptions);
+                        const convertedResult = tempResult.handled ? tempResult.result : await wrapped.call(this, amount, convertedOptions);
+                        result = Boolean(result || convertedResult);
+                    }
+                    if (nasWrappedCallCount === 0) {
+                        await callApplyDamageNoop(wrapped, this, options);
+                    }
+                    return Boolean(result || nonlethalReduction > 0 || absorption.changed);
+                }
+                if (nativeDr.reduction > 0) {
+                    if (incomingFinalDamage <= 0) {
+                        await callApplyDamageNoop(wrapped, this, options);
+                        return true;
+                    }
+                    const nativeDrOptions = {
+                        ...options,
+                        ratio: 1,
+                        reduction: 0,
+                        _nasAbsorptionApplied: true
+                    };
+                    const tempResult = await applyNasTempHp(incomingFinalDamage, nativeDrOptions);
+                    return tempResult.handled ? tempResult.result : wrapped.call(this, incomingFinalDamage, nativeDrOptions);
+                }
+            }
+            const tempResult = await applyNasTempHp(value, options);
+            if (tempResult.handled) return tempResult.result;
             if (!options?._nasDamageDialog) return wrapped.call(this, value, options);
             if (!Boolean(options?.asWounds)) return wrapped.call(this, value, options);
             if (!isWoundsVigorActive(this)) return wrapped.call(this, value, options);
@@ -657,7 +1111,6 @@ export function registerSystemApplyDamage() {
                 return wrapped.call(this, value, { ...options, asWounds: false });
             }
 
-            const isHealing = (value < 0) || options?.isHealing === true;
             const instances = Array.isArray(options?.instances) ? options.instances : [];
             const useRuleMagnitude = isHealing || isLifeEnergyContext(options, instances);
             if (!useRuleMagnitude) return wrapped.call(this, value, options);

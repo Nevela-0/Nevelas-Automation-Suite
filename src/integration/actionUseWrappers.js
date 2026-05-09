@@ -1,5 +1,5 @@
 import { MODULE } from '../common/module.js';
-import { handleBuffAutomation } from '../features/automation/buffs/buffs.js';
+import { attachPendingBuffAutomationToChatData, handleBuffAutomation } from '../features/automation/buffs/buffs.js';
 import { collectSpellActionData } from '../features/automation/utils/spellActionData.js';
 import { commitPersistentFeatureStatesFromOptions } from '../features/automation/utils/attackDialogControls.js';
 import { applyMetamagicSelections } from '../features/automation/metamagic/applyMetamagic.js';
@@ -968,6 +968,7 @@ export function registerActionUseWrapper() {
   );
 
   Hooks.on("pf1PreDisplayActionUse", (actionUse) => {
+    attachPendingBuffAutomationToChatData(actionUse);
     if (!shouldHandleMetamagic(actionUse)) return;
     const context = actionUse?.shared?.nasSpellContext;
     if (!context) return;

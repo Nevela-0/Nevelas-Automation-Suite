@@ -44,13 +44,40 @@ import { registerDamageSettingsHandlebarsHelpers } from '../common/settings/dama
 import { registerDamageFootnoteHooks } from '../features/automation/damage/footnotes.js';
 import { registerReactiveItemSheet } from '../features/automation/damage/reactiveItemSheet.js';
 import {
+  hasOnStruckReactiveData,
+  initializeOnStruckSceneItems,
+  initializeOnStruckReactiveItem,
+  refreshOnStruckSceneTokenEffects,
+  registerOnStruckTokenEffectBadgeProvider,
+  resetOnStruckReactiveItem
+} from '../features/automation/damage/reactiveTriggers.js';
+import {
   applyMirrorImageChatContent,
   isMirrorImageBuff,
   refreshMirrorImageSceneTokenEffects,
   refreshMirrorImageTokenEffects,
-  registerMirrorImageTokenEffectBadges,
+  registerMirrorImageTokenEffectBadgeProvider,
   renderMirrorImageChatControls
 } from '../features/automation/buffs/mirrorImage.js';
+import {
+  hasDamageAbsorptionData,
+  hasDamageAbsorptionConfig,
+  initializeDamageAbsorptionBuff,
+  initializeDamageAbsorptionSceneBuffs,
+  refreshDamageAbsorptionSceneTokenEffects,
+  registerDamageAbsorptionHpBarOverlay,
+  registerDamageAbsorptionTokenEffectBadgeProvider,
+  resetDamageAbsorptionBuff
+} from '../features/automation/buffs/damageAbsorption.js';
+import { registerNasTemporaryHpPools } from '../features/automation/buffs/temporaryHpPools.js';
+import { configureKnownBuffAutomation, hasKnownBuffAutomationSource } from '../features/automation/buffs/knownBuffAutomation.js';
+import { registerSaveGatedBuffAutomation } from '../features/automation/buffs/buffs.js';
+import { registerTokenEffectBadges } from '../features/automation/utils/tokenEffectBadges.js';
+import {
+  hasGrantedDefenseData,
+  refreshGrantedDefenseActor,
+  registerGrantedDefenseOverlay
+} from '../features/automation/defenses/grantedDefenses.js';
 import { hasHpUpdate } from '../features/automation/utils/healthUpdates.js';
 import { handleHtkCombatUpdate } from '../features/automation/utils/hardToKillCombat.js';
 import {
@@ -114,6 +141,15 @@ function ensureMigrationPersistenceSettingsRegistered() {
         type: Array,
         default: [],
         requiresReload: true
+      });
+    }
+
+    if (!game.settings.settings.has(`${MODULE.ID}.woundsVigorWoundDamageTypeIds`)) {
+      game.settings.register(MODULE.ID, "woundsVigorWoundDamageTypeIds", {
+        scope: "world",
+        config: false,
+        type: Array,
+        default: ["negative", "positive"]
       });
     }
 
@@ -256,7 +292,14 @@ Hooks.once("init", () => {
   registerItemActionWrappers();
   registerConcealedConditionWrappers();
   registerConfusionChatMessageHook();
-  registerMirrorImageTokenEffectBadges();
+  registerTokenEffectBadges();
+  registerMirrorImageTokenEffectBadgeProvider();
+  registerOnStruckTokenEffectBadgeProvider();
+  registerDamageAbsorptionTokenEffectBadgeProvider();
+  registerNasTemporaryHpPools();
+  registerSaveGatedBuffAutomation();
+  registerDamageAbsorptionHpBarOverlay();
+  registerGrantedDefenseOverlay();
   registerDiceTooltipEnhancer();
   registerHealthDeltaTextEnhancer();
   registerSpellPerfection();
@@ -296,8 +339,14 @@ Hooks.once("ready", () => {
   initItemAttackFlagCopy();
 });
 
-Hooks.on("canvasReady", () => {
+Hooks.on("canvasReady", async () => {
   if (isBlocked()) return;
+  await initializeOnStruckSceneItems();
+  refreshOnStruckSceneTokenEffects();
+  globalThis.setTimeout?.(() => refreshOnStruckSceneTokenEffects(), 250);
+  await initializeDamageAbsorptionSceneBuffs();
+  refreshDamageAbsorptionSceneTokenEffects();
+  globalThis.setTimeout?.(() => refreshDamageAbsorptionSceneTokenEffects(), 250);
   refreshMirrorImageSceneTokenEffects();
 });
 
@@ -311,18 +360,46 @@ Hooks.on("updateToken", (tokenDocument) => {
   refreshMirrorImageTokenEffects(tokenDocument?.actor);
 });
 
-Hooks.on("createItem", (item) => {
-  if (isBlocked() || !isMirrorImageBuff(item)) return;
+Hooks.on("createItem", async (item) => {
+  if (isBlocked()) return;
+  if (hasKnownBuffAutomationSource(item)) await configureKnownBuffAutomation(item);
+  if (hasGrantedDefenseData(item)) refreshGrantedDefenseActor(item.actor);
+  if (hasOnStruckReactiveData(item)) await initializeOnStruckReactiveItem(item);
+  if (!isMirrorImageBuff(item) && !hasDamageAbsorptionData(item) && !hasDamageAbsorptionConfig(item)) return;
+  await initializeDamageAbsorptionBuff(item);
   refreshMirrorImageTokenEffects(item.actor);
 });
 
-Hooks.on("updateItem", (item) => {
-  if (isBlocked() || !isMirrorImageBuff(item)) return;
+Hooks.on("updateItem", async (item, changed) => {
+  if (isBlocked()) return;
+  if (hasKnownBuffAutomationSource(item) && (
+    foundry.utils.hasProperty(changed ?? {}, "system.active")
+    || foundry.utils.hasProperty(changed ?? {}, "system.level")
+    || foundry.utils.hasProperty(changed ?? {}, `flags.${MODULE.ID}.sourceId`)
+  )) {
+    await configureKnownBuffAutomation(item);
+  }
+  if (hasGrantedDefenseData(item)) refreshGrantedDefenseActor(item.actor);
+  if (hasOnStruckReactiveData(item)) {
+    const reactivatedOnStruck = (
+      foundry.utils.hasProperty(changed ?? {}, "system.active")
+      || foundry.utils.hasProperty(changed ?? {}, "system.equipped")
+    ) && (item.system?.active === true || item.system?.equipped === true);
+    if (reactivatedOnStruck) await resetOnStruckReactiveItem(item);
+    else await initializeOnStruckReactiveItem(item);
+  }
+  if (!isMirrorImageBuff(item) && !hasDamageAbsorptionData(item) && !hasDamageAbsorptionConfig(item)) return;
+  const reactivated = foundry.utils.hasProperty(changed ?? {}, "system.active") && item.system?.active === true;
+  if (reactivated) await resetDamageAbsorptionBuff(item);
+  else await initializeDamageAbsorptionBuff(item);
   refreshMirrorImageTokenEffects(item.actor);
 });
 
 Hooks.on("deleteItem", (item) => {
-  if (isBlocked() || !isMirrorImageBuff(item)) return;
+  if (isBlocked()) return;
+  if (hasGrantedDefenseData(item)) refreshGrantedDefenseActor(item.actor);
+  if (hasOnStruckReactiveData(item)) refreshMirrorImageTokenEffects(item.actor);
+  if (!isMirrorImageBuff(item) && !hasDamageAbsorptionData(item) && !hasDamageAbsorptionConfig(item)) return;
   refreshMirrorImageTokenEffects(item.actor);
 });
 
@@ -382,7 +459,8 @@ Hooks.on('combatStart', async (combat) => {
 Hooks.on('updateCombat', async (combat, update, options, userId) => {
   if (isBlocked()) return;
   const conditionAutomationEnabled = isConditionAutomationEnabled();
-  const startupShortCircuit = (((combat.previous?.round === combat.current?.round) || (combat.previous?.round === 0)) &&
+  const startupShortCircuit = (
+    ((combat.previous?.round === combat.current?.round) || (combat.previous?.round === 0)) &&
     ((combat.previous?.turn === combat.current?.turn) || (combat.previous?.turn === null)) &&
     (combat.previous?.tokenId === combat.turns[0]?.tokenId || combat.previous?.tokenId === null)
   );

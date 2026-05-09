@@ -61,6 +61,7 @@ import {
   ensureSpellSaveBaseDcSnapshot,
   resolveFeatSaveDcBase,
 } from "../utils/saveDcUtils.js";
+import { getRuntimeSpellLevel } from "../utils/spellLevels.js";
 
 const SHORT_CAST_TYPES = new Set(["swift", "immediate", "move"]);
 const STANDARD_CAST_TYPE = "standard";
@@ -845,7 +846,7 @@ async function applyRacialTraitSelections(action, context, traitSources = null) 
 function getSpellSlotData(action, slotIncrease) {
   const actor = action.token?.actor ?? action.actor;
   const spellbook = action.item?.system?.spellbook;
-  const baseLevel = action.item?.system?.level ?? action.shared?.rollData?.sl ?? 0;
+  const baseLevel = getRuntimeSpellLevel(action);
   const targetLevel = baseLevel + slotIncrease;
 
   if (!actor || !spellbook || targetLevel <= 0) {
@@ -1121,8 +1122,7 @@ export async function applyMetamagicSelections(action, context) {
     .map((name) => resolveMetamagicNameFromDatabase(name) ?? name)
     .filter(Boolean);
 
-  const baseSpellLevelRaw = action.item?.system?.level ?? action.shared?.rollData?.sl ?? 0;
-  const baseSpellLevel = Number(baseSpellLevelRaw ?? 0);
+    const baseSpellLevel = getRuntimeSpellLevel(action);
 
   let mimicMetaName = "";
   let mimicMetaIncrease = 0;

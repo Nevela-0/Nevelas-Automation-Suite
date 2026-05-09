@@ -1,3 +1,9 @@
+import {
+  getRuntimeCasterLevel,
+  getRuntimeSpellLevel,
+  rollDataWithRuntimeLevels,
+} from "./spellLevels.js";
+
 async function evaluateFormula(rawValue, rollData) {
   const value = rawValue ?? "";
   if (value === "" || value === null || value === undefined) {
@@ -115,7 +121,12 @@ function parseFeatOptions(formData) {
 }
 
 export async function collectSpellActionData(action) {
-  const rollData = action.shared?.rollData ?? {};
+  const casterLevel = getRuntimeCasterLevel(action);
+  const effectiveSpellLevel = getRuntimeSpellLevel(action);
+  const rollData = rollDataWithRuntimeLevels(action.shared?.rollData ?? {}, {
+    casterLevel,
+    spellLevel: effectiveSpellLevel,
+  });
   const duration = action.action?.duration ?? action.item?.system?.duration ?? {};
   const durationEval = await evaluateFormula(duration.value, rollData);
 
@@ -142,6 +153,11 @@ export async function collectSpellActionData(action) {
     metamagicOptions,
     traitOptions: parseTraitOptions(action.formData),
     featOptions: parseFeatOptions(action.formData),
+    casterLevel,
+    spellLevel: {
+      original: effectiveSpellLevel,
+      effective: effectiveSpellLevel,
+    },
     duration: {
       value: duration.value ?? "",
       units: duration.units ?? "",

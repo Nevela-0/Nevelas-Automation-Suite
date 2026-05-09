@@ -2,6 +2,245 @@
 import { MODULE } from '../../../common/module.js';
 import { socket } from '../../../integration/moduleSockets.js';
 import { tokenCanSeeToken } from '../utils/tokenVisibility.js';
+import { createNasId } from '../utils/nasIds.js';
+import { getRuntimeCasterLevel, getRuntimeSpellLevel } from '../utils/spellLevels.js';
+import {
+  configureKnownBuffAutomation,
+  getKnownBuffApplicationName,
+  isKnownEnergyTypePlaceholderBuff,
+  KNOWN_BUFF_AUTOMATION_OPTION,
+  promptKnownBuffAutomationForAction
+} from './knownBuffAutomation.js';
+
+const BUFF_SAVE_ACTION_SHEET_KEY = "buffSaveByAction";
+const PENDING_BUFF_AUTOMATION_KEY = "pendingBuffAutomation";
+const SAVE_HANDLING_MODES = new Set(["ignore", "failed", "successful"]);
+const SAVE_ALLY_BYPASS_MODES = new Set(["setting", "enabled", "disabled"]);
+const REAL_SAVE_TYPES = new Set(["fort", "ref", "will"]);
+const PROCESSING_SAVE_GATED_MESSAGES = new Set();
+
+function normalizeBuffSaveHandlingMode(value) {
+  const mode = String(value ?? "ignore");
+  return SAVE_HANDLING_MODES.has(mode) ? mode : "ignore";
+}
+
+function normalizeBuffSaveAllyBypassMode(value) {
+  const mode = String(value ?? "setting");
+  return SAVE_ALLY_BYPASS_MODES.has(mode) ? mode : "setting";
+}
+
+function getBuffSaveSettingMode() {
+  try {
+    return normalizeBuffSaveHandlingMode(game.settings.get(MODULE.ID, "buffSaveHandlingDefault"));
+  } catch {
+    return "ignore";
+  }
+}
+
+function getBuffSaveSettingAllyBypass() {
+  try {
+    return game.settings.get(MODULE.ID, "buffSaveAlliesBypass") !== false;
+  } catch {
+    return true;
+  }
+}
+
+function normalizeSaveType(value) {
+  const raw = String(value ?? "").trim().toLowerCase();
+  if (raw === "fortitude") return "fort";
+  if (raw === "reflex") return "ref";
+  if (raw === "willpower") return "will";
+  return REAL_SAVE_TYPES.has(raw) ? raw : "";
+}
+
+function coerceNumberOrNull(value) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number(value.trim());
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function getActionIdCandidates(action) {
+  return [
+    action?.action?.id,
+    action?.action?._id,
+    action?.id,
+    action?._id,
+    action?.actionId,
+    action?.shared?.action?.id,
+    action?.shared?.action?._id
+  ].map((value) => String(value ?? "").trim()).filter(Boolean);
+}
+
+function getActionId(action) {
+  return getActionIdCandidates(action)[0] ?? "";
+}
+
+function getActionBuffSaveOverride(action) {
+  const actionIds = getActionIdCandidates(action);
+  const flags = action?.item?.getFlag?.(MODULE.ID, "itemReactiveEffects") ?? {};
+  const byAction = flags?.[BUFF_SAVE_ACTION_SHEET_KEY] ?? {};
+  const matchedActionId = actionIds.find((id) => byAction?.[id] != null);
+  const fallbackActionId = !matchedActionId && Object.keys(byAction).length === 1 ? Object.keys(byAction)[0] : "";
+  const actionId = matchedActionId || fallbackActionId;
+  if (!actionId) {
+        return null;
+  }
+  const raw = byAction?.[actionId];
+    if (!raw || typeof raw !== "object" || raw.override !== true) {
+        return null;
+  }
+  const override = {
+    mode: normalizeBuffSaveHandlingMode(raw.mode),
+    alliesBypass: normalizeBuffSaveAllyBypassMode(raw.alliesBypass)
+  };
+    return override;
+}
+
+function resolveActionSaveData(action) {
+  const saveData = action?.shared?.nasSpellContext?.save ?? action?.shared?.save ?? action?.action?.save ?? {};
+  const type = normalizeSaveType(saveData.type ?? action?.shared?.saveType ?? action?.action?.saveType);
+  const dc = coerceNumberOrNull(
+    saveData.dc
+    ?? saveData.evaluated?.total
+    ?? action?.shared?.saveDC
+    ?? action?.shared?.templateData?.system?.save?.dc
+    ?? action?.shared?.chatData?.system?.save?.dc
+  );
+  return { type, dc };
+}
+
+function resolveBuffSaveGate(action) {
+  const override = getActionBuffSaveOverride(action);
+  const mode = override ? override.mode : getBuffSaveSettingMode();
+  const allyBypassMode = override ? override.alliesBypass : "setting";
+  const alliesBypass = allyBypassMode === "setting"
+    ? getBuffSaveSettingAllyBypass()
+    : allyBypassMode === "enabled";
+  const save = resolveActionSaveData(action);
+  const gate = {
+    mode,
+    alliesBypass,
+    saveType: save.type,
+    dc: save.dc,
+    deferred: mode !== "ignore" && REAL_SAVE_TYPES.has(save.type)
+  };
+    return gate;
+}
+
+function tokenDocumentFromTarget(target) {
+  return target?.document ?? target;
+}
+
+function targetTokenUuid(target) {
+  const doc = tokenDocumentFromTarget(target);
+  return String(doc?.uuid ?? target?.uuid ?? "");
+}
+
+function targetTokenId(target) {
+  const doc = tokenDocumentFromTarget(target);
+  return String(doc?.id ?? target?.id ?? "");
+}
+
+function serializeBuffReference(buff) {
+  return {
+    name: buff?.name ?? "",
+    id: buff?.id ?? "",
+    pack: buff?.pack ?? null
+  };
+}
+
+function serializeKnownBuffAutomation(options = {}) {
+  const known = options?.[KNOWN_BUFF_AUTOMATION_OPTION];
+  return known ? foundry.utils.deepClone(known) : null;
+}
+
+function serializeDuration(duration) {
+  if (!duration || typeof duration !== "object") return null;
+  return {
+    units: String(duration.units ?? ""),
+    value: String(duration.value ?? "")
+  };
+}
+
+function serializePendingTarget(target, duration) {
+  const doc = tokenDocumentFromTarget(target);
+  const actor = target?.actor ?? doc?.actor ?? null;
+  return {
+    tokenUuid: targetTokenUuid(target),
+    tokenId: targetTokenId(target),
+    actorUuid: actor?.uuid ?? "",
+    duration: serializeDuration(duration)
+  };
+}
+
+function shouldQueueBuffApplication(action, targets, buffSaveGate) {
+  if (!buffSaveGate?.deferred) {
+        return false;
+  }
+  if (!targets?.length) {
+        return false;
+  }
+  const createsChat = action?.shared?.chatMessage !== false && action?.shared?.scriptData?.hideChat !== true;
+  if (!createsChat) {
+        console.warn(`${MODULE.ID} | Save-gated buff automation requested but no action chat message is expected; applying buff immediately.`);
+    return false;
+  }
+  return true;
+}
+
+function queuePendingBuffApplication(action, buff, targets, duration, casterLevel, options = {}) {
+  const buffSaveGate = options.buffSaveGate ?? resolveBuffSaveGate(action);
+  if (!shouldQueueBuffApplication(action, targets, buffSaveGate)) return false;
+
+  action.shared ??= {};
+  action.shared.nasPendingBuffAutomation ??= [];
+  const plan = {
+    id: createNasId(),
+    buff: serializeBuffReference(buff),
+    targets: targets.map((target) => serializePendingTarget(target, duration)).filter((entry) => entry.tokenUuid || entry.tokenId),
+    caster: {
+      tokenUuid: targetTokenUuid(action?.token),
+      tokenId: targetTokenId(action?.token),
+      actorUuid: action?.actor?.uuid ?? action?.token?.actor?.uuid ?? "",
+      disposition: tokenDocumentFromTarget(action?.token)?.disposition ?? null
+    },
+    casterLevel,
+    save: {
+      type: buffSaveGate.saveType,
+      dc: buffSaveGate.dc,
+      mode: buffSaveGate.mode,
+      alliesBypass: buffSaveGate.alliesBypass === true
+    },
+    options: {
+      activate: options.activate !== false,
+      silent: options.silent === true,
+      [KNOWN_BUFF_AUTOMATION_OPTION]: serializeKnownBuffAutomation(options)
+    },
+    appliedTargetUuids: []
+  };
+  action.shared.nasPendingBuffAutomation.push(plan);
+    return true;
+}
+
+async function applyOrQueueBuffToTargets(action, buff, targets, duration, casterLevel, options = {}) {
+  const buffSaveGate = options.buffSaveGate ?? resolveBuffSaveGate(action);
+  if (queuePendingBuffApplication(action, buff, targets, duration, casterLevel, { ...options, buffSaveGate })) return;
+  await applyBuffToTargets(buff, targets, duration, casterLevel, options);
+}
+
+export function attachPendingBuffAutomationToChatData(actionUse) {
+  const pending = actionUse?.shared?.nasPendingBuffAutomation;
+  if (!Array.isArray(pending) || pending.length === 0) {
+        return;
+  }
+  actionUse.shared.chatData ??= {};
+  actionUse.shared.chatData.flags ??= {};
+  actionUse.shared.chatData.flags[MODULE.ID] ??= {};
+  actionUse.shared.chatData.flags[MODULE.ID][PENDING_BUFF_AUTOMATION_KEY] = foundry.utils.deepClone(pending);
+  }
 
 export async function handleBuffAutomation(action) {
   
@@ -74,7 +313,8 @@ export async function handleBuffAutomation(action) {
   
   const isSelfTargeting = rangeUnits === "personal" || targetValue === "you";
   
-  const casterLevel = action.shared.rollData?.cl;
+  const casterLevel = getRuntimeCasterLevel(action);
+  const buffSaveGate = resolveBuffSaveGate(action);
 
   const durationContext = action.shared?.nasSpellContext?.duration;
   const durationUnits = durationContext?.units ?? action.action?.duration?.units;
@@ -145,9 +385,10 @@ export async function handleBuffAutomation(action) {
     }
     let selectedBuff = null;
     
-    const categorizedMatches = categorizeBuffMatches(action.item.name, matchingBuffs);
+    const categorizedMatches = categorizeBuffMatches(action.item.name, matchingBuffs, action);
+    const hasActualKnownVariants = categorizedMatches.variants.some((buff) => !isKnownEnergyTypePlaceholderBuff(action, buff));
     
-    if (categorizedMatches.exact.length === 1) {
+    if (categorizedMatches.exact.length === 1 && !hasActualKnownVariants) {
       selectedBuff = categorizedMatches.exact[0];
     } 
     else if (categorizedMatches.variants.length > 0) {
@@ -181,6 +422,12 @@ export async function handleBuffAutomation(action) {
         return;
       }
 
+      const knownBuffAutomation = await promptKnownBuffAutomationForAction(action);
+      if (knownBuffAutomation === null && action.shared?.reject !== true) {
+        action.shared.reject = true;
+        return;
+      }
+
       await handleVariantPlanApplication({
         action,
         variants: categorizedMatches.variants,
@@ -188,7 +435,9 @@ export async function handleBuffAutomation(action) {
         targetContext,
         durationUnits,
         durationValue,
-        casterLevel
+        casterLevel,
+        knownBuffAutomation,
+        buffSaveGate
       });
       return;
     }
@@ -216,6 +465,12 @@ export async function handleBuffAutomation(action) {
     }
     
     if (selectedBuff) {
+      const knownBuffAutomation = await promptKnownBuffAutomationForAction(action);
+      if (knownBuffAutomation === null && action.shared?.reject !== true) {
+        action.shared.reject = true;
+        return;
+      }
+
       const targetContext = await gatherTargetsForApplication({
         action,
         isSelfTargeting,
@@ -240,23 +495,23 @@ export async function handleBuffAutomation(action) {
 
       if (perTargetDurations && perTargetDurations.length > 0) {
         for (const entry of perTargetDurations) {
-          await applyBuffToTargets(selectedBuff, [entry.target], {
+          await applyOrQueueBuffToTargets(action, selectedBuff, [entry.target], {
             units: entry.duration.units,
             value: String(entry.duration.value)
-          }, casterLevel);
+          }, casterLevel, { [KNOWN_BUFF_AUTOMATION_OPTION]: knownBuffAutomation, buffSaveGate });
         }
         return;
       } else {
-        await applyBuffToTargets(selectedBuff, filteredTargets, {
+        await applyOrQueueBuffToTargets(action, selectedBuff, filteredTargets, {
           units: durationUnits,
           value: String(durationValue)
-        }, casterLevel);
+        }, casterLevel, { [KNOWN_BUFF_AUTOMATION_OPTION]: knownBuffAutomation, buffSaveGate });
       }
     }
   }
 }
 
-function categorizeBuffMatches(spellName, buffs) {
+function categorizeBuffMatches(spellName, buffs, action = null) {
   const normalizedSpellName = spellName.toLowerCase();
   const result = {
     exact: [],    
@@ -270,6 +525,9 @@ function categorizeBuffMatches(spellName, buffs) {
     if (buffName === normalizedSpellName) {
       result.exact.push(buff);
     } 
+    else if (isKnownEnergyTypePlaceholderBuff(action, buff)) {
+      result.exact.push(buff);
+    }
     else if (buffName.includes('(') && buffName.includes(')')) {
       result.variants.push(buff);
     } 
@@ -661,7 +919,7 @@ export async function promptBuffSelection(buffs, action, options = {}) {
     const mappings = game.settings.get(MODULE.ID, 'pairedBuffMappings') || {};
     const remembered = mappings[spellKey] || {};
     const variantCapMode = game.settings.get(MODULE.ID, 'variantTargetCap') || 'hint';
-    const casterLevel = action.shared.rollData?.cl ?? action.item?.system?.level ?? 0;
+    const casterLevel = getRuntimeCasterLevel(action);
     const parsedCap = estimateScalableTargets(
       action.action?.target?.value ||
       action.item?.system?.actions?.[0]?.target?.value ||
@@ -1207,7 +1465,7 @@ async function storeVariantMapping(spellKey, plan, buffs) {
   await game.settings.set(MODULE.ID, variantMappingSetting, toStore);
 }
 
-async function handleVariantPlanApplication({ action, variants, plan, targetContext, durationUnits, durationValue, casterLevel }) {
+async function handleVariantPlanApplication({ action, variants, plan, targetContext, durationUnits, durationValue, casterLevel, knownBuffAutomation = null, buffSaveGate = null }) {
   const { filteredTargets, perTargetDurations } = targetContext;
   if (!filteredTargets?.length) return;
 
@@ -1238,10 +1496,18 @@ async function handleVariantPlanApplication({ action, variants, plan, targetCont
     const duration = durationForTarget(target, perTargetDurations, defaultDuration);
 
     if (plan.allowSwitching) {
-      await ensureVariantsOnTarget(target, variants, duration, casterLevel, { silent: true });
+      if (buffSaveGate?.deferred) {
+        await applyOrQueueBuffToTargets(action, variant, [target], duration, casterLevel, {
+          silent: true,
+          [KNOWN_BUFF_AUTOMATION_OPTION]: knownBuffAutomation,
+          buffSaveGate
+        });
+        continue;
+      }
+      await ensureVariantsOnTarget(target, variants, duration, casterLevel, { silent: true, [KNOWN_BUFF_AUTOMATION_OPTION]: knownBuffAutomation });
       const applyTiming = assignment?.applyTiming || 'cast';
       if (applyTiming !== 'turn') {
-        await activateVariantForTarget(target, variant, variants, duration, casterLevel, { silent: true });
+        await activateVariantForTarget(target, variant, variants, duration, casterLevel, { silent: true, [KNOWN_BUFF_AUTOMATION_OPTION]: knownBuffAutomation });
       }
       if (combat) {
         const timing = computeApplyTiming(combat, target.id);
@@ -1269,7 +1535,10 @@ async function handleVariantPlanApplication({ action, variants, plan, targetCont
   }
 
   for (const bucket of immediateBuckets.values()) {
-    await applyBuffToTargets(bucket.variant, bucket.targets, bucket.duration ?? defaultDuration, casterLevel);
+    await applyOrQueueBuffToTargets(action, bucket.variant, bucket.targets, bucket.duration ?? defaultDuration, casterLevel, {
+      [KNOWN_BUFF_AUTOMATION_OPTION]: knownBuffAutomation,
+      buffSaveGate
+    });
   }
 
   if (plan.allowSwitching && scheduled.length > 0 && combat) {
@@ -1334,18 +1603,184 @@ export async function resolveBuffReference(ref) {
   }
 }
 
+function isActiveGmUser() {
+  if (game.user?.isGM !== true) return false;
+  const activeGm = game.users?.activeGM;
+  return !activeGm || activeGm.isSelf === true || activeGm.id === game.user.id;
+}
+
+async function resolvePendingBuffTarget(targetRef) {
+  if (targetRef?.tokenUuid) {
+    try {
+      const doc = await fromUuid(targetRef.tokenUuid);
+      if (doc?.object) return doc.object;
+      if (doc?.actor) return doc;
+    } catch (_err) {
+      // Fall through to canvas lookups.
+    }
+  }
+
+  if (targetRef?.tokenId && canvas?.tokens?.get) {
+    const token = canvas.tokens.get(targetRef.tokenId);
+    if (token) return token;
+  }
+
+  if (targetRef?.actorUuid && Array.isArray(canvas?.tokens?.placeables)) {
+    return canvas.tokens.placeables.find((token) => token?.actor?.uuid === targetRef.actorUuid) ?? null;
+  }
+
+  return null;
+}
+
+function pendingTargetAppliedKey(targetRef) {
+  return targetRef?.tokenUuid || targetRef?.tokenId || targetRef?.actorUuid || "";
+}
+
+function isPendingBuffAlly(plan, token) {
+  const actorUuid = token?.actor?.uuid ?? "";
+  if (actorUuid && actorUuid === plan?.caster?.actorUuid) return true;
+  const sourceDisposition = plan?.caster?.disposition;
+  const targetDisposition = token?.document?.disposition ?? token?.disposition ?? null;
+  return sourceDisposition != null && targetDisposition != null && sourceDisposition === targetDisposition;
+}
+
+function readTargetSaveTotal(message, targetRef, saveType) {
+  const targetDefense = message.getFlag("pf1", "targetDefense") ?? {};
+  const byUuid = targetRef?.tokenUuid ? targetDefense[targetRef.tokenUuid]?.save?.[saveType] : null;
+  if (byUuid != null) return coerceNumberOrNull(byUuid);
+  const byUuidPath = targetRef?.tokenUuid
+    ? foundry.utils.getProperty(targetDefense, `${targetRef.tokenUuid}.save.${saveType}`)
+    : null;
+  if (byUuidPath != null) return coerceNumberOrNull(byUuidPath);
+  const byId = targetRef?.tokenId ? targetDefense[targetRef.tokenId]?.save?.[saveType] : null;
+  if (byId != null) return coerceNumberOrNull(byId);
+  const byIdPath = targetRef?.tokenId
+    ? foundry.utils.getProperty(targetDefense, `${targetRef.tokenId}.save.${saveType}`)
+    : null;
+  if (byIdPath != null) return coerceNumberOrNull(byIdPath);
+  const matchingKey = Object.keys(targetDefense).find((key) => {
+    const entry = targetDefense[key];
+    return entry?.save?.[saveType] != null && (key === targetRef?.tokenUuid || key === targetRef?.tokenId);
+  });
+  if (matchingKey) return coerceNumberOrNull(targetDefense[matchingKey]?.save?.[saveType]);
+  return null;
+}
+
+async function processPendingBuffPlan(message, plan) {
+  const saveType = normalizeSaveType(plan?.save?.type ?? message?.system?.save?.type);
+  const mode = normalizeBuffSaveHandlingMode(plan?.save?.mode);
+  if (!REAL_SAVE_TYPES.has(saveType) || mode === "ignore") {
+        return false;
+  }
+
+  const dc = coerceNumberOrNull(plan?.save?.dc ?? message?.system?.save?.dc);
+  const applied = new Set(Array.isArray(plan.appliedTargetUuids) ? plan.appliedTargetUuids : []);
+  let changed = false;
+  
+  for (const targetRef of plan.targets ?? []) {
+    const appliedKey = pendingTargetAppliedKey(targetRef);
+    if (!appliedKey || applied.has(appliedKey)) {
+            continue;
+    }
+
+    const token = await resolvePendingBuffTarget(targetRef);
+    if (!token?.actor) {
+            continue;
+    }
+
+    let shouldApply = plan?.save?.alliesBypass === true && isPendingBuffAlly(plan, token);
+    if (!shouldApply) {
+      if (dc == null) {
+                continue;
+      }
+      const saveTotal = readTargetSaveTotal(message, targetRef, saveType);
+      if (saveTotal == null) {
+                continue;
+      }
+      const saveSucceeded = saveTotal >= dc;
+      shouldApply = mode === "failed" ? !saveSucceeded : saveSucceeded;
+          } else {
+          }
+
+    if (!shouldApply) {
+            continue;
+    }
+
+    const buff = await resolveBuffReference(plan.buff);
+    if (!buff) {
+            continue;
+    }
+    const duration = targetRef.duration ?? null;
+        await applyBuffToTargets(buff, [token], duration, plan.casterLevel, plan.options ?? {});
+    applied.add(appliedKey);
+    changed = true;
+  }
+
+  if (changed) plan.appliedTargetUuids = [...applied];
+  return changed;
+}
+
+async function processPendingBuffAutomationMessage(message) {
+  if (!isActiveGmUser()) {
+        return;
+  }
+  const messageId = message?.id ?? message?._id;
+  if (!messageId || PROCESSING_SAVE_GATED_MESSAGES.has(messageId)) {
+        return;
+  }
+  const pending = message.getFlag(MODULE.ID, PENDING_BUFF_AUTOMATION_KEY);
+  if (!Array.isArray(pending) || pending.length === 0) {
+        return;
+  }
+
+  PROCESSING_SAVE_GATED_MESSAGES.add(messageId);
+  try {
+        const plans = foundry.utils.deepClone(pending);
+    let changed = false;
+    for (const plan of plans) {
+      changed = await processPendingBuffPlan(message, plan) || changed;
+    }
+    if (changed) {
+      await message.update({ [`flags.${MODULE.ID}.${PENDING_BUFF_AUTOMATION_KEY}`]: plans });
+          } else {
+          }
+  } catch (err) {
+    console.error(`${MODULE.ID} | Failed to process save-gated buff automation.`, err);
+  } finally {
+    PROCESSING_SAVE_GATED_MESSAGES.delete(messageId);
+  }
+}
+
+export function registerSaveGatedBuffAutomation() {
+  Hooks.on("createChatMessage", (message) => {
+        void processPendingBuffAutomationMessage(message);
+  });
+  Hooks.on("updateChatMessage", (message) => {
+        if (!message.getFlag(MODULE.ID, PENDING_BUFF_AUTOMATION_KEY)) return;
+    void processPendingBuffAutomationMessage(message);
+  });
+}
+
 async function ensureVariantsOnTarget(target, variants, duration, casterLevel, options = {}) {
   const ensurePromises = [];
   for (const variant of variants) {
     if (!variant) continue;
-    ensurePromises.push(applyBuffToTargets(variant, [target], duration, casterLevel, { activate: false, silent: options.silent }));
+    ensurePromises.push(applyBuffToTargets(variant, [target], duration, casterLevel, {
+      activate: false,
+      silent: options.silent,
+      [KNOWN_BUFF_AUTOMATION_OPTION]: options[KNOWN_BUFF_AUTOMATION_OPTION] ?? null
+    }));
   }
   await Promise.all(ensurePromises);
 }
 
 export async function activateVariantForTarget(target, variant, variants, duration, casterLevel, options = {}) {
   if (!variant) return;
-  await applyBuffToTargets(variant, [target], duration, casterLevel, { activate: true, silent: options.silent });
+  await applyBuffToTargets(variant, [target], duration, casterLevel, {
+    activate: true,
+    silent: options.silent,
+    [KNOWN_BUFF_AUTOMATION_OPTION]: options[KNOWN_BUFF_AUTOMATION_OPTION] ?? null
+  });
   const actor = target.actor;
   if (!actor) return;
   for (const other of variants) {
@@ -1378,6 +1813,26 @@ function normalizeDurationForBuff(duration = {}) {
     return {
       units: "",
       value: "",
+      subType: null
+    };
+  }
+
+  const longUnitHourMultipliers = {
+    day: 24,
+    days: 24,
+    week: 168,
+    weeks: 168,
+    month: 720,
+    months: 720,
+    year: 8760,
+    years: 8760
+  };
+  const hourMultiplier = longUnitHourMultipliers[sourceUnits.toLowerCase()];
+  if (hourMultiplier) {
+    const numericValue = Number(value);
+    return {
+      units: "hour",
+      value: Number.isFinite(numericValue) ? String(numericValue * hourMultiplier) : `(${value}) * ${hourMultiplier}`,
       subType: null
     };
   }
@@ -1417,6 +1872,12 @@ function normalizeDurationToEffectSeconds(normalizedDuration = {}) {
     case "week":
     case "weeks":
       return numericValue * 604800;
+      case "month":
+      case "months":
+        return numericValue * 2592000;
+      case "year":
+      case "years":
+        return numericValue * 31536000;
     case "":
       return 0;
     default:
@@ -1447,14 +1908,19 @@ async function syncBuffEffectDuration(buffItem, normalizedDuration) {
 export async function applyBuffToTargets(buff, targets, duration, casterLevel, options = {}) {
   const activate = options.activate !== false;
   const silent = !!options.silent;
+  const buffName = getKnownBuffApplicationName(buff, options) || buff?.name || "";
   if (!game.user.isGM) {
-    await socket.executeAsGM(
+    return socket.executeAsGM(
       "applyBuffToTargetsSocket",
-      { name: buff.name, id: buff.id, pack: buff.pack },
+      { name: buffName || buff.name, id: buff.id, pack: buff.pack },
       targets.map(t => t.id),
       duration,
       casterLevel,
-      { activate, silent }
+      {
+        activate,
+        silent,
+        [KNOWN_BUFF_AUTOMATION_OPTION]: options[KNOWN_BUFF_AUTOMATION_OPTION] ?? null
+      }
     );
   }
   
@@ -1479,7 +1945,7 @@ export async function applyBuffToTargets(buff, targets, duration, casterLevel, o
         console.warn(`${MODULE.ID} | Target has no actor, skipping buff application`);
         continue;
       }
-      const nameMatches = actor.items.filter(item => item.type === "buff" && item.name === buff.name);
+      const nameMatches = actor.items.filter(item => item.type === "buff" && item.name === buffName);
 
       let existingBuff = null;
       if (buff.pack) {
@@ -1511,20 +1977,24 @@ export async function applyBuffToTargets(buff, targets, duration, casterLevel, o
         if (isActive && !activate) {
           await existingBuff.update({
             ...durationUpdate,
+            name: buffName,
             "system.active": false,
             ...(casterLevel !== undefined ? { "system.level": casterLevel } : {})
           });
+          await configureKnownBuffAutomation(existingBuff, { ...options, casterLevel });
           continue;
         }
 
         await existingBuff.update({
           ...durationUpdate,
+          name: buffName,
           "system.active": activate,
           ...(casterLevel !== undefined ? { "system.level": casterLevel } : {})
         });
         await syncBuffEffectDuration(existingBuff, normalizedDuration);
+        await configureKnownBuffAutomation(existingBuff, { ...options, casterLevel });
         
-        if (!silent) ui.notifications.info(game.i18n.format('NAS.buffs.UpdatedExisting', { name: buff.name, actor: actor.name }));
+        if (!silent) ui.notifications.info(game.i18n.format('NAS.buffs.UpdatedExisting', { name: buffName, actor: actor.name }));
       } else {
         let buffData;
         if (typeof Item?.implementation?.fromCompendium === "function") {
@@ -1538,6 +2008,9 @@ export async function applyBuffToTargets(buff, targets, duration, casterLevel, o
         buffData.flags[MODULE.ID] = buffData.flags[MODULE.ID] || {};
         if (!buffData.flags[MODULE.ID].sourceId) {
           buffData.flags[MODULE.ID].sourceId = buff.document.uuid;
+        }
+        if (buffName && buffData.name !== buffName) {
+          buffData.name = buffName;
         }
         
         if (duration) {
@@ -1565,13 +2038,16 @@ export async function applyBuffToTargets(buff, targets, duration, casterLevel, o
           const newBuff = newItems[0];
           await newBuff.update({"system.active": true});
           await syncBuffEffectDuration(newBuff, normalizedDuration);
+          await configureKnownBuffAutomation(newBuff, { ...options, casterLevel });
+        } else if (newItems && newItems.length > 0) {
+          await configureKnownBuffAutomation(newItems[0], { ...options, casterLevel });
         }
         
-        if (!silent) ui.notifications.info(game.i18n.format('NAS.buffs.Applied', { name: buff.name, actor: actor.name }));
+        if (!silent) ui.notifications.info(game.i18n.format('NAS.buffs.Applied', { name: buffName, actor: actor.name }));
       }
     } catch (error) {
       console.error(`${MODULE.ID} | Error applying buff to target:`, error);
-      if (!silent) ui.notifications.error(game.i18n.format('NAS.buffs.FailedToApply', { name: buff.name, error: error.message }));
+      if (!silent) ui.notifications.error(game.i18n.format('NAS.buffs.FailedToApply', { name: buffName, error: error.message }));
     }
   }
 }
@@ -1600,7 +2076,7 @@ function checkAndConsumeSpellSlots({ action, filteredTargets, isCommunal, isArea
   ) {
     const numTargets = filteredTargets.length;
     const spellbook = action.item.system.spellbook;
-    const baseSpellLevel = action.item.system.level;
+    const baseSpellLevel = getRuntimeSpellLevel(action);
     const actor = action.token?.actor;
 
     const spellbookData = actor?.system?.attributes?.spells?.spellbooks?.[spellbook];
@@ -1663,7 +2139,7 @@ function checkAndConsumeSpellSlots({ action, filteredTargets, isCommunal, isArea
     const targetText = action.action?.target?.value
       || action.item?.system?.actions?.[0]?.target?.value
       || action.item?.system?.target?.value;
-    const casterLevel = action.shared.rollData?.cl ?? action.item?.system?.level ?? 0;
+      const casterLevel = getRuntimeCasterLevel(action);
     const parsedCount = estimateScalableTargets(targetText, casterLevel);
     if (parsedCount && parsedCount >= filteredTargets.length) {
       let originalCost = 1;
@@ -1684,7 +2160,7 @@ function evaluateScalableTargetAllowance(action, filteredTargets) {
   const targetText = action.action?.target?.value
     || action.item?.system?.actions?.[0]?.target?.value
     || action.item?.system?.target?.value;
-  const casterLevel = action.shared.rollData?.cl ?? action.item?.system?.level ?? 0;
+    const casterLevel = getRuntimeCasterLevel(action);
   const parsedCount = estimateScalableTargets(targetText, casterLevel);
   if (!forceScalable && (!parsedCount || parsedCount < filteredTargets.length)) {
     return null;

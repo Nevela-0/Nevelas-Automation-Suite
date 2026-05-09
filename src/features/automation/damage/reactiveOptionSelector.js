@@ -1,4 +1,5 @@
 import { MODULE } from "../../../common/module.js";
+import { createNasId } from "../utils/nasIds.js";
 
 export function buildReactiveOptionChoices(optionList) {
   const sorted = [...optionList].sort((a, b) => a.label.localeCompare(b.label));
@@ -44,7 +45,7 @@ export class ReactiveOptionSelector extends pf1.applications.ActorTraitSelector 
       ...rest
     } = options;
 
-    const dummySuffix = rowId ? String(rowId).replace(/[^a-zA-Z0-9_-]/g, "_") : foundry.utils.randomID();
+    const dummySuffix = rowId ? String(rowId).replace(/[^a-zA-Z0-9_-]/g, "_") : createNasId();
     super({
       ...rest,
       document: doc,

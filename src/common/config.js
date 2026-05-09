@@ -15,6 +15,9 @@ export const damageConfig = {
     additionalPhysicalDamageTypes: []
 };
 
+const NAS_BUFF_COMPENDIUM = `${MODULE.ID}.Buffs`;
+
+
 function registerSettings() {
     Handlebars.registerHelper('colorStyle', function(color) {
         return new Handlebars.SafeString(`style="color: ${color};"`);
@@ -350,8 +353,7 @@ export function populateDefaultTypes() {
 }
 
 async function handleReadyHook() {
-    console.log(damageConfig);
-
+  await ensureDefaultBuffCompendiaSelected();
     const migrationKey = `migrationVersion`;
     const currentVersion = game.modules.get(MODULE.ID).version;
     let previousMigrationVersion;
@@ -406,6 +408,16 @@ function handleRegistryHook(registry) {
 
 function handleSetupHook() {
     syncWeaponDamageTypes();
+}
+
+async function ensureDefaultBuffCompendiaSelected() {
+    if (!game.user?.isGM) return;
+    if (!game.packs.get(NAS_BUFF_COMPENDIUM)) return;
+
+    const selected = game.settings.get(MODULE.ID, "customBuffCompendia") || [];
+    if (selected.includes(NAS_BUFF_COMPENDIUM)) return;
+
+    await game.settings.set(MODULE.ID, "customBuffCompendia", [...selected, NAS_BUFF_COMPENDIUM]);
 }
 
 function compareVersions(v1, v2) {
@@ -601,6 +613,29 @@ export function registerNasSettings() {
     },
     default: "strict"
   });
+
+  game.settings.register(MODULE.ID, 'buffSaveHandlingDefault', {
+    name: game.i18n.localize("NAS.settings.buffSaveHandlingDefault.name"),
+    hint: game.i18n.localize("NAS.settings.buffSaveHandlingDefault.hint"),
+    scope: 'world',
+    config: true,
+    type: String,
+    choices: {
+      ignore: game.i18n.localize("NAS.settings.buffSaveHandlingDefault.choices.ignore"),
+      failed: game.i18n.localize("NAS.settings.buffSaveHandlingDefault.choices.failed"),
+      successful: game.i18n.localize("NAS.settings.buffSaveHandlingDefault.choices.successful")
+    },
+    default: "ignore"
+  });
+
+  game.settings.register(MODULE.ID, 'buffSaveAlliesBypass', {
+    name: game.i18n.localize("NAS.settings.buffSaveAlliesBypass.name"),
+    hint: game.i18n.localize("NAS.settings.buffSaveAlliesBypass.hint"),
+    scope: 'world',
+    config: true,
+    type: Boolean,
+    default: true
+  });
   
   game.settings.register(MODULE.ID, 'buffTargetFiltering', {
     name: game.i18n.localize("NAS.settings.buffTargetFiltering.name"),
@@ -625,7 +660,7 @@ export function registerNasSettings() {
     restricted: true
   });
 
-  const defaultCompendia = ["pf1.buffs", `${MODULE.ID}.Buffs`];
+  const defaultCompendia = ["pf1.buffs", NAS_BUFF_COMPENDIUM];
   if (game.packs.get("pf-content.pf-buffs")) {
     defaultCompendia.push("pf-content.pf-buffs");
   }
@@ -1164,6 +1199,8 @@ function registerNasSettingsUi() {
         () => getMenuRow("modifierNameSettings"),
         () => getMenuRow("variantMappingManager"),
         () => getSettingRow("buffAutomationMode"),
+        () => getSettingRow("buffSaveHandlingDefault"),
+        () => getSettingRow("buffSaveAlliesBypass"),
         () => getSettingRow("buffTargetFiltering"),
         () => getSettingRow("communalHandling"),
         () => getSettingRow("personalTargeting"),
@@ -1258,6 +1295,8 @@ function registerNasSettingsUi() {
   const modifierNameSettingsRow = getMenuRow("modifierNameSettings");
   const variantMappingManagerRow = getMenuRow("variantMappingManager");
   const buffAutomationModeRow = getSettingRow("buffAutomationMode");
+  const buffSaveHandlingDefaultRow = getSettingRow("buffSaveHandlingDefault");
+  const buffSaveAlliesBypassRow = getSettingRow("buffSaveAlliesBypass");
   const buffTargetFilteringRow = getSettingRow("buffTargetFiltering");
   const communalHandlingRow = getSettingRow("communalHandling");
   const personalTargetingRow = getSettingRow("personalTargeting");
@@ -1276,6 +1315,8 @@ function registerNasSettingsUi() {
     modifierNameSettingsRow,
     variantMappingManagerRow,
     buffAutomationModeRow,
+    buffSaveHandlingDefaultRow,
+    buffSaveAlliesBypassRow,
     buffTargetFilteringRow,
     communalHandlingRow,
     personalTargetingRow,
