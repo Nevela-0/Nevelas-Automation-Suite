@@ -4,6 +4,7 @@ import { applyBuffToTargets } from "./buffs.js";
 import { refreshTokenEffectBadgesForActor } from "../utils/tokenEffectBadges.js";
 import { showTemporaryHpCombatText, showTemporaryHpGainCombatText } from "../utils/healthDeltaText.js";
 import { createNasId, ensureNasId } from "../utils/nasIds.js";
+import { getStoredBuffCasterLevel } from "../utils/spellLevels.js";
 
 const REACTIVE_FLAG_KEY = "itemReactiveEffects";
 const TEMP_HP_FLAG_KEY = "temporaryHp";
@@ -17,6 +18,90 @@ function flagPath(path) {
 function numberOrZero(value) {
   const number = Number(value);
   return Number.isFinite(number) ? Math.max(0, Math.floor(number)) : 0;
+}
+
+function formulaOrEmpty(raw = {}) {
+  const explicit = raw?.formula ?? raw?.amountFormula ?? raw?.maxFormula;
+  if (explicit != null) return String(explicit).trim();
+  const legacy = raw?.max ?? raw?.amount ?? raw?.value;
+  return legacy != null && legacy !== "" ? String(legacy).trim() : "";
+}
+
+function positiveIntegerCandidate(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? Math.floor(number) : null;
+}
+
+function matchingSpellCasterLevel(actor, item) {
+  const itemName = String(item?.name ?? "").trim().toLowerCase();
+  const itemImg = String(item?.img ?? "");
+  const matches = (actor?.items ?? []).filter((candidate) => {
+    if (candidate?.type !== "spell") return false;
+    const sameName = itemName && String(candidate.name ?? "").trim().toLowerCase() === itemName;
+    const sameImg = itemImg && String(candidate.img ?? "") === itemImg;
+    return sameName || sameImg;
+  });
+
+  const candidates = [];
+  for (const spell of matches) {
+    const spellRollData = spell.getRollData?.() ?? {};
+    candidates.push(
+      positiveIntegerCandidate(spellRollData?.cl),
+      positiveIntegerCandidate(spell?.casterLevel),
+      positiveIntegerCandidate(spell?.system?.cl)
+    );
+    const bookId = spell?.system?.spellbook;
+    if (bookId) {
+      const book = actor?.system?.attributes?.spells?.spellbooks?.[bookId];
+      candidates.push(positiveIntegerCandidate(book?.cl?.total), positiveIntegerCandidate(book?.cl?.autoSpellLevelTotal));
+    }
+  }
+
+  return Math.max(0, ...candidates.filter((value) => value != null));
+}
+
+function strongestActorSpellbookCasterLevel(actor) {
+  const candidates = [];
+  for (const book of Object.values(actor?.system?.attributes?.spells?.spellbooks ?? {})) {
+    if (book?.inUse === false) continue;
+    candidates.push(positiveIntegerCandidate(book?.cl?.total), positiveIntegerCandidate(book?.cl?.autoSpellLevelTotal));
+  }
+  return Math.max(0, ...candidates.filter((value) => value != null));
+}
+
+function temporaryHpFormulaRollData(actor, item) {
+  const actorData = actor?.getRollData?.() ?? {};
+  const itemRollData = item?.getRollData?.() ?? {};
+  const storedBuffCl = positiveIntegerCandidate(getStoredBuffCasterLevel(item, actor));
+  const itemLevel = positiveIntegerCandidate(item?.system?.level);
+  const itemRollDataCl = positiveIntegerCandidate(itemRollData?.cl);
+  const matchingSpellCl = matchingSpellCasterLevel(actor, item);
+  const actorSpellbookCl = strongestActorSpellbookCasterLevel(actor);
+  const actorDataCl = positiveIntegerCandidate(actorData?.cl);
+  const cl = storedBuffCl || itemLevel || itemRollDataCl || matchingSpellCl || actorSpellbookCl || actorDataCl || 0;
+  return {
+    ...actorData,
+    cl,
+    item: {
+      ...itemRollData,
+      level: itemRollData?.level ?? item?.system?.level ?? itemLevel ?? 0,
+      cl: itemRollData?.cl ?? cl
+    }
+  };
+}
+
+async function evaluateTemporaryHpFormula(item, formula, fallback = 0) {
+  const text = String(formula ?? "").trim();
+  if (!text) return numberOrZero(fallback);
+  const numeric = Number(text);
+  if (Number.isFinite(numeric)) return numberOrZero(numeric);
+  try {
+    const rollData = temporaryHpFormulaRollData(item?.actor, item);
+    const roll = await new Roll(text, rollData).evaluate();
+    return numberOrZero(roll?.total);
+  } catch (_err) {
+    return numberOrZero(fallback);
+  }
 }
 
 function normalizeTemporaryHpStackingMode(value) {
@@ -57,6 +142,7 @@ function tempHpConfig(item) {
     }),
     remaining: numberOrZero(raw?.remaining),
     max: numberOrZero(raw?.max),
+    formula: formulaOrEmpty(raw),
     sourceItemUuid: String(raw?.sourceItemUuid ?? ""),
     sourceBuffUuid: String(raw?.sourceBuffUuid ?? ""),
     label: String(raw?.label ?? item?.name ?? ""),
@@ -91,6 +177,7 @@ function normalizeTempHpPoolEntry(entry = {}, item = null) {
     }),
     remaining: numberOrZero(entry?.remaining),
     max: numberOrZero(entry?.max),
+    formula: formulaOrEmpty(entry),
     sourceItemUuid: String(entry?.sourceItemUuid ?? ""),
     sourceBuffUuid: String(entry?.sourceBuffUuid ?? ""),
     label: String(entry?.label ?? item?.name ?? ""),
@@ -118,6 +205,7 @@ function serializeTempHpPool(pool) {
     sourceKey: String(pool?.sourceKey ?? ""),
     remaining: numberOrZero(pool?.remaining),
     max: numberOrZero(pool?.max),
+    formula: String(pool?.formula ?? "").trim(),
     sourceItemUuid: String(pool?.sourceItemUuid ?? ""),
     sourceBuffUuid: String(pool?.sourceBuffUuid ?? ""),
     label: String(pool?.label ?? ""),
@@ -146,6 +234,20 @@ function tempHpPoolUpdate(pools = []) {
     [flagPath("remaining")]: aggregate.remaining,
     [flagPath("max")]: aggregate.max,
     [flagPath("pools")]: serialized
+  };
+}
+
+async function resolveTemporaryHpPoolEntry(item, entry = {}) {
+  const normalized = normalizeTempHpPoolEntry(entry, item);
+  const topLevelConfig = tempHpConfig(item);
+  const effectiveFormula = topLevelConfig.formula || normalized.formula;
+  const max = await evaluateTemporaryHpFormula(item, effectiveFormula, normalized.max);
+  return {
+    ...normalized,
+    enabled: true,
+    max,
+    remaining: max,
+    formula: effectiveFormula
   };
 }
 
@@ -260,6 +362,7 @@ function poolDescriptor(item, pool = null) {
     sourceKey: config.sourceKey,
     remaining: config.remaining,
     max: config.max,
+    formula: config.formula,
     label: config.label || item.name,
     duration: config.duration,
     stackingMode: config.stackingMode,
@@ -634,13 +737,14 @@ export async function initializeNasTemporaryHpItem(item) {
     refreshNasTemporaryHpDisplay(item.actor);
     return false;
   }
-  if (config.max <= 0) {
+  const resolvedMax = await evaluateTemporaryHpFormula(item, config.formula, config.max);
+  if (resolvedMax <= 0) {
     return false;
   }
   const pools = tempHpPoolEntries(item);
   const nextPools = pools.length
-    ? pools.map((pool) => ({ ...pool, enabled: true, remaining: numberOrZero(pool.max) }))
-    : [{ ...config, enabled: true, remaining: config.max }];
+    ? await Promise.all(pools.map((pool) => resolveTemporaryHpPoolEntry(item, pool)))
+    : [{ ...config, enabled: true, max: resolvedMax, remaining: resolvedMax }];
   await item.update(tempHpPoolUpdate(nextPools), { render: false });
   refreshNasTemporaryHpDisplay(item.actor);
   return true;
@@ -649,14 +753,15 @@ export async function initializeNasTemporaryHpItem(item) {
 export async function resetNasTemporaryHpItem(item) {
   if (!item || !hasTemporaryHpData(item)) return false;
   const config = tempHpConfig(item);
-  if (!config.enabled || !isSourceItemActive(item) || config.max <= 0) {
+  const resolvedMax = await evaluateTemporaryHpFormula(item, config.formula, config.max);
+  if (!config.enabled || !isSourceItemActive(item) || resolvedMax <= 0) {
     refreshNasTemporaryHpDisplay(item?.actor);
     return false;
   }
   const pools = tempHpPoolEntries(item);
   const nextPools = pools.length
-    ? pools.map((pool) => ({ ...pool, enabled: true, remaining: numberOrZero(pool.max) }))
-    : [{ ...config, enabled: true, remaining: config.max }];
+    ? await Promise.all(pools.map((pool) => resolveTemporaryHpPoolEntry(item, pool)))
+    : [{ ...config, enabled: true, max: resolvedMax, remaining: resolvedMax }];
   await item.update(tempHpPoolUpdate(nextPools), { render: false });
   refreshNasTemporaryHpDisplay(item.actor);
   return true;
@@ -933,7 +1038,20 @@ export function registerNasTemporaryHpPools() {
     }
     const activeChanged = foundry.utils.hasProperty(change, "system.active");
     const equippedChanged = foundry.utils.hasProperty(change, "system.equipped");
+    const tempHpFlagRoot = `flags.${MODULE.ID}.${REACTIVE_FLAG_KEY}.${TEMP_HP_FLAG_KEY}`;
+    const tempHpFormulaChanged = foundry.utils.hasProperty(change, `${tempHpFlagRoot}.formula`);
+    const tempHpEnabledChanged = foundry.utils.hasProperty(change, `${tempHpFlagRoot}.enabled`);
     if (foundry.utils.getProperty(change, "system.active") === true || foundry.utils.getProperty(change, "system.equipped") === true) {
+      await resetNasTemporaryHpItem(item);
+      return;
+    }
+    if (
+      isSourceItemActive(item)
+      && (
+        tempHpFormulaChanged
+        || (tempHpEnabledChanged && foundry.utils.getProperty(change, `${tempHpFlagRoot}.enabled`) === true && tempHpConfig(item).remaining <= 0)
+      )
+    ) {
       await resetNasTemporaryHpItem(item);
       return;
     }

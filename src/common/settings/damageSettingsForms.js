@@ -1577,11 +1577,7 @@ class ActionDamageSettingsForm extends FormApplication {
     
     async _updateObject(event, formData) {
         await initializeDamageFlags(this.item);
-        console.log("Form submission - raw formData:", formData);
-        
         const data = foundry.utils.expandObject(formData);
-        console.log("Expanded form data:", data);
-        
         const globalSettings = this.item.getFlag(MODULE.ID, 'globalItemSettings') || {};
         const globalBypassHardness = globalSettings.hardness?.bypass || false;
         const globalIgnoreHardness = globalSettings.hardness?.ignore?.enabled || false;
@@ -1837,7 +1833,6 @@ class ActionDamageSettingsForm extends FormApplication {
         
         const finalSettings = this.item.getFlag(MODULE.ID, 'itemActionSettings');
         const finalAction = finalSettings?.actions?.find(a => a.id === this.actionId);
-        console.log('[Save debug] itemActionSettings after save:', finalSettings);
     }
 
     arraysMatchUnordered(array1, array2) {

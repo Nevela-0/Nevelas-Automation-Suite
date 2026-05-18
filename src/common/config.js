@@ -9,6 +9,12 @@ import { VariantMappingManager } from "./settings/variantMappingManager.js";
 import { WoundDamageTypesForm } from "./settings/woundDamageTypesForm.js";
 import { SqueezingAutomationConfigForm } from "./settings/squeezingAutomationConfigForm.js";
 import { MigrationSettingsMenu } from "./migrations.js";
+import {
+  SPELLBOOK_ANIMATION_MODES,
+  SPELLBOOK_PREPARATION_MODES,
+  SPELLBOOK_PREPARATION_SETTING_KEYS,
+  getSpellbookPersonalSettingScope
+} from "../features/automation/spellcasting/preparation/settings.js";
 
 export const damageConfig = {
     weaponDamageTypes: [],
@@ -106,6 +112,15 @@ function registerSettings() {
     game.settings.register(MODULE.ID, "saveRollTokenInteraction", {
         name: game.i18n.localize("NAS.settings.saveRollTokenInteraction.name"),
         hint: game.i18n.localize("NAS.settings.saveRollTokenInteraction.hint"),
+        scope: "world",
+        config: true,
+        type: Boolean,
+        default: true
+    });
+
+    game.settings.register(MODULE.ID, "hidePrivateSaveRollOutcomeFromPlayers", {
+        name: game.i18n.localize("NAS.settings.hidePrivateSaveRollOutcomeFromPlayers.name"),
+        hint: game.i18n.localize("NAS.settings.hidePrivateSaveRollOutcomeFromPlayers.hint"),
         scope: "world",
         config: true,
         type: Boolean,
@@ -581,6 +596,90 @@ export function registerNasSettings() {
     config: true,
     type: Boolean,
     default: true,
+  });
+
+  game.settings.register(MODULE.ID, SPELLBOOK_PREPARATION_SETTING_KEYS.MODE, {
+    name: game.i18n.localize("NAS.settings.spellbookPreparationMode.name"),
+    hint: game.i18n.localize("NAS.settings.spellbookPreparationMode.hint"),
+    scope: "world",
+    config: true,
+    type: String,
+    choices: {
+      [SPELLBOOK_PREPARATION_MODES.CLASSIC]: game.i18n.localize("NAS.settings.spellbookPreparationMode.choices.classic"),
+      [SPELLBOOK_PREPARATION_MODES.VARIANTS_ONLY]: game.i18n.localize("NAS.settings.spellbookPreparationMode.choices.variantsOnly"),
+      [SPELLBOOK_PREPARATION_MODES.FULL]: game.i18n.localize("NAS.settings.spellbookPreparationMode.choices.full")
+    },
+    default: SPELLBOOK_PREPARATION_MODES.FULL
+  });
+
+  game.settings.register(MODULE.ID, SPELLBOOK_PREPARATION_SETTING_KEYS.ALLOW_EXTRA_CAST_TIME_METAMAGIC, {
+    name: game.i18n.localize("NAS.settings.spellbookAllowExtraCastTimeMetamagic.name"),
+    hint: game.i18n.localize("NAS.settings.spellbookAllowExtraCastTimeMetamagic.hint"),
+    scope: "world",
+    config: true,
+    type: Boolean,
+    default: true
+  });
+
+  game.settings.register(MODULE.ID, SPELLBOOK_PREPARATION_SETTING_KEYS.REST_RESET, {
+    name: game.i18n.localize("NAS.settings.spellbookRestReset.name"),
+    hint: game.i18n.localize("NAS.settings.spellbookRestReset.hint"),
+    scope: "world",
+    config: true,
+    type: Boolean,
+    default: true
+  });
+
+  game.settings.register(MODULE.ID, SPELLBOOK_PREPARATION_SETTING_KEYS.HIDE_SOURCE_SPELLS, {
+    name: game.i18n.localize("NAS.settings.spellbookHideSourceSpells.name"),
+    hint: game.i18n.localize("NAS.settings.spellbookHideSourceSpells.hint"),
+    scope: "world",
+    config: true,
+    type: Boolean,
+    default: true
+  });
+
+  const spellbookPersonalSettingScope = getSpellbookPersonalSettingScope();
+
+  game.settings.register(MODULE.ID, SPELLBOOK_PREPARATION_SETTING_KEYS.AUTO_OPEN_AFTER_REST, {
+    name: game.i18n.localize("NAS.settings.spellbookAutoOpenAfterRest.name"),
+    hint: game.i18n.localize("NAS.settings.spellbookAutoOpenAfterRest.hint"),
+    scope: spellbookPersonalSettingScope,
+    config: true,
+    type: Boolean,
+    default: true
+  });
+
+  game.settings.register(MODULE.ID, SPELLBOOK_PREPARATION_SETTING_KEYS.SHOW_ACTOR_SHEET_PREPARE_CONTROL, {
+    name: game.i18n.localize("NAS.settings.spellbookShowActorSheetPrepareControl.name"),
+    hint: game.i18n.localize("NAS.settings.spellbookShowActorSheetPrepareControl.hint"),
+    scope: spellbookPersonalSettingScope,
+    config: true,
+    type: Boolean,
+    default: true
+  });
+
+  game.settings.register(MODULE.ID, SPELLBOOK_PREPARATION_SETTING_KEYS.SHOW_CAST_DIALOG_PREPARED_PREVIEW, {
+    name: game.i18n.localize("NAS.settings.spellbookShowCastDialogPreparedPreview.name"),
+    hint: game.i18n.localize("NAS.settings.spellbookShowCastDialogPreparedPreview.hint"),
+    scope: spellbookPersonalSettingScope,
+    config: true,
+    type: Boolean,
+    default: true
+  });
+
+  game.settings.register(MODULE.ID, SPELLBOOK_PREPARATION_SETTING_KEYS.ANIMATION_MODE, {
+    name: game.i18n.localize("NAS.settings.spellbookAnimationMode.name"),
+    hint: game.i18n.localize("NAS.settings.spellbookAnimationMode.hint"),
+    scope: spellbookPersonalSettingScope,
+    config: true,
+    type: String,
+    choices: {
+      [SPELLBOOK_ANIMATION_MODES.FULL]: game.i18n.localize("NAS.settings.spellbookAnimationMode.choices.full"),
+      [SPELLBOOK_ANIMATION_MODES.REDUCED]: game.i18n.localize("NAS.settings.spellbookAnimationMode.choices.reduced"),
+      [SPELLBOOK_ANIMATION_MODES.OFF]: game.i18n.localize("NAS.settings.spellbookAnimationMode.choices.off")
+    },
+    default: SPELLBOOK_ANIMATION_MODES.FULL
   });
 
   game.settings.register(MODULE.ID, "enforceSpellAbilityMinimum", {
@@ -1124,18 +1223,30 @@ function registerNasSettingsUi() {
   const tabEl = root?.querySelector?.(`section.tab[data-tab="${moduleId}"]`);
   if (!tabEl) return;
 
-  function findFormGroup(selector) {
-    if (!tabEl) return null;
-    const el = tabEl.querySelector(selector);
-    return el ? el.closest(".form-group") : null;
+  function elementBelongsToNasSettingsTab(element) {
+    const owner = element?.closest?.("section.tab[data-tab], [data-category]");
+    if (!owner) return true;
+    return owner.dataset.tab === moduleId || owner.dataset.category === moduleId;
   }
 
   function getSettingRow(settingKey) {
-    return findFormGroup(`*[name="${moduleId}.${settingKey}"]`);
+    const settingName = `${moduleId}.${settingKey}`;
+    const controls = [
+      ...Array.from(tabEl.querySelectorAll("[name]")),
+      ...Array.from(root?.querySelectorAll?.("[name]") ?? [])
+    ];
+    const control = controls.find((el) => el.getAttribute("name") === settingName && elementBelongsToNasSettingsTab(el));
+    return control?.closest(".form-group") ?? null;
   }
 
   function getMenuRow(menuKey) {
-    return findFormGroup(`button[data-key="${moduleId}.${menuKey}"]`);
+    const menuDataKey = `${moduleId}.${menuKey}`;
+    const buttons = [
+      ...Array.from(tabEl.querySelectorAll("button[data-key]")),
+      ...Array.from(root?.querySelectorAll?.("button[data-key]") ?? [])
+    ];
+    const button = buttons.find((el) => el.dataset.key === menuDataKey && elementBelongsToNasSettingsTab(el));
+    return button?.closest(".form-group") ?? null;
   }
 
   function createSection({ id, title, open }) {
@@ -1181,10 +1292,10 @@ function registerNasSettingsUi() {
       open: false,
       rows: [
         () => getSettingRow("saveRollTokenInteraction"),
+        () => getSettingRow("hidePrivateSaveRollOutcomeFromPlayers"),
         () => getSettingRow("enhancedDiceTooltipMode"),
         () => getSettingRow("combatTextMode"),
         () => getSettingRow("cinematicCombatTextPreset"),
-        () => getSettingRow("enforceSpellAbilityMinimum"),
         () => getSettingRow("reorderAllConditions"),
         () => getMenuRow("migrationTool")
       ]
@@ -1248,11 +1359,20 @@ function registerNasSettingsUi() {
       ]
     },
     {
-      id: "metamagic",
-      title: game.i18n.localize("NAS.settings.sections.metamagic"),
+      id: "spellcasting",
+      title: game.i18n.localize("NAS.settings.sections.spellcasting"),
       open: false,
       rows: [
+        () => getSettingRow("enforceSpellAbilityMinimum"),
         () => getSettingRow("enableMetamagicAutomation"),
+        () => getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.MODE),
+        () => getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.ALLOW_EXTRA_CAST_TIME_METAMAGIC),
+        () => getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.REST_RESET),
+        () => getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.HIDE_SOURCE_SPELLS),
+        () => getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.AUTO_OPEN_AFTER_REST),
+        () => getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.SHOW_ACTOR_SHEET_PREPARE_CONTROL),
+        () => getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.SHOW_CAST_DIALOG_PREPARED_PREVIEW),
+        () => getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.ANIMATION_MODE),
         () => getSettingRow("metamagicCastTimeRule"),
         () => getSettingRow("persistentSpellTargetMode"),
         () => getSettingRow("metamagicChatCardNameMode"),
@@ -1287,6 +1407,21 @@ function registerNasSettingsUi() {
       const row = getRow();
       if (!row) continue;
       body.appendChild(row);
+    }
+  }
+
+  function rowIsVisibleForSettingsSection(row) {
+    if (!row || row.hidden === true) return false;
+    if (row.style?.display === "none") return false;
+    const computedDisplay = globalThis.getComputedStyle?.(row)?.display;
+    return computedDisplay !== "none";
+  }
+
+  function updateNasSettingsSectionVisibility() {
+    for (const section of container.querySelectorAll(":scope > .nas-settings-section")) {
+      const rows = Array.from(section.querySelectorAll(":scope > .nas-settings-section-body > .form-group"));
+      const visibleRows = rows.filter(rowIsVisibleForSettingsSection);
+      section.hidden = visibleRows.length === 0;
     }
   }
 
@@ -1454,23 +1589,51 @@ function registerNasSettingsUi() {
   const persistentSpellTargetModeRow = getSettingRow("persistentSpellTargetMode");
   const metamagicChatCardNameModeRow = getSettingRow("metamagicChatCardNameMode");
   const metamagicPreviewModeRow = getSettingRow("metamagicPreviewMode");
+  const spellbookPreparationModeRow = getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.MODE);
+  const spellbookAllowExtraCastTimeMetamagicRow = getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.ALLOW_EXTRA_CAST_TIME_METAMAGIC);
+  const spellbookRestResetRow = getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.REST_RESET);
+  const spellbookHideSourceSpellsRow = getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.HIDE_SOURCE_SPELLS);
+  const spellbookAutoOpenAfterRestRow = getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.AUTO_OPEN_AFTER_REST);
+  const spellbookShowActorSheetPrepareControlRow = getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.SHOW_ACTOR_SHEET_PREPARE_CONTROL);
+  const spellbookShowCastDialogPreparedPreviewRow = getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.SHOW_CAST_DIALOG_PREPARED_PREVIEW);
+  const spellbookAnimationModeRow = getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.ANIMATION_MODE);
 
   const enableMetamagicAutomationCheckbox = enableMetamagicAutomationRow?.querySelector?.("input");
 
   const metamagicDependentRows = [
+    spellbookPreparationModeRow,
+    spellbookAllowExtraCastTimeMetamagicRow,
+    spellbookRestResetRow,
+    spellbookHideSourceSpellsRow,
+    spellbookAutoOpenAfterRestRow,
+    spellbookShowActorSheetPrepareControlRow,
+    spellbookShowCastDialogPreparedPreviewRow,
+    spellbookAnimationModeRow,
     metamagicCastTimeRuleRow,
     persistentSpellTargetModeRow,
     metamagicChatCardNameModeRow,
     metamagicPreviewModeRow
   ];
 
-  const metamagicEnabled = checkboxChecked(enableMetamagicAutomationCheckbox);
+  function getMetamagicAutomationEnabledForSettingsUi() {
+    if (enableMetamagicAutomationCheckbox) return checkboxChecked(enableMetamagicAutomationCheckbox);
+    try {
+      return game.settings.get(MODULE.ID, "enableMetamagicAutomation") !== false;
+    } catch (_error) {
+      return true;
+    }
+  }
+
+  const metamagicEnabled = getMetamagicAutomationEnabledForSettingsUi();
   toggleBuffSettingsVisibility(metamagicEnabled, metamagicDependentRows);
+
+  updateNasSettingsSectionVisibility();
 
   if (enableMetamagicAutomationCheckbox && !enableMetamagicAutomationCheckbox.dataset.nasListenerAttached) {
       enableMetamagicAutomationCheckbox.dataset.nasListenerAttached = "true";
       enableMetamagicAutomationCheckbox.addEventListener("change", function () {
         toggleBuffSettingsVisibility(this.checked, metamagicDependentRows);
+        updateNasSettingsSectionVisibility();
       });
   }
   });

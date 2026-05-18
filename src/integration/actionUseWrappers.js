@@ -4,6 +4,9 @@ import { collectSpellActionData } from '../features/automation/utils/spellAction
 import { commitPersistentFeatureStatesFromOptions } from '../features/automation/utils/attackDialogControls.js';
 import { applyMetamagicSelections } from '../features/automation/metamagic/applyMetamagic.js';
 import { METAMAGIC_DEFINITIONS } from '../features/automation/metamagic/metamagic.js';
+import { mergePreparedVariantMetamagicIntoContext } from '../features/automation/spellcasting/preparation/preparedVariantActionUse.js';
+import { installPreparedVariantConsumptionOverrides } from '../features/automation/spellcasting/preparation/preparedVariantConsumption.js';
+import { isSpellbookPreparedVariantSupportEnabled } from '../features/automation/spellcasting/preparation/settings.js';
 import { applyActionUseOverrides } from '../features/automation/utils/actionUseOverrides.js';
 import {
   applyMaleficiumPostMetamagic,
@@ -64,6 +67,19 @@ function buildRangeOverride(actionUse) {
     max: maxRange != null ? pf1.utils.convertDistanceBack(maxRange)[0] : null,
     units: rangeUnits ?? "",
     increments: increments ?? 1,
+  };
+}
+
+function hasPreparedSpellbookActionUseContext(context) {
+  return context?.spellbookPreparedSpell?.generated === true;
+}
+
+function composeRestoreCallbacks(...callbacks) {
+  const restores = callbacks.filter((callback) => typeof callback === "function");
+  return () => {
+    for (let i = restores.length - 1; i >= 0; i -= 1) {
+      restores[i]();
+    }
   };
 }
 
@@ -897,6 +913,9 @@ export function registerActionUseWrapper() {
       if (!shouldHandleMetamagic(this)) return result;
       try {
         this.shared.nasSpellContext = await collectSpellActionData(this);
+        if (isSpellbookPreparedVariantSupportEnabled()) {
+          mergePreparedVariantMetamagicIntoContext(this, this.shared.nasSpellContext);
+        }
         commitPersistentFeatureStatesFromOptions(this?.actor ?? this?.token?.actor ?? null, this.shared.nasSpellContext?.metamagicOptions ?? {});
         await prepareExtendedScryingContext(this, this.shared.nasSpellContext);
         await prepareMaleficiumContext(this, this.shared.nasSpellContext);
@@ -923,9 +942,23 @@ export function registerActionUseWrapper() {
             intensifySourceParts
           };
         }
+        const restorePreparedConsumption = isSpellbookPreparedVariantSupportEnabled()
+          ? installPreparedVariantConsumptionOverrides(this, this.shared.nasSpellContext)
+          : null;
         const restore = applyActionUseOverrides(this, this.shared.nasSpellContext);
-        this.shared.nasRestoreOverrides = restore;
-      } catch (_error) {}
+        this.shared.nasRestoreOverrides = composeRestoreCallbacks(restore, restorePreparedConsumption);
+      } catch (error) {
+        if (hasPreparedSpellbookActionUseContext(this.shared?.nasSpellContext)) {
+          console.warn("[NAS SpellbookPreparation ActionUse] prepared spell action-use handling failed.", {
+            actorId: this?.actor?.id ?? this?.token?.actor?.id ?? "",
+            actorName: this?.actor?.name ?? this?.token?.actor?.name ?? "",
+            itemId: this?.item?.id ?? "",
+            itemName: this?.item?.name ?? "",
+            preparedSpell: this.shared?.nasSpellContext?.spellbookPreparedSpell,
+            error
+          });
+        }
+      }
       return result;
     },
     "MIXED"
@@ -1170,7 +1203,18 @@ export function registerActionUseWrapper() {
         actionUse.shared.templateData.description = durationDescriptionPatch.html;
       }
       patchDurationInInfoProperties(actionUse.shared?.templateData?.properties, durationDisplay);
-    } catch (_error) {}
+    } catch (error) {
+      if (hasPreparedSpellbookActionUseContext(context)) {
+        console.warn("[NAS SpellbookPreparation ActionUse] prepared spell chat-card patch failed.", {
+          actorId: actionUse?.actor?.id ?? actionUse?.token?.actor?.id ?? "",
+          actorName: actionUse?.actor?.name ?? actionUse?.token?.actor?.name ?? "",
+          itemId: actionUse?.item?.id ?? "",
+          itemName: actionUse?.item?.name ?? "",
+          preparedSpell: context.spellbookPreparedSpell,
+          error
+        });
+      }
+    }
   });
 
   libWrapper.register(
@@ -1221,4 +1265,5 @@ export function registerActionUseWrapper() {
     },
     "MIXED"
   );
+
 }

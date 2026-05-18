@@ -1,0 +1,633 @@
+<form class="nas-spellbook-preparation nas-prep-animation-{{animationMode}}" data-book-id="{{bookId}}" data-mode="{{mode}}">
+  <header class="nas-prep-header">
+    <div class="nas-prep-heading">
+      <h2>{{bookLabel}}</h2>
+      <div class="nas-prep-tags">
+        <span class="nas-prep-tag">{{modeLabel}}</span>
+        {{#if pending}}
+        <span class="nas-prep-tag nas-prep-tag-pending">{{labels.pending}}</span>
+        {{/if}}
+      </div>
+    </div>
+    {{#if initialized}}
+    <label class="nas-prep-search">
+      <i class="fa-solid fa-magnifying-glass" inert></i>
+      <input type="search" name="search" value="" placeholder="{{labels.search}}" autocomplete="off">
+    </label>
+    {{/if}}
+  </header>
+
+  {{#unless initialized}}
+  <section class="nas-prep-first-run">
+    <h3>{{labels.firstRunTitle}}</h3>
+    <p>{{labels.firstRunIntro}}</p>
+    <p class="nas-prep-first-run-count">{{labels.importableSpells}}</p>
+    <div class="nas-prep-first-run-actions">
+      <button type="button" data-nas-prep-action="import-current">
+        <i class="fa-solid fa-file-import" inert></i>
+        {{labels.importCurrent}}
+      </button>
+      <button type="button" data-nas-prep-action="start-empty">
+        <i class="fa-solid fa-book" inert></i>
+        {{labels.startEmpty}}
+      </button>
+    </div>
+  </section>
+  {{else}}
+  {{#if hasImportableSpells}}
+  <div class="nas-prep-known-tools">
+    <span>{{labels.importMissingSummary}}</span>
+    <button type="button" data-nas-prep-action="import-missing">
+      <i class="fa-solid fa-file-import" inert></i>
+      {{labels.importMissing}}
+    </button>
+  </div>
+  {{/if}}
+
+  {{#if hasSpells}}
+  <div class="nas-prep-book-shell">
+    <div class="nas-prep-page-flip nas-prep-page-flip-next" aria-hidden="true"></div>
+    <div class="nas-prep-page-flip nas-prep-page-flip-prev" aria-hidden="true"></div>
+    {{#if hasBookmarks}}
+    <nav class="nas-prep-bookmarks" aria-label="{{labels.bookmarks}}">
+      {{#each bookmarks as |bookmark|}}
+      <button type="button"
+        class="nas-prep-bookmark {{#if bookmark.active}}nas-prep-bookmark-active{{/if}}"
+        data-spread-index="{{bookmark.spreadIndex}}"
+        data-level="{{bookmark.level}}"
+        data-tooltip="{{bookmark.label}}"
+        aria-label="{{bookmark.label}}">
+        {{bookmark.shortLabel}}
+      </button>
+      {{/each}}
+    </nav>
+    {{/if}}
+    <section class="nas-prep-spreads">
+      {{#each spreads as |spread|}}
+      <div class="nas-prep-spread {{#if spread.active}}nas-prep-spread-active{{/if}}" data-spread-index="{{spread.index}}" data-level="{{spread.level}}" {{#unless spread.active}}hidden{{/unless}}>
+        {{#if spread.left}}
+        <section class="nas-prep-page nas-prep-page-left">
+          {{#with spread.left as |level|}}
+          <section class="nas-prep-level {{#if level.overLimit}}nas-prep-over-limit{{/if}}"
+            data-level="{{level.level}}"
+            data-normal-cap="{{level.normalCapValue}}"
+            data-domain-cap="{{level.domainCapValue}}">
+            <header class="nas-prep-level-header">
+              <div class="nas-prep-level-title">
+                <h3>{{level.label}}</h3>
+                {{#if level.hasMultiplePages}}
+                <span class="nas-prep-page-count">{{level.pageNumber}} / {{level.pageCount}}</span>
+                {{/if}}
+              </div>
+              <div class="nas-prep-level-counters">
+                <span class="nas-prep-counter">
+                  {{@root.labels.normalSlots}}
+                  <strong><span class="nas-prep-normal-used">{{level.normalUsed}}</span> / {{level.normalCapLabel}}</strong>
+                </span>
+                {{#if level.hasDomainCounter}}
+                <span class="nas-prep-counter">
+                  {{@root.labels.domainSlots}}
+                  <strong><span class="nas-prep-domain-used">{{level.domainUsed}}</span> / {{level.domainCapLabel}}</strong>
+                </span>
+                {{/if}}
+                <span class="nas-prep-level-status" {{#unless level.overLimit}}hidden{{/unless}}>
+                  <i class="fa-solid fa-triangle-exclamation" inert></i>
+                  {{@root.labels.overLimit}}
+                </span>
+              </div>
+            </header>
+
+            <ol class="nas-prep-spell-list">
+              {{#each level.spells as |spell|}}
+              <li class="nas-prep-spell-row {{#if spell.isVariant}}nas-prep-variant-row{{/if}} {{#if spell.slotUnavailable}}nas-prep-slot-unavailable{{/if}}" data-search="{{spell.searchText}}">
+                <div class="nas-prep-spell-main">
+                  <img class="nas-prep-spell-img" src="{{spell.img}}" alt="" width="32" height="32">
+                  <div class="nas-prep-spell-text">
+                    {{#if spell.isVariant}}
+                    <label class="nas-prep-variant-label">
+                      <span class="nas-prep-variant-marker" aria-hidden="true">
+                        <i class="fa-solid fa-turn-down-right" inert></i>
+                      </span>
+                      <input class="nas-prep-variant-suffix"
+                        type="text"
+                        name="suffixes.{{spell.id}}"
+                        value="{{spell.suffix}}"
+                        data-entry-id="{{spell.id}}"
+                        data-original-suffix="{{spell.suffix}}"
+                        placeholder="{{@root.labels.variantSuffix}}"
+                        aria-label="{{@root.labels.variantSuffix}}"
+                        {{#unless spell.canEditSuffix}}disabled{{/unless}}>
+                    </label>
+                    {{else}}
+                    <span class="nas-prep-spell-name">{{spell.name}}</span>
+                    {{/if}}
+                    <span class="nas-prep-spell-meta">
+                      {{#if spell.isVariant}}
+                      <span class="nas-prep-variant-source">{{@root.labels.variantSource}} {{spell.name}}</span>
+                      {{/if}}
+                      <span class="nas-prep-slot-cost" data-tooltip="{{@root.labels.slotCost}} {{spell.slotCost}}">
+                        <span class="nas-prep-slot-cost-label">{{@root.labels.slotCost}}</span>
+                        <span class="nas-prep-slot-cost-short">{{@root.labels.slotCostShort}}</span>
+                        {{spell.slotCost}}
+                      </span>
+                      {{#if spell.hasMetamagic}}
+                      <span class="nas-prep-metamagic-summary">{{spell.metamagicSummary}}</span>
+                      {{/if}}
+                      {{#if spell.isSlotLevelModified}}
+                      <span class="nas-prep-slot-badge" data-tooltip="{{@root.labels.preparedSlot}} {{spell.preparedSlotLevelLabel}}">
+                        <span class="nas-prep-slot-badge-label">{{@root.labels.preparedSlot}}</span>
+                        <span class="nas-prep-slot-badge-short">{{@root.labels.preparedSlotShort}}</span>
+                        {{spell.preparedSlotLevelLabel}}
+                      </span>
+                      <span class="nas-prep-original-level" data-tooltip="{{@root.labels.originalLevel}} {{spell.originalLevelLabel}}">
+                        {{@root.labels.originalLevel}} {{spell.originalLevelLabel}}
+                      </span>
+                      {{/if}}
+                      {{#if spell.domain}}
+                      <span class="nas-prep-domain-badge">{{@root.labels.domain}}</span>
+                      {{/if}}
+                      {{#if spell.missing}}
+                      <span class="nas-prep-missing-badge">{{@root.labels.missingSource}}</span>
+                      {{/if}}
+                      {{#if spell.slotUnavailable}}
+                      <span class="nas-prep-slot-unavailable-badge" data-tooltip="{{spell.slotUnavailableReason}}">
+                        {{@root.labels.slotUnavailable}}
+                      </span>
+                      {{/if}}
+                    </span>
+                  </div>
+                </div>
+
+                <div class="nas-prep-spell-control">
+                  {{#if spell.isVariant}}
+                  {{#if spell.canConfigureMetamagic}}
+                  <button type="button"
+                    class="nas-prep-configure-metamagic {{#if spell.inscriptionOpen}}nas-prep-configure-metamagic-active{{/if}}"
+                    data-entry-id="{{spell.id}}"
+                    data-tooltip="{{@root.labels.configureMetamagic}}"
+                    aria-label="{{@root.labels.configureMetamagic}}">
+                    <i class="fa-solid fa-feather-pointed" inert></i>
+                  </button>
+                  {{/if}}
+                  <button type="button"
+                    class="nas-prep-remove-variant"
+                    data-entry-id="{{spell.id}}"
+                    data-tooltip="{{@root.labels.removeVariant}}"
+                    aria-label="{{@root.labels.removeVariant}}">
+                    <i class="fa-solid fa-xmark" inert></i>
+                  </button>
+                  {{else}}
+                  <button type="button"
+                    class="nas-prep-remove-known"
+                    data-known-spell-id="{{spell.knownSpellId}}"
+                    data-spell-name="{{spell.name}}"
+                    data-tooltip="{{@root.labels.removeKnown}}"
+                    aria-label="{{@root.labels.removeKnown}}">
+                    <i class="fa-solid fa-xmark" inert></i>
+                  </button>
+                  {{#if spell.canAddVariant}}
+                  <button type="button"
+                    class="nas-prep-add-variant"
+                    data-known-spell-id="{{spell.knownSpellId}}"
+                    data-tooltip="{{@root.labels.addVariant}}"
+                    aria-label="{{@root.labels.addVariant}}">
+                    <i class="fa-solid fa-copy" inert></i>
+                  </button>
+                  {{/if}}
+                  {{/if}}
+
+                  {{#if spell.atWill}}
+                  <span class="nas-prep-at-will">{{@root.labels.atWill}}</span>
+                  {{/if}}
+
+                  {{#if spell.useCountInput}}
+                  <div class="nas-prep-count-control">
+                    <button type="button" class="nas-prep-step" data-step="-1" data-tooltip="{{@root.labels.decreaseCount}}">
+                      <i class="fa-solid fa-minus" inert></i>
+                    </button>
+                    <input class="nas-prep-count" type="number" min="0" step="1"
+                      name="entries.{{spell.id}}"
+                      value="{{spell.count}}"
+                      data-counts="true"
+                      data-level="{{spell.level}}"
+                      data-domain="{{spell.domain}}"
+                      data-slot-unavailable="{{spell.slotUnavailable}}"
+                      data-slot-cost="{{spell.slotCost}}">
+                    <button type="button" class="nas-prep-step" data-step="1" data-tooltip="{{@root.labels.increaseCount}}">
+                      <i class="fa-solid fa-plus" inert></i>
+                    </button>
+                  </div>
+                  {{/if}}
+
+                  {{#if spell.usePreparedToggle}}
+                  <label class="nas-prep-toggle-label" data-tooltip="{{@root.labels.selected}}">
+                    <input class="nas-prep-toggle" type="checkbox"
+                      name="entries.{{spell.id}}"
+                      value="1"
+                      data-counts="true"
+                      data-level="{{spell.level}}"
+                      data-domain="{{spell.domain}}"
+                      data-slot-unavailable="{{spell.slotUnavailable}}"
+                      data-slot-cost="{{spell.slotCost}}"
+                      {{#if spell.checked}}checked{{/if}}>
+                    <span>{{@root.labels.selected}}</span>
+                  </label>
+                  {{/if}}
+                </div>
+              </li>
+              {{#if spell.inscriptionOpen}}
+              <li class="nas-prep-inscription-row" data-search="{{spell.searchText}}">
+                <section class="nas-prep-inscription">
+                  <header class="nas-prep-inscription-header">
+                    <div>
+                      <span class="nas-prep-inscription-kicker">{{@root.labels.inscriptionTitle}}</span>
+                      <strong>{{spell.suffix}}</strong>
+                    </div>
+                    <div class="nas-prep-inscription-status">
+                      <span>{{@root.labels.preparedSlot}} {{spell.preparedSlotLevelLabel}}</span>
+                      <button type="button"
+                        class="nas-prep-auto-suffix"
+                        data-entry-id="{{spell.id}}"
+                        data-tooltip="{{@root.labels.autoSuffix}}"
+                        aria-label="{{@root.labels.autoSuffix}}">
+                        <i class="fa-solid fa-wand-magic-sparkles" inert></i>
+                      </button>
+                    </div>
+                  </header>
+
+                  {{#if spell.hasMetamagicChoices}}
+                  <div class="nas-prep-metamagic-seals">
+                    {{#each spell.metamagicChoices as |choice|}}
+                    <div class="nas-prep-metamagic-choice {{#if choice.hasVariableOptions}}nas-prep-metamagic-choice-variable{{/if}} {{#if choice.selected}}nas-prep-metamagic-choice-selected{{/if}} {{#if choice.disabled}}nas-prep-metamagic-choice-disabled{{/if}} {{#if choice.invalid}}nas-prep-metamagic-choice-invalid{{/if}}">
+                      {{#if choice.selected}}
+                      {{#if choice.hasVariableOptions}}
+                      <div class="nas-prep-metamagic-seal-shell" {{#if choice.invalid}}data-tooltip="{{choice.disabledReason}}"{{/if}}>
+                        <button type="button"
+                          class="nas-prep-metamagic-seal-toggle"
+                          data-entry-id="{{../id}}"
+                          data-metamagic-key="{{choice.key}}"
+                          {{#if choice.invalid}}data-tooltip="{{choice.disabledReason}}"{{/if}}>
+                          <span class="nas-prep-seal-mark">{{choice.prefix}}</span>
+                        </button>
+                        {{#if choice.hasHeightenOptions}}
+                        <label class="nas-prep-metamagic-option nas-prep-metamagic-option-inline" data-tooltip="{{@root.labels.heightenTo}}">
+                          <select class="nas-prep-heighten-level"
+                            data-entry-id="{{../id}}"
+                            data-metamagic-key="{{choice.key}}"
+                            aria-label="{{@root.labels.heightenTo}}"
+                            {{#if choice.disabled}}disabled{{/if}}>
+                            {{#each choice.heightenChoices as |option|}}
+                            <option value="{{option.value}}" {{#if option.selected}}selected{{/if}} {{#if option.disabled}}disabled{{/if}}>{{option.label}}</option>
+                            {{/each}}
+                          </select>
+                        </label>
+                        {{/if}}
+                        {{#if choice.hasReachOptions}}
+                        <label class="nas-prep-metamagic-option nas-prep-metamagic-option-inline" data-tooltip="{{@root.labels.reachSteps}}">
+                          <select class="nas-prep-reach-steps"
+                            data-entry-id="{{../id}}"
+                            data-metamagic-key="{{choice.key}}"
+                            aria-label="{{@root.labels.reachSteps}}"
+                            {{#if choice.disabled}}disabled{{/if}}>
+                            {{#each choice.reachChoices as |option|}}
+                            <option value="{{option.value}}" {{#if option.selected}}selected{{/if}} {{#if option.disabled}}disabled{{/if}}>{{option.label}}</option>
+                            {{/each}}
+                          </select>
+                        </label>
+                        {{/if}}
+                      </div>
+                      {{else}}
+                      <button type="button"
+                        class="nas-prep-metamagic-seal"
+                        data-entry-id="{{../id}}"
+                        data-metamagic-key="{{choice.key}}"
+                        {{#if choice.disabled}}disabled data-tooltip="{{choice.disabledReason}}"{{else}}{{#if choice.invalid}}data-tooltip="{{choice.disabledReason}}"{{/if}}{{/if}}>
+                        <span class="nas-prep-seal-mark">{{choice.prefix}}</span>
+                        <span class="nas-prep-seal-cost">{{choice.slotIncreaseLabel}}</span>
+                      </button>
+                      {{/if}}
+                      {{else}}
+                      <button type="button"
+                        class="nas-prep-metamagic-seal"
+                        data-entry-id="{{../id}}"
+                        data-metamagic-key="{{choice.key}}"
+                        {{#if choice.disabled}}disabled data-tooltip="{{choice.disabledReason}}"{{else}}{{#if choice.invalid}}data-tooltip="{{choice.disabledReason}}"{{/if}}{{/if}}>
+                        <span class="nas-prep-seal-mark">{{choice.prefix}}</span>
+                        {{#unless choice.hasVariableOptions}}
+                        <span class="nas-prep-seal-cost">{{choice.slotIncreaseLabel}}</span>
+                        {{/unless}}
+                      </button>
+                      {{/if}}
+                    </div>
+                    {{/each}}
+                  </div>
+                  {{else}}
+                  <p class="nas-prep-inscription-empty">{{@root.labels.noMetamagicFeats}}</p>
+                  {{/if}}
+                </section>
+              </li>
+              {{/if}}
+              {{/each}}
+            </ol>
+          </section>
+          {{/with}}
+        </section>
+        {{else}}
+        <section class="nas-prep-page nas-prep-page-left nas-prep-page-empty"></section>
+        {{/if}}
+
+        {{#if spread.right}}
+        <section class="nas-prep-page nas-prep-page-right">
+          {{#with spread.right as |level|}}
+          <section class="nas-prep-level {{#if level.overLimit}}nas-prep-over-limit{{/if}}"
+            data-level="{{level.level}}"
+            data-normal-cap="{{level.normalCapValue}}"
+            data-domain-cap="{{level.domainCapValue}}">
+            <header class="nas-prep-level-header">
+              <div class="nas-prep-level-title">
+                <h3>{{level.label}}</h3>
+                {{#if level.hasMultiplePages}}
+                <span class="nas-prep-page-count">{{level.pageNumber}} / {{level.pageCount}}</span>
+                {{/if}}
+              </div>
+              <div class="nas-prep-level-counters">
+                <span class="nas-prep-counter">
+                  {{@root.labels.normalSlots}}
+                  <strong><span class="nas-prep-normal-used">{{level.normalUsed}}</span> / {{level.normalCapLabel}}</strong>
+                </span>
+                {{#if level.hasDomainCounter}}
+                <span class="nas-prep-counter">
+                  {{@root.labels.domainSlots}}
+                  <strong><span class="nas-prep-domain-used">{{level.domainUsed}}</span> / {{level.domainCapLabel}}</strong>
+                </span>
+                {{/if}}
+                <span class="nas-prep-level-status" {{#unless level.overLimit}}hidden{{/unless}}>
+                  <i class="fa-solid fa-triangle-exclamation" inert></i>
+                  {{@root.labels.overLimit}}
+                </span>
+              </div>
+            </header>
+
+            <ol class="nas-prep-spell-list">
+              {{#each level.spells as |spell|}}
+              <li class="nas-prep-spell-row {{#if spell.isVariant}}nas-prep-variant-row{{/if}} {{#if spell.slotUnavailable}}nas-prep-slot-unavailable{{/if}}" data-search="{{spell.searchText}}">
+                <div class="nas-prep-spell-main">
+                  <img class="nas-prep-spell-img" src="{{spell.img}}" alt="" width="32" height="32">
+                  <div class="nas-prep-spell-text">
+                    {{#if spell.isVariant}}
+                    <label class="nas-prep-variant-label">
+                      <span class="nas-prep-variant-marker" aria-hidden="true">
+                        <i class="fa-solid fa-turn-down-right" inert></i>
+                      </span>
+                      <input class="nas-prep-variant-suffix"
+                        type="text"
+                        name="suffixes.{{spell.id}}"
+                        value="{{spell.suffix}}"
+                        data-entry-id="{{spell.id}}"
+                        data-original-suffix="{{spell.suffix}}"
+                        placeholder="{{@root.labels.variantSuffix}}"
+                        aria-label="{{@root.labels.variantSuffix}}"
+                        {{#unless spell.canEditSuffix}}disabled{{/unless}}>
+                    </label>
+                    {{else}}
+                    <span class="nas-prep-spell-name">{{spell.name}}</span>
+                    {{/if}}
+                    <span class="nas-prep-spell-meta">
+                      {{#if spell.isVariant}}
+                      <span class="nas-prep-variant-source">{{@root.labels.variantSource}} {{spell.name}}</span>
+                      {{/if}}
+                      <span class="nas-prep-slot-cost" data-tooltip="{{@root.labels.slotCost}} {{spell.slotCost}}">
+                        <span class="nas-prep-slot-cost-label">{{@root.labels.slotCost}}</span>
+                        <span class="nas-prep-slot-cost-short">{{@root.labels.slotCostShort}}</span>
+                        {{spell.slotCost}}
+                      </span>
+                      {{#if spell.hasMetamagic}}
+                      <span class="nas-prep-metamagic-summary">{{spell.metamagicSummary}}</span>
+                      {{/if}}
+                      {{#if spell.isSlotLevelModified}}
+                      <span class="nas-prep-slot-badge" data-tooltip="{{@root.labels.preparedSlot}} {{spell.preparedSlotLevelLabel}}">
+                        <span class="nas-prep-slot-badge-label">{{@root.labels.preparedSlot}}</span>
+                        <span class="nas-prep-slot-badge-short">{{@root.labels.preparedSlotShort}}</span>
+                        {{spell.preparedSlotLevelLabel}}
+                      </span>
+                      <span class="nas-prep-original-level" data-tooltip="{{@root.labels.originalLevel}} {{spell.originalLevelLabel}}">
+                        {{@root.labels.originalLevel}} {{spell.originalLevelLabel}}
+                      </span>
+                      {{/if}}
+                      {{#if spell.domain}}
+                      <span class="nas-prep-domain-badge">{{@root.labels.domain}}</span>
+                      {{/if}}
+                      {{#if spell.missing}}
+                      <span class="nas-prep-missing-badge">{{@root.labels.missingSource}}</span>
+                      {{/if}}
+                      {{#if spell.slotUnavailable}}
+                      <span class="nas-prep-slot-unavailable-badge" data-tooltip="{{spell.slotUnavailableReason}}">
+                        {{@root.labels.slotUnavailable}}
+                      </span>
+                      {{/if}}
+                    </span>
+                  </div>
+                </div>
+
+                <div class="nas-prep-spell-control">
+                  {{#if spell.isVariant}}
+                  {{#if spell.canConfigureMetamagic}}
+                  <button type="button"
+                    class="nas-prep-configure-metamagic {{#if spell.inscriptionOpen}}nas-prep-configure-metamagic-active{{/if}}"
+                    data-entry-id="{{spell.id}}"
+                    data-tooltip="{{@root.labels.configureMetamagic}}"
+                    aria-label="{{@root.labels.configureMetamagic}}">
+                    <i class="fa-solid fa-feather-pointed" inert></i>
+                  </button>
+                  {{/if}}
+                  <button type="button"
+                    class="nas-prep-remove-variant"
+                    data-entry-id="{{spell.id}}"
+                    data-tooltip="{{@root.labels.removeVariant}}"
+                    aria-label="{{@root.labels.removeVariant}}">
+                    <i class="fa-solid fa-xmark" inert></i>
+                  </button>
+                  {{else}}
+                  <button type="button"
+                    class="nas-prep-remove-known"
+                    data-known-spell-id="{{spell.knownSpellId}}"
+                    data-spell-name="{{spell.name}}"
+                    data-tooltip="{{@root.labels.removeKnown}}"
+                    aria-label="{{@root.labels.removeKnown}}">
+                    <i class="fa-solid fa-xmark" inert></i>
+                  </button>
+                  {{#if spell.canAddVariant}}
+                  <button type="button"
+                    class="nas-prep-add-variant"
+                    data-known-spell-id="{{spell.knownSpellId}}"
+                    data-tooltip="{{@root.labels.addVariant}}"
+                    aria-label="{{@root.labels.addVariant}}">
+                    <i class="fa-solid fa-copy" inert></i>
+                  </button>
+                  {{/if}}
+                  {{/if}}
+
+                  {{#if spell.atWill}}
+                  <span class="nas-prep-at-will">{{@root.labels.atWill}}</span>
+                  {{/if}}
+
+                  {{#if spell.useCountInput}}
+                  <div class="nas-prep-count-control">
+                    <button type="button" class="nas-prep-step" data-step="-1" data-tooltip="{{@root.labels.decreaseCount}}">
+                      <i class="fa-solid fa-minus" inert></i>
+                    </button>
+                    <input class="nas-prep-count" type="number" min="0" step="1"
+                      name="entries.{{spell.id}}"
+                      value="{{spell.count}}"
+                      data-counts="true"
+                      data-level="{{spell.level}}"
+                      data-domain="{{spell.domain}}"
+                      data-slot-unavailable="{{spell.slotUnavailable}}"
+                      data-slot-cost="{{spell.slotCost}}">
+                    <button type="button" class="nas-prep-step" data-step="1" data-tooltip="{{@root.labels.increaseCount}}">
+                      <i class="fa-solid fa-plus" inert></i>
+                    </button>
+                  </div>
+                  {{/if}}
+
+                  {{#if spell.usePreparedToggle}}
+                  <label class="nas-prep-toggle-label" data-tooltip="{{@root.labels.selected}}">
+                    <input class="nas-prep-toggle" type="checkbox"
+                      name="entries.{{spell.id}}"
+                      value="1"
+                      data-counts="true"
+                      data-level="{{spell.level}}"
+                      data-domain="{{spell.domain}}"
+                      data-slot-unavailable="{{spell.slotUnavailable}}"
+                      data-slot-cost="{{spell.slotCost}}"
+                      {{#if spell.checked}}checked{{/if}}>
+                    <span>{{@root.labels.selected}}</span>
+                  </label>
+                  {{/if}}
+                </div>
+              </li>
+              {{#if spell.inscriptionOpen}}
+              <li class="nas-prep-inscription-row" data-search="{{spell.searchText}}">
+                <section class="nas-prep-inscription">
+                  <header class="nas-prep-inscription-header">
+                    <div>
+                      <span class="nas-prep-inscription-kicker">{{@root.labels.inscriptionTitle}}</span>
+                      <strong>{{spell.suffix}}</strong>
+                    </div>
+                    <div class="nas-prep-inscription-status">
+                      <span>{{@root.labels.preparedSlot}} {{spell.preparedSlotLevelLabel}}</span>
+                      <button type="button"
+                        class="nas-prep-auto-suffix"
+                        data-entry-id="{{spell.id}}"
+                        data-tooltip="{{@root.labels.autoSuffix}}"
+                        aria-label="{{@root.labels.autoSuffix}}">
+                        <i class="fa-solid fa-wand-magic-sparkles" inert></i>
+                      </button>
+                    </div>
+                  </header>
+
+                  {{#if spell.hasMetamagicChoices}}
+                  <div class="nas-prep-metamagic-seals">
+                    {{#each spell.metamagicChoices as |choice|}}
+                    <div class="nas-prep-metamagic-choice {{#if choice.hasVariableOptions}}nas-prep-metamagic-choice-variable{{/if}} {{#if choice.selected}}nas-prep-metamagic-choice-selected{{/if}} {{#if choice.disabled}}nas-prep-metamagic-choice-disabled{{/if}} {{#if choice.invalid}}nas-prep-metamagic-choice-invalid{{/if}}">
+                      {{#if choice.selected}}
+                      {{#if choice.hasVariableOptions}}
+                      <div class="nas-prep-metamagic-seal-shell" {{#if choice.invalid}}data-tooltip="{{choice.disabledReason}}"{{/if}}>
+                        <button type="button"
+                          class="nas-prep-metamagic-seal-toggle"
+                          data-entry-id="{{../id}}"
+                          data-metamagic-key="{{choice.key}}"
+                          {{#if choice.invalid}}data-tooltip="{{choice.disabledReason}}"{{/if}}>
+                          <span class="nas-prep-seal-mark">{{choice.prefix}}</span>
+                        </button>
+                        {{#if choice.hasHeightenOptions}}
+                        <label class="nas-prep-metamagic-option nas-prep-metamagic-option-inline" data-tooltip="{{@root.labels.heightenTo}}">
+                          <select class="nas-prep-heighten-level"
+                            data-entry-id="{{../id}}"
+                            data-metamagic-key="{{choice.key}}"
+                            aria-label="{{@root.labels.heightenTo}}"
+                            {{#if choice.disabled}}disabled{{/if}}>
+                            {{#each choice.heightenChoices as |option|}}
+                            <option value="{{option.value}}" {{#if option.selected}}selected{{/if}} {{#if option.disabled}}disabled{{/if}}>{{option.label}}</option>
+                            {{/each}}
+                          </select>
+                        </label>
+                        {{/if}}
+                        {{#if choice.hasReachOptions}}
+                        <label class="nas-prep-metamagic-option nas-prep-metamagic-option-inline" data-tooltip="{{@root.labels.reachSteps}}">
+                          <select class="nas-prep-reach-steps"
+                            data-entry-id="{{../id}}"
+                            data-metamagic-key="{{choice.key}}"
+                            aria-label="{{@root.labels.reachSteps}}"
+                            {{#if choice.disabled}}disabled{{/if}}>
+                            {{#each choice.reachChoices as |option|}}
+                            <option value="{{option.value}}" {{#if option.selected}}selected{{/if}} {{#if option.disabled}}disabled{{/if}}>{{option.label}}</option>
+                            {{/each}}
+                          </select>
+                        </label>
+                        {{/if}}
+                      </div>
+                      {{else}}
+                      <button type="button"
+                        class="nas-prep-metamagic-seal"
+                        data-entry-id="{{../id}}"
+                        data-metamagic-key="{{choice.key}}"
+                        {{#if choice.disabled}}disabled data-tooltip="{{choice.disabledReason}}"{{else}}{{#if choice.invalid}}data-tooltip="{{choice.disabledReason}}"{{/if}}{{/if}}>
+                        <span class="nas-prep-seal-mark">{{choice.prefix}}</span>
+                        <span class="nas-prep-seal-cost">{{choice.slotIncreaseLabel}}</span>
+                      </button>
+                      {{/if}}
+                      {{else}}
+                      <button type="button"
+                        class="nas-prep-metamagic-seal"
+                        data-entry-id="{{../id}}"
+                        data-metamagic-key="{{choice.key}}"
+                        {{#if choice.disabled}}disabled data-tooltip="{{choice.disabledReason}}"{{else}}{{#if choice.invalid}}data-tooltip="{{choice.disabledReason}}"{{/if}}{{/if}}>
+                        <span class="nas-prep-seal-mark">{{choice.prefix}}</span>
+                        {{#unless choice.hasVariableOptions}}
+                        <span class="nas-prep-seal-cost">{{choice.slotIncreaseLabel}}</span>
+                        {{/unless}}
+                      </button>
+                      {{/if}}
+                    </div>
+                    {{/each}}
+                  </div>
+                  {{else}}
+                  <p class="nas-prep-inscription-empty">{{@root.labels.noMetamagicFeats}}</p>
+                  {{/if}}
+                </section>
+              </li>
+              {{/if}}
+              {{/each}}
+            </ol>
+          </section>
+          {{/with}}
+        </section>
+        {{else}}
+        <section class="nas-prep-page nas-prep-page-right nas-prep-page-empty"></section>
+        {{/if}}
+      </div>
+      {{/each}}
+    </section>
+
+    {{#if hasMultipleSpreads}}
+    <button type="button" class="nas-prep-page-corner nas-prep-page-prev" data-tooltip="{{labels.prevPage}}" aria-label="{{labels.prevPage}}"></button>
+    <button type="button" class="nas-prep-page-corner nas-prep-page-next" data-tooltip="{{labels.nextPage}}" aria-label="{{labels.nextPage}}"></button>
+    {{/if}}
+  </div>
+
+  <p class="nas-prep-no-results" hidden>{{labels.noResults}}</p>
+  {{else}}
+  <p class="nas-prep-empty">{{labels.noSpells}}</p>
+  {{/if}}
+  {{/unless}}
+
+  {{#if initialized}}
+  <footer class="sheet-footer nas-prep-footer">
+    <button type="submit" class="nas-prep-apply" {{#if overLimit}}disabled{{/if}}>
+      <i class="fa-solid fa-check" inert></i>
+      {{labels.apply}}
+    </button>
+  </footer>
+  {{/if}}
+</form>

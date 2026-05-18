@@ -1,4 +1,5 @@
 import { MODULE } from '../../../common/module.js';
+import { chatMessageStyle } from '../../../common/foundryCompat.js';
 import { checkMassiveDamage } from '../../../integration/moduleSockets.js';
 import { abilityDeltaCalculation } from './ability.js';
 import { buildAbilityDmgEntries, splitAbilityInstances } from './abilityTags.js';
@@ -6,6 +7,7 @@ import { applyNasDefenseBypass } from './nasBypass.js';
 import { applyLegacyPriorityTypes } from './priorityTypes.js';
 import { applyManualVulnerability, buildNumericInstances, sumInstanceValues } from './instances.js';
 import { normalizeTargets } from '../utils/targeting.js';
+import { getActorGrantedFortification } from '../defenses/grantedDefenses.js';
 import { isWoundsVigorActive, isWoundsVigorAutomationEnabled, isWvNoWoundsActor } from '../utils/woundsVigor.js';
 import { getCasterLevelEquivalentFromFormula, getDiceCountFromFormula, getDiceCountFromRoll } from '../utils/formulaUtils.js';
 import { applyReactiveEffectsForHit, resolveSourceActorFromOptions } from './reactiveTriggers.js';
@@ -131,6 +133,209 @@ function damageTypesFromApplyDamageOptions(options = {}) {
         }
     }
     return [...ids];
+}
+
+function escHtml(value) {
+    return foundry.utils.escapeHTML(String(value ?? ""));
+}
+
+function actorChatName(actor) {
+    return actor?.name ?? game.i18n.localize("NAS.common.labels.target");
+}
+
+function damageTypeIdsFromInstance(instance = {}) {
+    const ids = new Set();
+    for (const key of ["typeIds", "types", "type", "damageType", "damageTypes"]) {
+        for (const id of typeValuesFrom(instance?.[key])) {
+            if (id) ids.add(String(id).toLowerCase());
+        }
+    }
+    for (const id of typeValuesFrom(instance?.options?.damageType)) {
+        if (id) ids.add(String(id).toLowerCase());
+    }
+    return [...ids];
+}
+
+function instanceDamageAmount(instance = {}) {
+    const value = Number(instance?.value ?? instance?.total ?? instance?.number ?? instance?.formula);
+    return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+}
+
+function isCriticalExtraDamageInstance(instance = {}) {
+    return String(instance?._nasDamageRole ?? instance?._nasDamageSource ?? "").toLowerCase() === "critical";
+}
+
+function damageTypeIsPrecision(typeId) {
+    const raw = String(typeId ?? "").trim().toLowerCase();
+    if (raw === "precision") return true;
+    const entry = resolveDamageType(raw);
+    const candidates = [entry?.id, entry?.name, entry?.shortName];
+    return candidates.some((candidate) => String(candidate ?? "").trim().toLowerCase() === "precision");
+}
+
+function isPrecisionDamageInstance(instance = {}) {
+    return damageTypeIdsFromInstance(instance).some(damageTypeIsPrecision);
+}
+
+function fortificationDamageReport(instances = []) {
+    const entries = [];
+    let total = 0;
+    let criticalAmount = 0;
+    let precisionAmount = 0;
+
+    for (const instance of instances) {
+        const amount = instanceDamageAmount(instance);
+        if (amount <= 0) continue;
+        const critical = isCriticalExtraDamageInstance(instance);
+        const precision = isPrecisionDamageInstance(instance);
+        if (!critical && !precision) continue;
+        entries.push({ instance, amount, critical, precision });
+        total += amount;
+        if (critical) criticalAmount += amount;
+        if (precision) precisionAmount += amount;
+    }
+
+    return { entries, total, criticalAmount, precisionAmount };
+}
+
+function fortificationTierChatLabel(tier = {}) {
+    const label = game.i18n.localize(tier.labelKey ?? "") || String(tier.id ?? "");
+    return String(label).replace(/\s*\(\s*\d+%\s*\)\s*$/, "");
+}
+
+function inlineRollHtml(roll, fallbackTotal = null) {
+    try {
+        const anchor = roll?.toAnchor?.();
+        if (anchor?.outerHTML) return anchor.outerHTML;
+    } catch (_err) {
+        // Fall through to a plain total if inline roll rendering is unavailable.
+    }
+    const total = Math.max(1, Math.floor(Number(fallbackTotal ?? roll?.total) || 0));
+    return escHtml(total);
+}
+
+function postFortificationChatSummary({
+    actor,
+    otherActor,
+    tier,
+    roll = null,
+    rollTotal = null,
+    success = false,
+    negatedDamage = 0
+} = {}) {
+    const chance = Math.max(0, Math.floor(Number(tier?.chance) || 0));
+    const amount = Math.max(0, Math.floor(Number(negatedDamage) || 0));
+    const title = game.i18n.format("NAS.reactive.chatSummary.fortificationTitle", {
+        actor: escHtml(actorChatName(actor))
+    });
+    const subtitle = game.i18n.format("NAS.reactive.chatSummary.fortificationSubtitle", {
+        other: escHtml(actorChatName(otherActor)),
+        tier: escHtml(fortificationTierChatLabel(tier)),
+        chance: String(chance)
+    });
+    const line = chance >= 100
+        ? game.i18n.format("NAS.reactive.chatSummary.lineFortificationImmune", { amount })
+        : success
+            ? game.i18n.format("NAS.reactive.chatSummary.lineFortificationSuccess", {
+                roll: inlineRollHtml(roll, rollTotal),
+                chance: String(chance),
+                amount
+            })
+            : game.i18n.format("NAS.reactive.chatSummary.lineFortificationFailure", {
+                roll: inlineRollHtml(roll, rollTotal),
+                chance: String(chance),
+                amount
+            });
+
+    const content = [
+        `<div class="nas-reactive-chat-summary" data-nas-reactive-summary>`,
+        `<div class="nas-reactive-chat-header"><strong>${title}</strong></div>`,
+        `<div class="nas-reactive-chat-subtitle">${subtitle}</div>`,
+        `<ul class="nas-reactive-chat-lines"><li>${line}</li></ul>`,
+        `</div>`
+    ].join("");
+
+    ChatMessage.create({
+        ...chatMessageStyle("OTHER"),
+        user: game.user?.id,
+        speaker: ChatMessage.getSpeaker({ actor: actor ?? null }),
+        content
+    });
+}
+
+async function applyFortificationForTarget({ actor, instances = [], options = {}, sourceActor = null } = {}) {
+    const currentValue = Math.max(0, Math.floor(Math.abs(Number(options?.value) || sumInstanceValues(instances) || 0)));
+    if (!actor || currentValue <= 0 || options?._nasFortificationApplied || options?.isHealing === true) {
+        return { checked: false, instances, value: currentValue, options };
+    }
+
+    const tier = getActorGrantedFortification(actor);
+    const chance = Math.max(0, Math.floor(Number(tier?.chance) || 0));
+    if (chance <= 0) return { checked: false, instances, value: currentValue, options };
+
+    const report = fortificationDamageReport(instances);
+    if (report.total <= 0) return { checked: false, instances, value: currentValue, options };
+
+    let rollTotal = null;
+    let roll = null;
+    let success = chance >= 100;
+    if (!success) {
+        roll = await new Roll("1d100").evaluate();
+        rollTotal = Math.max(1, Math.floor(Number(roll.total) || 0));
+        success = rollTotal <= chance;
+    }
+
+    postFortificationChatSummary({
+        actor,
+        otherActor: sourceActor,
+        tier,
+        roll,
+        rollTotal,
+        success,
+        negatedDamage: success ? report.total : 0
+    });
+
+    if (!success) {
+        return {
+            checked: true,
+            success: false,
+            changed: false,
+            instances,
+            value: currentValue,
+            options: {
+                ...options,
+                _nasFortificationApplied: true
+            },
+            negatedDamage: 0
+        };
+    }
+
+    const removed = new Set(report.entries.map((entry) => entry.instance));
+    const remainingInstances = instances.filter((instance) => !removed.has(instance));
+    const nextValue = Math.max(0, Math.floor(sumInstanceValues(remainingInstances)));
+    const nextOptions = {
+        ...options,
+        instances: remainingInstances,
+        value: nextValue,
+        _nasFortificationApplied: true,
+        _nasFortificationNegatedDamage: report.total,
+        _nasFortificationNegatedPrecisionDamage: report.precisionAmount
+    };
+    if (report.criticalAmount > 0) {
+        nextOptions.isCritical = false;
+        nextOptions.critMult = 0;
+        nextOptions._nasFortificationNegatedCritical = true;
+    }
+
+    return {
+        checked: true,
+        success: true,
+        changed: true,
+        instances: remainingInstances,
+        value: nextValue,
+        options: nextOptions,
+        negatedDamage: report.total
+    };
 }
 
 function drBypassTypesFromEntry(entry = {}) {
@@ -548,18 +753,19 @@ function buildChatApplyDamageData(message, eventLike) {
     const attack = message?.systemRolls?.attacks?.[attackIndex];
     const isCritical = attackType === "critical";
     const instances = [];
-    const addInstances = (damageRolls) => {
+    const addInstances = (damageRolls, role) => {
         if (!damageRolls) return;
         for (const dmg of damageRolls) {
             const d = new pf1.models.action.DamagePartModel(dmg.damageType.toObject());
             d.value = dmg.total;
+            d._nasDamageRole = role;
             instances.push(d);
         }
     };
 
     if (attack) {
-        addInstances(attack.damage);
-        if (isCritical) addInstances(attack.critDamage);
+        addInstances(attack.damage, "base");
+        if (isCritical) addInstances(attack.critDamage, "critical");
     }
 
     const item = message.itemSource;
@@ -749,59 +955,6 @@ export async function applyNasHeadlessDamage(value = 0, options = {}) {
 
     const promises = [];
     for (const actor of targets) {
-        const dv = actor?.system?.traits?.dv;
-        const vulnInstances = applyManualVulnerability(calcOpts.instances, dv);
-        const vulnTotal = sumInstanceValues(vulnInstances);
-        let vulnValue;
-        if (isHealing) {
-            vulnValue = Math.abs(vulnTotal);
-        } else if (vulnTotal > 0) {
-            vulnValue = Math.abs(vulnTotal);
-        } else {
-            vulnValue = Math.abs(Number(calcOpts.value) || 0);
-        }
-        const targetAsWounds = Boolean(options?.asWounds) && !isWvNoWoundsActor(actor);
-        const targetOpts = {
-            ...calcOpts,
-            targets: [actor],
-            instances: vulnInstances,
-            value: vulnValue,
-            asWounds: targetAsWounds
-        };
-
-        const useRuleWounds = Boolean(targetOpts?.asWounds) && isWoundsVigorActive(actor);
-        const useRuleMagnitude = useRuleWounds && (isHealing || isLifeEnergyContext(targetOpts, vulnInstances));
-        if (useRuleMagnitude) {
-            vulnValue = getRuleWoundMagnitude(targetOpts, vulnInstances, actor, vulnValue);
-            targetOpts.value = isHealing ? -Math.abs(vulnValue) : Math.abs(vulnValue);
-        }
-
-        const app = new pf1.applications.ApplyDamage(targetOpts);
-
-        if (hasRatio) {
-            for (const target of app.targets) {
-                target.ratio = ratio;
-            }
-            if (typeof app._refreshTargets === "function") {
-                app._refreshTargets();
-            }
-        }
-
-        applyLegacyPriorityTypes(app, options, targetOpts.instances, false);
-        applyNasDefenseBypass(app, options, { isHealing: false });
-
-        if (options?.element?.dataset && isHealing && hasRatio && ratio === 0.5) {
-            options.element.dataset.tooltip = "PF1.ApplyHalf";
-        }
-
-        let appliedValue = Math.max(0, app.value);
-        if (app.isHealing) appliedValue = -appliedValue;
-        appliedValue += app.bonus || 0;
-
-        const targetModel = app.targets.get(actor.uuid) ?? app.targets.first();
-        const applyDamageOpts = app._getTargetDamageOptions(targetModel);
-        applyDamageOpts._nasDamageDialog = true;
-
         promises.push((async () => {
             const mirrorImage = await resolveMirrorImageForApplyDamage({
                 sourceActor,
@@ -810,6 +963,79 @@ export async function applyNasHeadlessDamage(value = 0, options = {}) {
             });
             if (mirrorImage?.blockDamage) {
                 return false;
+            }
+
+            let targetInstances = calcOpts.instances;
+            let targetBaseValue = Math.abs(Number(calcOpts.value) || 0);
+            let targetCalcOpts = calcOpts;
+            const fortification = await applyFortificationForTarget({
+                actor,
+                instances: targetInstances,
+                options: calcOpts,
+                sourceActor
+            });
+            if (fortification?.checked) {
+                targetInstances = fortification.instances;
+                targetBaseValue = Math.max(0, Math.floor(Number(fortification.value) || 0));
+                targetCalcOpts = {
+                    ...calcOpts,
+                    ...fortification.options
+                };
+            }
+
+            const dv = actor?.system?.traits?.dv;
+            const vulnInstances = applyManualVulnerability(targetInstances, dv);
+            const vulnTotal = sumInstanceValues(vulnInstances);
+            let vulnValue = vulnTotal > 0
+                ? Math.abs(vulnTotal)
+                : targetBaseValue;
+
+            const targetAsWounds = Boolean(options?.asWounds) && !isWvNoWoundsActor(actor);
+            const targetOpts = {
+                ...targetCalcOpts,
+                targets: [actor],
+                instances: vulnInstances,
+                value: vulnValue,
+                asWounds: targetAsWounds
+            };
+
+            const useRuleWounds = Boolean(targetOpts?.asWounds) && isWoundsVigorActive(actor);
+            const useRuleMagnitude = useRuleWounds && isLifeEnergyContext(targetOpts, vulnInstances);
+            if (useRuleMagnitude) {
+                vulnValue = getRuleWoundMagnitude(targetOpts, vulnInstances, actor, vulnValue);
+                targetOpts.value = Math.abs(vulnValue);
+            }
+
+            if (Math.abs(Number(targetOpts.value) || 0) <= 0) {
+                return Boolean(fortification?.success);
+            }
+
+            const app = new pf1.applications.ApplyDamage(targetOpts);
+
+            if (hasRatio) {
+                for (const target of app.targets) {
+                    target.ratio = ratio;
+                }
+                if (typeof app._refreshTargets === "function") {
+                    app._refreshTargets();
+                }
+            }
+
+            applyLegacyPriorityTypes(app, targetOpts, targetOpts.instances, false);
+            applyNasDefenseBypass(app, targetOpts, { isHealing: false });
+
+            // Mirror ApplyDamage._onApply value construction
+            let appliedValue = Math.max(0, app.value);
+            if (app.isHealing) appliedValue = -appliedValue;
+            appliedValue += app.bonus || 0;
+
+            const targetModel = app.targets.get(actor.uuid) ?? app.targets.first();
+            const applyDamageOpts = app._getTargetDamageOptions(targetModel);
+            applyDamageOpts._nasDamageDialog = true;
+            if (targetOpts?._nasFortificationApplied) {
+                applyDamageOpts._nasFortificationApplied = true;
+                applyDamageOpts.isCritical = targetOpts.isCritical === true;
+                applyDamageOpts.critMult = targetOpts.critMult ?? 0;
             }
 
             const preVigor = Number(actor?.system?.attributes?.vigor?.value ?? 0) || 0;
@@ -827,7 +1053,7 @@ export async function applyNasHeadlessDamage(value = 0, options = {}) {
                 actor,
                 value: rawFinalDamage,
                 applyDamageOptions: originalApplyDamageOpts,
-                sourceOptions: options
+                sourceOptions: targetOpts
             });
             applyDamageOpts._nasAbsorptionApplied = true;
             if (absorption?.changed) {
@@ -845,10 +1071,10 @@ export async function applyNasHeadlessDamage(value = 0, options = {}) {
                 await showAbsorptionCombatText(actor, absorption.damageReduction);
             }
 
-            recordDamageCombatTextContext(actor, options);
+            recordDamageCombatTextContext(actor, targetOpts);
             let result = appliedValue > 0 ? await actor.applyDamage(appliedValue, applyDamageOpts) : false;
             if (convertedNonlethal > 0) {
-                recordDamageCombatTextContext(actor, options);
+                recordDamageCombatTextContext(actor, targetOpts);
                 const nonlethalResult = await actor.applyDamage(convertedNonlethal, {
                     ...applyDamageOpts,
                     ratio: 1,
@@ -874,7 +1100,7 @@ export async function applyNasHeadlessDamage(value = 0, options = {}) {
                 const convertedApplied = Math.max(0, amount - convertedResistance.reduction);
                 convertedTypedApplied += convertedApplied;
                 if (convertedApplied <= 0) continue;
-                recordDamageCombatTextContext(actor, options);
+                recordDamageCombatTextContext(actor, targetOpts);
                 const convertedResult = await actor.applyDamage(amount, {
                     ...applyDamageOpts,
                     ratio: 1,
@@ -889,22 +1115,23 @@ export async function applyNasHeadlessDamage(value = 0, options = {}) {
             }
 
             const critBonus = resolveCriticalWoundBonus({
-                options,
+                options: targetOpts,
                 actor,
                 applyDamageOpts,
                 appliedValue,
                 preVigor,
                 preTemp,
-                isCritical: Boolean(options?.isCritical)
+                isCritical: Boolean(targetOpts?.isCritical)
             });
             if (result && critBonus > 0) {
-                recordDamageCombatTextContext(actor, options);
+                recordDamageCombatTextContext(actor, targetOpts);
                 await actor.applyDamage(critBonus, {
                     asWounds: true,
                     _nasDamageDialog: true
                 });
             }
 
+            // Mirror ActorPF.applyDamage ratio/reduction math to get the final applied damage value.
             let finalDamage = Math.floor(Math.max(0, appliedValue) * (applyDamageOpts?.ratio ?? 1));
             finalDamage -= Math.min(finalDamage, applyDamageOpts?.reduction ?? 0);
             finalDamage = Math.floor(finalDamage) + (absorptionChanged ? convertedNonlethal + convertedTypedApplied : 0);
@@ -914,12 +1141,14 @@ export async function applyNasHeadlessDamage(value = 0, options = {}) {
                     sourceActor,
                     sourceItem,
                     targetActor: actor,
-                    options,
+                    options: targetOpts,
                     finalDamage,
                     targetPreHp
                 });
             }
 
+            // Massive Damage optional rule (PF1 CRB p.189)
+            // Trigger only if damage was actually applied successfully.
             if (result && game.settings.get(MODULE.ID, "massiveDamage")) {
                 const token =
                     actor?.token?.object ??
@@ -995,6 +1224,34 @@ export function registerSystemApplyDamage() {
             let nasWrappedCallCount = 0;
             const isHealing = (value < 0) || options?.isHealing === true;
             const applyNasTempHp = async (damageValue, damageOptions = {}) => applyDamageAfterNasTemporaryHp(wrapped, this, damageValue, damageOptions);
+            if (!isHealing && !options?._nasFortificationApplied) {
+                const rawValue = Math.max(0, Math.floor(Math.abs(Number(value) || 0)));
+                if (rawValue > 0) {
+                    const fortificationInstances = buildNumericInstances(rawValue, { ...options, value: rawValue });
+                    const fortification = await applyFortificationForTarget({
+                        actor: this,
+                        instances: fortificationInstances,
+                        options: {
+                            ...options,
+                            value: rawValue
+                        },
+                        sourceActor: resolveSourceActorFromOptions(options)
+                    });
+                    if (fortification?.checked) {
+                        options = {
+                            ...options,
+                            ...fortification.options,
+                            instances: fortification.instances,
+                            value: fortification.value
+                        };
+                        value = Math.max(0, Math.floor(Number(fortification.value) || 0));
+                        if (fortification.success && value <= 0) {
+                            await callApplyDamageNoop(wrapped, this, options);
+                            return true;
+                        }
+                    }
+                }
+            }
             if (
                 actorHasAbsorptionData(this)
                 && !options?._nasAbsorptionApplied

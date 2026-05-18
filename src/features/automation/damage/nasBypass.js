@@ -176,6 +176,10 @@ function shouldBypassEntry(entry, bypassTypes) {
     return false;
 }
 
+function energyResistanceEntries(target) {
+    return Array.isArray(target?.eres) ? target.eres : target?.er ?? [];
+}
+
 function shouldBypassImmunity(entry, bypassTypes) {
     if (!bypassTypes?.length) return false;
     if (bypassTypes.includes("all")) return true;
@@ -203,7 +207,7 @@ export function applyNasDefenseBypass(app, options, { isHealing }) {
         }
 
         if (nas.erBypassTypes.length) {
-            for (const entry of target.er ?? []) {
+            for (const entry of energyResistanceEntries(target)) {
                 if (shouldBypassEntry(entry, nas.erBypassTypes)) {
                     entry.active = false;
                     entry.disabled = true;

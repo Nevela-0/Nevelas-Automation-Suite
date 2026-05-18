@@ -62,6 +62,14 @@ function coerceNumberOrNull(value) {
   return null;
 }
 
+function firstNumberOrNull(...values) {
+  for (const value of values) {
+    const number = coerceNumberOrNull(value);
+    if (number != null) return number;
+  }
+  return null;
+}
+
 function getActionIdCandidates(action) {
   return [
     action?.action?.id,
@@ -100,15 +108,44 @@ function getActionBuffSaveOverride(action) {
 }
 
 function resolveActionSaveData(action) {
-  const saveData = action?.shared?.nasSpellContext?.save ?? action?.shared?.save ?? action?.action?.save ?? {};
-  const type = normalizeSaveType(saveData.type ?? action?.shared?.saveType ?? action?.action?.saveType);
-  const dc = coerceNumberOrNull(
-    saveData.dc
-    ?? saveData.evaluated?.total
-    ?? action?.shared?.saveDC
-    ?? action?.shared?.templateData?.system?.save?.dc
-    ?? action?.shared?.chatData?.system?.save?.dc
-  );
+  const nasSpellSave = action?.shared?.nasSpellContext?.save ?? {};
+  const sharedSave = action?.shared?.save ?? {};
+  const actionSave = action?.action?.save ?? {};
+  const typeCandidates = [
+    { source: "shared.nasSpellContext.save.type", value: nasSpellSave.type },
+    { source: "shared.save.type", value: sharedSave.type },
+    { source: "action.save.type", value: actionSave.type },
+    { source: "shared.saveType", value: action?.shared?.saveType },
+    { source: "action.saveType", value: action?.action?.saveType }
+  ];
+  const type = normalizeSaveType(typeCandidates.find((candidate) => normalizeSaveType(candidate.value))?.value);
+  let liveActionDc = null;
+  try {
+    liveActionDc = typeof action?.action?.getDC === "function" ? action.action.getDC(action.shared?.rollData ?? {}) : null;
+  } catch (err) {
+    liveActionDc = null;
+  }
+  const overrideSave = action?.shared?.chatData?.flags?.[MODULE.ID]?.actionOverrides?.save
+    ?? action?.shared?.templateData?.flags?.[MODULE.ID]?.actionOverrides?.save
+    ?? {};
+  const dcCandidates = [
+    { source: "shared.nasSpellContext.save.dc", value: nasSpellSave.dc },
+    { source: "shared.nasSpellContext.save.baseDc", value: nasSpellSave.baseDc },
+    { source: "shared.saveDC", value: action?.shared?.saveDC },
+    { source: "actionOverrides.save.dc", value: overrideSave.dc },
+    { source: "shared.templateData.save.dc", value: action?.shared?.templateData?.save?.dc },
+    { source: "shared.templateData.system.save.dc", value: action?.shared?.templateData?.system?.save?.dc },
+    { source: "shared.templateData.item.system.save.dc", value: action?.shared?.templateData?.item?.system?.save?.dc },
+    { source: "shared.chatData.system.save.dc", value: action?.shared?.chatData?.system?.save?.dc },
+    { source: "shared.save.dc", value: sharedSave.dc },
+    { source: "shared.save.baseDc", value: sharedSave.baseDc },
+    { source: "action.save.dc", value: actionSave.dc },
+    { source: "action.save.baseDc", value: actionSave.baseDc },
+    { source: "action.getDC(shared.rollData)", value: liveActionDc },
+    { source: "shared.nasSpellContext.save.evaluated.total", value: nasSpellSave.evaluated?.total },
+    { source: "shared.save.evaluated.total", value: sharedSave.evaluated?.total }
+  ];
+  const dc = firstNumberOrNull(...dcCandidates.map((candidate) => candidate.value));
   return { type, dc };
 }
 
@@ -165,15 +202,254 @@ function serializeDuration(duration) {
   };
 }
 
-function serializePendingTarget(target, duration) {
+function serializePendingTarget(target, duration, buff = null) {
   const doc = tokenDocumentFromTarget(target);
   const actor = target?.actor ?? doc?.actor ?? null;
-  return {
+  const entry = {
     tokenUuid: targetTokenUuid(target),
     tokenId: targetTokenId(target),
     actorUuid: actor?.uuid ?? "",
     duration: serializeDuration(duration)
   };
+  if (buff) entry.buff = serializeBuffReference(buff);
+  return entry;
+}
+
+function targetAppliedKey(target) {
+  return targetTokenUuid(target) || targetTokenId(target) || target?.actor?.uuid || target?.actor?.id || "";
+}
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;"
+  }[char]));
+}
+
+function targetDispositionValue(target) {
+  return tokenDocumentFromTarget(target)?.disposition ?? target?.disposition ?? null;
+}
+
+function targetIsHiddenOrUnavailable(target) {
+  const doc = tokenDocumentFromTarget(target);
+  return doc?.hidden === true || targetDispositionValue(target) === CONST.TOKEN_DISPOSITIONS.SECRET;
+}
+
+function targetIsInvisibleToCurrentUser(target, casterToken) {
+  if (game.user?.isGM === true) return false;
+  const token = target?.object ?? target;
+  const doc = tokenDocumentFromTarget(target);
+  const actor = token?.actor ?? doc?.actor ?? null;
+  const casterActor = casterToken?.actor ?? tokenDocumentFromTarget(casterToken)?.actor ?? null;
+  const casterHasSeeInvisibility = casterActor?.system?.traits?.senses?.si === true;
+  if (targetIsHiddenOrUnavailable(target)) return true;
+  if (actor?.statuses?.has?.("invisible") && !casterHasSeeInvisibility) return true;
+  const casterObject = casterToken?.object ?? casterToken;
+  const targetObject = token?.center ? token : doc?.object;
+  if (casterObject && targetObject && !tokenCanSeeToken(casterObject, targetObject)) return true;
+  return false;
+}
+
+function targetIsSecretForAutomation(target, casterToken) {
+  return targetIsHiddenOrUnavailable(target) || targetIsInvisibleToCurrentUser(target, casterToken);
+}
+
+function targetIsAllyToCaster(target, casterToken) {
+  const casterActorUuid = casterToken?.actor?.uuid ?? "";
+  const targetActorUuid = target?.actor?.uuid ?? tokenDocumentFromTarget(target)?.actor?.uuid ?? "";
+  if (casterActorUuid && targetActorUuid && casterActorUuid === targetActorUuid) return true;
+  const casterDisposition = targetDispositionValue(casterToken);
+  const disposition = targetDispositionValue(target);
+  return casterDisposition != null && disposition != null && casterDisposition === disposition;
+}
+
+function targetFilterGroups(target, casterToken, extraGroups = []) {
+  const groups = new Set(["all", ...extraGroups.filter(Boolean)]);
+  const disposition = targetDispositionValue(target);
+  if (targetIsHiddenOrUnavailable(target)) groups.add("hidden");
+  if (disposition === CONST.TOKEN_DISPOSITIONS.NEUTRAL) groups.add("neutral");
+  else if (targetIsAllyToCaster(target, casterToken)) groups.add("allies");
+  else groups.add("enemies");
+  return [...groups];
+}
+
+function targetDispositionLabel(target, casterToken) {
+  if (targetIsHiddenOrUnavailable(target)) return game.i18n.localize("NAS.buffs.TargetFilterHidden");
+  const disposition = targetDispositionValue(target);
+  if (disposition === CONST.TOKEN_DISPOSITIONS.NEUTRAL) return game.i18n.localize("NAS.buffs.TargetFilterNeutral");
+  return targetIsAllyToCaster(target, casterToken)
+    ? game.i18n.localize("NAS.buffs.TargetFilterAllies")
+    : game.i18n.localize("NAS.buffs.TargetFilterEnemies");
+}
+
+function targetEntryIsRendered(entry) {
+  return entry?.rendered !== false;
+}
+
+function availableTargetFilters(targetEntries) {
+  const visibleEntries = targetEntries.filter(targetEntryIsRendered);
+  const filterDefs = [
+    ["all", "NAS.buffs.TargetFilterAll"],
+    ["allies", "NAS.buffs.TargetFilterAllies"],
+    ["enemies", "NAS.buffs.TargetFilterEnemies"],
+    ["neutral", "NAS.buffs.TargetFilterNeutral"],
+    ...(game.user?.isGM ? [["hidden", "NAS.buffs.TargetFilterHidden"]] : []),
+    ["eligible", "NAS.buffs.TargetFilterEligible"],
+    ["needs", "NAS.buffs.TargetFilterNeedsSave"],
+    ["failed", "NAS.buffs.TargetFilterFailed"],
+    ["successful", "NAS.buffs.TargetFilterSuccessful"],
+    ["bypassed", "NAS.buffs.TargetFilterBypassed"]
+  ];
+  return filterDefs
+    .filter(([filter]) => filter === "all" || visibleEntries.some((entry) => entry.groups.includes(filter)))
+    .map(([filter, labelKey]) => ({ filter, label: game.i18n.localize(labelKey) }));
+}
+
+function targetSelectionControlsHtml(targetEntries, { targetBulkMoreOpen = false } = {}) {
+  const filters = availableTargetFilters(targetEntries);
+  const controlButtonStyle = "flex:0 1 auto; width:auto; min-width:86px; min-height:30px; padding:4px 10px; white-space:nowrap; line-height:1.2; display:inline-flex; align-items:center; justify-content:center; border:1px solid var(--color-border-light-primary, #999); border-radius:3px; background:rgba(255,255,255,0.35); color:inherit; text-decoration:none; cursor:pointer;";
+  const visibleEntries = targetEntries.filter(targetEntryIsRendered);
+  const hasAllies = visibleEntries.some((entry) => entry.groups.includes("allies"));
+  const hasNeutral = visibleEntries.some((entry) => entry.groups.includes("neutral"));
+  const hasEnemies = visibleEntries.some((entry) => entry.groups.includes("enemies"));
+  const hasSuccessfulSaves = visibleEntries.some((entry) => entry.groups.includes("successful"));
+  const hasFailedSaves = visibleEntries.some((entry) => entry.groups.includes("failed"));
+  const filterButtons = filters.map(({ filter, label }, index) => `
+    <a href="#" role="button" data-nas-target-filter="${filter}" class="nas-dialog-control ${index === 0 ? "active" : ""}" style="${controlButtonStyle}">${escapeHtml(label)}</a>
+  `).join("");
+  const groupSelectButtons = `
+    ${hasAllies ? `<a href="#" role="button" class="nas-dialog-control" data-nas-target-bulk="selectAllies" style="${controlButtonStyle}">${escapeHtml(game.i18n.localize("NAS.buffs.TargetSelectAllies"))}</a>` : ""}
+    ${hasNeutral ? `<a href="#" role="button" class="nas-dialog-control" data-nas-target-bulk="selectNeutral" style="${controlButtonStyle}">${escapeHtml(game.i18n.localize("NAS.buffs.TargetSelectNeutral"))}</a>` : ""}
+    ${hasEnemies ? `<a href="#" role="button" class="nas-dialog-control" data-nas-target-bulk="selectEnemies" style="${controlButtonStyle}">${escapeHtml(game.i18n.localize("NAS.buffs.TargetSelectEnemies"))}</a>` : ""}
+  `;
+  const selectSaveButtons = `
+    ${hasSuccessfulSaves ? `<a href="#" role="button" class="nas-dialog-control" data-nas-target-bulk="selectSuccessful" style="${controlButtonStyle}">${escapeHtml(game.i18n.localize("NAS.buffs.TargetSelectSaved"))}</a>` : ""}
+    ${hasFailedSaves ? `<a href="#" role="button" class="nas-dialog-control" data-nas-target-bulk="selectFailed" style="${controlButtonStyle}">${escapeHtml(game.i18n.localize("NAS.buffs.TargetSelectFailed"))}</a>` : ""}
+  `;
+  const deselectSaveButtons = `
+    ${hasSuccessfulSaves ? `<a href="#" role="button" class="nas-dialog-control" data-nas-target-bulk="deselectSuccessful" style="${controlButtonStyle}">${escapeHtml(game.i18n.localize("NAS.buffs.TargetDeselectSaved"))}</a>` : ""}
+    ${hasFailedSaves ? `<a href="#" role="button" class="nas-dialog-control" data-nas-target-bulk="deselectFailed" style="${controlButtonStyle}">${escapeHtml(game.i18n.localize("NAS.buffs.TargetDeselectFailed"))}</a>` : ""}
+  `;
+  const groupDeselectButtons = `
+    ${hasAllies ? `<a href="#" role="button" class="nas-dialog-control" data-nas-target-bulk="deselectAllies" style="${controlButtonStyle}">${escapeHtml(game.i18n.localize("NAS.buffs.TargetDeselectAllies"))}</a>` : ""}
+    ${hasNeutral ? `<a href="#" role="button" class="nas-dialog-control" data-nas-target-bulk="deselectNeutral" style="${controlButtonStyle}">${escapeHtml(game.i18n.localize("NAS.buffs.TargetDeselectNeutral"))}</a>` : ""}
+    ${hasEnemies ? `<a href="#" role="button" class="nas-dialog-control" data-nas-target-bulk="deselectEnemies" style="${controlButtonStyle}">${escapeHtml(game.i18n.localize("NAS.buffs.TargetDeselectEnemies"))}</a>` : ""}
+  `;
+  const moreBulkButtons = `${groupSelectButtons}${groupDeselectButtons}`.trim();
+  return `
+    <div class="nas-target-selection-controls" style="display:flex; flex-direction:column; gap:8px; margin:8px 0;">
+      <div class="nas-target-filters" style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;">${filterButtons}</div>
+      <div class="nas-target-bulk" style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
+        <strong style="min-width:56px;">${escapeHtml(game.i18n.localize("NAS.buffs.TargetBulkSelectLabel"))}</strong>
+        <a href="#" role="button" class="nas-dialog-control" data-nas-target-bulk="select" style="${controlButtonStyle}">${escapeHtml(game.i18n.localize("NAS.buffs.TargetSelectVisible"))}</a>
+        ${selectSaveButtons}
+      </div>
+      <div class="nas-target-bulk" style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
+        <strong style="min-width:56px;">${escapeHtml(game.i18n.localize("NAS.buffs.TargetBulkDeselectLabel"))}</strong>
+        <a href="#" role="button" class="nas-dialog-control" data-nas-target-bulk="deselect" style="${controlButtonStyle}">${escapeHtml(game.i18n.localize("NAS.buffs.TargetDeselectVisible"))}</a>
+        ${deselectSaveButtons}
+      </div>
+      ${moreBulkButtons ? `<details class="nas-target-bulk-more" ${targetBulkMoreOpen ? "open" : ""}><summary style="cursor:pointer; width:max-content;">${escapeHtml(game.i18n.localize("NAS.buffs.TargetBulkMore"))}</summary><div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:6px;">${moreBulkButtons}</div></details>` : ""}
+    </div>
+  `;
+}
+
+function wireTargetSelectionControls(html, dialog = null) {
+  const $html = typeof html.find === "function" ? html : $(html);
+  const applyFilter = (filter) => {
+    $html.find("[data-nas-target-filter]").removeClass("active");
+    $html.find("[data-nas-target-filter]").css({
+      "box-shadow": "",
+      "border-color": "var(--color-border-light-primary, #999)"
+    });
+    $html.find(`[data-nas-target-filter="${filter}"]`).addClass("active").css({
+      "box-shadow": "0 0 4px red",
+      "border-color": "red"
+    });
+    $html.find(".nas-target-option").each((_index, el) => {
+      const groups = String(el.dataset.nasTargetGroups ?? "").split(/\s+/);
+      const visible = filter === "all" || groups.includes(filter);
+      el.style.display = visible ? "flex" : "none";
+    });
+    dialog?.setPosition?.({ height: "auto" });
+  };
+  $html.find("[data-nas-target-filter]").on("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    applyFilter(event.currentTarget.dataset.nasTargetFilter);
+  });
+  $html.find("[data-nas-target-bulk]").on("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const action = event.currentTarget.dataset.nasTargetBulk;
+    const selectGroups = {
+      selectAllies: "allies",
+      selectNeutral: "neutral",
+      selectEnemies: "enemies",
+      selectSuccessful: "successful",
+      selectFailed: "failed"
+    };
+    const deselectGroups = {
+      deselectAllies: "allies",
+      deselectNeutral: "neutral",
+      deselectEnemies: "enemies",
+      deselectSuccessful: "successful",
+      deselectFailed: "failed"
+    };
+    $html.find(".nas-target-option").each((_index, el) => {
+      const visible = el.style.display !== "none";
+      const checkbox = el.querySelector("input[type='checkbox']");
+      if (!checkbox || checkbox.disabled) return;
+      const groups = String(el.dataset.nasTargetGroups ?? "").split(/\s+/);
+      if (action === "select" && visible) checkbox.checked = true;
+      else if (action === "deselect" && visible) checkbox.checked = false;
+      else if (selectGroups[action] && groups.includes(selectGroups[action])) checkbox.checked = true;
+      else if (deselectGroups[action] && groups.includes(deselectGroups[action])) checkbox.checked = false;
+    });
+  });
+}
+
+function nasDialogControlStyle() {
+  return "flex:0 1 auto; width:auto; min-width:86px; min-height:30px; padding:4px 10px; white-space:nowrap; line-height:1.2; display:inline-flex; align-items:center; justify-content:center; border:1px solid var(--color-border-light-primary, #999); border-radius:3px; background:rgba(255,255,255,0.35); color:inherit; text-decoration:none; cursor:pointer;";
+}
+
+function parseRollJson(value) {
+  if (typeof value !== "string" || value.trim().length === 0) return null;
+  try {
+    if (typeof globalThis.Roll?.fromJSON === "function") {
+      const roll = globalThis.Roll.fromJSON(value);
+      if (roll) return roll;
+    }
+  } catch (_err) {
+  }
+  try {
+    return JSON.parse(value);
+  } catch (_err) {
+    return null;
+  }
+}
+
+function extractHtmlTotal(content) {
+  if (typeof DOMParser !== "function" || typeof content !== "string" || content.length === 0) return null;
+  try {
+    const doc = new DOMParser().parseFromString(content, "text/html");
+    for (const selector of [".dice-total", ".total", ".value"]) {
+      for (const el of doc.querySelectorAll(selector)) {
+        const total = coerceNumberOrNull(el.textContent);
+        if (total != null) return total;
+      }
+    }
+  } catch (_err) {
+    return null;
+  }
+  return null;
+}
+
+function saveResultForTargetRef(targetRef, saveType) {
+  return coerceNumberOrNull(targetRef?.saveResults?.[saveType]);
 }
 
 function shouldQueueBuffApplication(action, targets, buffSaveGate) {
@@ -197,10 +473,28 @@ function queuePendingBuffApplication(action, buff, targets, duration, casterLeve
 
   action.shared ??= {};
   action.shared.nasPendingBuffAutomation ??= [];
+  const targetDurations = options.targetDurations instanceof Map ? options.targetDurations : null;
+  const targetBuffs = options.targetBuffs instanceof Map ? options.targetBuffs : null;
+  const targetSaveResults = options.targetSaveResults instanceof Map ? options.targetSaveResults : null;
+  const saveResultTargets = Array.isArray(options.saveResultTargets)
+    ? options.saveResultTargets.map((entry) => {
+      const target = entry?.target ?? entry;
+      const saveResults = entry?.saveResults ?? (target ? targetSaveResults?.get(targetAppliedKey(target)) : null);
+      const ref = serializePendingTarget(target, null, null);
+      if (saveResults && typeof saveResults === "object") ref.saveResults = foundry.utils.deepClone(saveResults);
+      return ref;
+    }).filter((entry) => (entry.tokenUuid || entry.tokenId) && entry.saveResults)
+    : [];
   const plan = {
     id: createNasId(),
     buff: serializeBuffReference(buff),
-    targets: targets.map((target) => serializePendingTarget(target, duration)).filter((entry) => entry.tokenUuid || entry.tokenId),
+    targets: targets.map((target) => {
+      const key = targetAppliedKey(target);
+      const entry = serializePendingTarget(target, targetDurations?.get(key) ?? duration, targetBuffs?.get(key) ?? null);
+      const saveResults = targetSaveResults?.get(key);
+      if (saveResults && typeof saveResults === "object") entry.saveResults = foundry.utils.deepClone(saveResults);
+      return entry;
+    }).filter((entry) => entry.tokenUuid || entry.tokenId),
     caster: {
       tokenUuid: targetTokenUuid(action?.token),
       tokenId: targetTokenId(action?.token),
@@ -219,6 +513,11 @@ function queuePendingBuffApplication(action, buff, targets, duration, casterLeve
       silent: options.silent === true,
       [KNOWN_BUFF_AUTOMATION_OPTION]: serializeKnownBuffAutomation(options)
     },
+    manualSelection: options.manualSelection === true,
+    resolvedManualSelection: options.resolvedManualSelection === true,
+    publicSaveResultsOnly: options.publicSaveResultsOnly === true,
+    saveResultTargets,
+    skippedTargetUuids: [],
     appliedTargetUuids: []
   };
   action.shared.nasPendingBuffAutomation.push(plan);
@@ -243,7 +542,6 @@ export function attachPendingBuffAutomationToChatData(actionUse) {
   }
 
 export async function handleBuffAutomation(action) {
-  
   if (action.item.type === "feat" && action.item.subType === "classFeat") {
     const isBuff = action.item.hasItemBooleanFlag('buff');
     if (!isBuff) return;
@@ -267,7 +565,7 @@ export async function handleBuffAutomation(action) {
       }
     }
   }
-
+  
   const stripModifierLiteral = (name, rawModifier) => {
     const mod = (rawModifier ?? "").trim();
     if (!mod) return { value: name, matched: false };
@@ -283,7 +581,7 @@ export async function handleBuffAutomation(action) {
     }
     return { value: name, matched: false };
   };
-  
+
   const modifierNames = game.settings.get(MODULE.ID, 'modifierNames') || {};
   const communalString = modifierNames.communal || 'Communal';
   let isCommunal = false;
@@ -312,7 +610,7 @@ export async function handleBuffAutomation(action) {
   const targetValue = action.action?.target?.value;
   
   const isSelfTargeting = rangeUnits === "personal" || targetValue === "you";
-  
+
   const casterLevel = getRuntimeCasterLevel(action);
   const buffSaveGate = resolveBuffSaveGate(action);
 
@@ -402,7 +700,9 @@ export async function handleBuffAutomation(action) {
         communalTotalDuration,
         communalDurationUnit,
         communalPromptForManual,
-        isAreaOfEffect
+        isAreaOfEffect,
+        buffSaveGate,
+        deferManualTargetSelection: true
       });
       if (targetContext.rejected) {
         notifyBuffTargetingRejection(action, targetContext.reason);
@@ -415,7 +715,8 @@ export async function handleBuffAutomation(action) {
       const variantPlan = await promptBuffSelection(categorizedMatches.variants, action, {
         mode: 'variant',
         targets: targetContext.filteredTargets,
-        perTargetDurations: targetContext.perTargetDurations
+        perTargetDurations: targetContext.perTargetDurations,
+        buffSaveGate
       });
       if (!variantPlan) {
         action.shared.reject = true;
@@ -470,7 +771,7 @@ export async function handleBuffAutomation(action) {
         action.shared.reject = true;
         return;
       }
-
+  
       const targetContext = await gatherTargetsForApplication({
         action,
         isSelfTargeting,
@@ -481,7 +782,8 @@ export async function handleBuffAutomation(action) {
         communalTotalDuration,
         communalDurationUnit,
         communalPromptForManual,
-        isAreaOfEffect
+        isAreaOfEffect,
+        buffSaveGate
       });
       if (targetContext.rejected) {
         notifyBuffTargetingRejection(action, targetContext.reason);
@@ -492,20 +794,35 @@ export async function handleBuffAutomation(action) {
       applyNaniteBloodlineArcanaPerTargetDurationAdjustments(action, targetContext, durationUnits);
 
       const { filteredTargets, perTargetDurations } = targetContext;
+      const manualResultOptions = manualSelectionResultOptions(filteredTargets);
 
       if (perTargetDurations && perTargetDurations.length > 0) {
+        if (targetContext.manualSelection === true && buffSaveGate?.deferred) {
+          const targetDurations = new Map(perTargetDurations.map((entry) => [
+            targetAppliedKey(entry.target),
+            { units: entry.duration.units, value: String(entry.duration.value) }
+          ]));
+          await applyOrQueueBuffToTargets(action, selectedBuff, perTargetDurations.map((entry) => entry.target), null, casterLevel, {
+            [KNOWN_BUFF_AUTOMATION_OPTION]: knownBuffAutomation,
+            buffSaveGate,
+            manualSelection: true,
+            targetDurations,
+            ...manualResultOptions
+          });
+          return;
+        }
         for (const entry of perTargetDurations) {
           await applyOrQueueBuffToTargets(action, selectedBuff, [entry.target], {
             units: entry.duration.units,
             value: String(entry.duration.value)
-          }, casterLevel, { [KNOWN_BUFF_AUTOMATION_OPTION]: knownBuffAutomation, buffSaveGate });
+          }, casterLevel, { [KNOWN_BUFF_AUTOMATION_OPTION]: knownBuffAutomation, buffSaveGate, manualSelection: targetContext.manualSelection === true, ...manualResultOptions });
         }
         return;
       } else {
         await applyOrQueueBuffToTargets(action, selectedBuff, filteredTargets, {
           units: durationUnits,
           value: String(durationValue)
-        }, casterLevel, { [KNOWN_BUFF_AUTOMATION_OPTION]: knownBuffAutomation, buffSaveGate });
+        }, casterLevel, { [KNOWN_BUFF_AUTOMATION_OPTION]: knownBuffAutomation, buffSaveGate, manualSelection: targetContext.manualSelection === true, ...manualResultOptions });
       }
     }
   }
@@ -758,11 +1075,14 @@ async function gatherTargetsForApplication({
   communalTotalDuration,
   communalDurationUnit,
   communalPromptForManual,
-  isAreaOfEffect
+  isAreaOfEffect,
+  buffSaveGate = null,
+  deferManualTargetSelection = false
 }) {
   let filteredTargets = action.shared.targets || [];
   const filteringMode = game.settings.get(MODULE.ID, 'buffTargetFiltering');
   const personalTargeting = game.settings.get(MODULE.ID, 'personalTargeting');
+  const shouldDeferManualTargetSelection = filteringMode === "manualSelection" && deferManualTargetSelection === true;
   let perTargetDurations = null;
   let rejectionReason = null;
 
@@ -827,8 +1147,8 @@ async function gatherTargetsForApplication({
           }
           if (isCommunal) {
             filteredTargets = await promptTargetSelection(filteredTargets, action, { communal: isCommunal });
-          } else {
-            filteredTargets = await promptTargetSelection(filteredTargets, action);
+          } else if (!shouldDeferManualTargetSelection) {
+            filteredTargets = await promptTargetSelection(filteredTargets, action, { buffSaveGate });
           }
         }
       } else {
@@ -844,8 +1164,8 @@ async function gatherTargetsForApplication({
             action
           });
           if (!perTargetDurations) return { rejected: true, reason: "communalDurationCancelled" };
-        } else {
-          filteredTargets = await promptTargetSelection(filteredTargets, action);
+        } else if (!shouldDeferManualTargetSelection) {
+          filteredTargets = await promptTargetSelection(filteredTargets, action, { buffSaveGate });
           if ((!filteredTargets || filteredTargets.length === 0) && game.settings.get(MODULE.ID, 'buffAutomationMode') === "strict") {
             return { rejected: true, reason: "manualSelectionCancelled" };
           }
@@ -891,12 +1211,12 @@ async function gatherTargetsForApplication({
   });
   if (slotInfo && slotInfo.rejected) return { rejected: true, reason: "spellSlots" };
 
-  return { filteredTargets, perTargetDurations, slotInfo, rejected: false };
+  return { filteredTargets, perTargetDurations, slotInfo, rejected: false, manualSelection: filteringMode === "manualSelection" };
 }
 
 function notifyBuffTargetingRejection(action, reason) {
   if (!action) return;
-  if (reason === "spellSlots") return; // Already handled with a dedicated warning in checkAndConsumeSpellSlots.
+  if (reason === "spellSlots") return; 
 
   const map = {
     noTargetsStrict: "NAS.buffs.TargetingRejectedNoTargetsStrict",
@@ -943,73 +1263,434 @@ export async function promptBuffSelection(buffs, action, options = {}) {
       `<option value="${idx}" ${idx === selectedIdx ? 'selected' : ''}>${lbl}</option>`
     ).join('');
 
-    const rememberedAlliesToggle = (remembered.applyAllies !== undefined ? remembered.applyAllies : !!remembered.allies);
-    const rememberedFoesToggle = (remembered.applyFoes !== undefined ? remembered.applyFoes : !!remembered.foes);
     const allyDefaultIdx = findVariantIndex(remembered.allies) ?? 0;
     const foeDefaultIdx = findVariantIndex(remembered.foes) ?? 0;
 
-    const targetCards = targets.map((target, index) => {
-      const tokenName = target.name || target.actor?.name || `Target ${index + 1}`;
-      const tokenImg = target.document?.texture?.src || target.texture?.src || "";
-      const disposition = target.document?.disposition ?? target?.disposition;
-      const isSameDisposition = disposition === action.token?.disposition;
+    const latestBuffSaveGate = resolveBuffSaveGate(action);
+    const buffSaveGate = options.buffSaveGate
+      ? {
+        ...latestBuffSaveGate,
+        ...options.buffSaveGate,
+        dc: options.buffSaveGate.dc ?? latestBuffSaveGate.dc,
+        saveType: options.buffSaveGate.saveType ?? latestBuffSaveGate.saveType,
+        mode: options.buffSaveGate.mode ?? latestBuffSaveGate.mode,
+        alliesBypass: options.buffSaveGate.alliesBypass ?? latestBuffSaveGate.alliesBypass,
+        deferred: options.buffSaveGate.deferred ?? latestBuffSaveGate.deferred
+      }
+      : latestBuffSaveGate;
+    const saveType = normalizeSaveType(buffSaveGate?.saveType);
+    const saveMode = normalizeBuffSaveHandlingMode(buffSaveGate?.mode);
+    const saveDc = coerceNumberOrNull(buffSaveGate?.dc);
+    const isSaveGatedVariant = buffSaveGate?.deferred === true && REAL_SAVE_TYPES.has(saveType) && saveMode !== "ignore";
+    const controlStyle = nasDialogControlStyle();
+    const secretColor = "#7b2cff";
+    const neutralColor = "#b58900";
+
+    const stateCanBeEnabled = (state) => !isSaveGatedVariant || state.bypassed || state.saveTotal != null;
+    const defaultEnabledForSaveState = (state) => {
+      if (!isSaveGatedVariant) return true;
+      if (state.bypassed) return true;
+      if (state.saveSucceeded == null) return false;
+      return saveMode === "failed" ? state.saveSucceeded === false : state.saveSucceeded === true;
+    };
+    const stateGroups = (state) => {
+      const groups = new Set(targetFilterGroups(state.target, action.token));
+      if (state.enabled) groups.add("eligible");
+      if (state.bypassed) groups.add("bypassed");
+      if (state.saveSucceeded === true) groups.add("successful");
+      if (state.saveSucceeded === false) groups.add("failed");
+      if (isSaveGatedVariant && !state.bypassed && state.saveTotal == null) groups.add("needs");
+      return [...groups];
+    };
+    const stateMatchesGroup = (state, group) => group === "visible"
+      ? state.rendered
+      : stateGroups(state).includes(group);
+    const updateStateAfterSave = (state, total) => {
+      state.saveTotal = coerceNumberOrNull(total);
+      state.saveSucceeded = state.saveTotal == null ? null : state.saveTotal >= saveDc;
+      state.enabled = defaultEnabledForSaveState(state);
+    };
+
+    const targetStates = targets.map((target, index) => {
+      const isSameDisposition = targetIsAllyToCaster(target, action.token);
       const rememberedEntry = remembered?.perTarget?.find?.(pt => (pt.actorId && pt.actorId === target.actor?.id) || (pt.tokenId && pt.tokenId === target.id));
-      const rememberedVariantIdx = typeof rememberedEntry?.variantIndex === 'number' ? rememberedEntry.variantIndex : (isSameDisposition ? allyDefaultIdx : foeDefaultIdx);
-      const rememberedApplyTiming = rememberedEntry?.applyTiming || (rememberedEntry?.applyOnTurn ? 'turn' : 'cast');
-      const preChecked = targetCap ? (index < targetCap) : true;
+      const rememberedVariantIdx = typeof rememberedEntry?.variantIndex === "number" ? rememberedEntry.variantIndex : (isSameDisposition ? allyDefaultIdx : foeDefaultIdx);
+      const rememberedApplyTiming = rememberedEntry?.applyTiming || (rememberedEntry?.applyOnTurn ? "turn" : "cast");
+      const secret = targetIsSecretForAutomation(target, action.token);
+      const bypassed = isSaveGatedVariant && buffSaveGate?.alliesBypass === true && isSameDisposition;
+      const state = {
+        target,
+        index,
+        key: targetAppliedKey(target),
+        actorId: target.actor?.id ?? tokenDocumentFromTarget(target)?.actor?.id ?? "",
+        rendered: game.user?.isGM === true || !secret,
+        secret,
+        bypassed,
+        saveTotal: null,
+        saveSucceeded: null,
+        variantIndex: Number.isFinite(rememberedVariantIdx) ? rememberedVariantIdx : 0,
+        applyTiming: rememberedApplyTiming === "turn" ? "turn" : "cast",
+        enabled: true
+      };
+      state.enabled = isSaveGatedVariant ? defaultEnabledForSaveState(state) : (targetCap ? index < targetCap : true);
+      return state;
+    });
+
+    const renderedStates = () => targetStates.filter((state) => state.rendered);
+    const renderUnifiedFilters = () => {
+      const filterDefs = [
+        ["all", "NAS.buffs.TargetFilterAll"],
+        ["allies", "NAS.buffs.TargetFilterAllies"],
+        ["enemies", "NAS.buffs.TargetFilterEnemies"],
+        ["neutral", "NAS.buffs.TargetFilterNeutral"],
+        ...(game.user?.isGM ? [["hidden", "NAS.buffs.TargetFilterHidden"]] : []),
+        ...(isSaveGatedVariant ? [
+          ["needs", "NAS.buffs.TargetFilterNeedsSave"],
+          ["failed", "NAS.buffs.TargetFilterFailed"],
+          ["successful", "NAS.buffs.TargetFilterSuccessful"],
+          ["bypassed", "NAS.buffs.TargetFilterBypassed"]
+        ] : [])
+      ];
+      const visibleStates = renderedStates();
+      return filterDefs
+        .filter(([filter]) => filter === "all" || visibleStates.some((state) => stateGroups(state).includes(filter)))
+        .map(([filter, labelKey], index) => `<a href="#" role="button" data-nas-target-filter="${filter}" class="nas-dialog-control ${index === 0 ? "active" : ""}" style="${controlStyle}">${escapeHtml(game.i18n.localize(labelKey))}</a>`)
+        .join("");
+    };
+    let bulkVariantIndex = 0;
+    let targetBulkMoreOpen = false;
+    let variantBulkMoreOpen = false;
+    const variantBulkButtons = () => {
+      const commonDefs = [
+        ["visible", "NAS.buffs.TargetSetVariantVisible"],
+        ...(isSaveGatedVariant ? [
+          ["failed", "NAS.buffs.TargetSetVariantFailed"],
+          ["successful", "NAS.buffs.TargetSetVariantSuccessful"]
+        ] : [])
+      ];
+      const moreDefs = [
+        ["allies", "NAS.buffs.TargetSetVariantAllies"],
+        ["enemies", "NAS.buffs.TargetSetVariantEnemies"],
+        ["neutral", "NAS.buffs.TargetSetVariantNeutral"],
+        ...(game.user?.isGM ? [["hidden", "NAS.buffs.TargetSetVariantSecret"]] : []),
+        ...(isSaveGatedVariant ? [
+          ["needs", "NAS.buffs.TargetSetVariantNeedsSave"],
+          ["bypassed", "NAS.buffs.TargetSetVariantBypassed"]
+        ] : [])
+      ];
+      const commonButtons = commonDefs.map(([group, labelKey]) => `<a href="#" role="button" class="nas-dialog-control" data-nas-variant-bulk="${group}" style="${controlStyle}">${escapeHtml(game.i18n.localize(labelKey))}</a>`).join("");
+      const moreButtons = moreDefs.map(([group, labelKey]) => `<a href="#" role="button" class="nas-dialog-control" data-nas-variant-bulk="${group}" style="${controlStyle}">${escapeHtml(game.i18n.localize(labelKey))}</a>`).join("");
       return `
-        <div class="target-option" data-target-index="${index}" style="display: flex; flex-direction: column; align-items: center; width: 170px; border: 1px solid #ccc; border-radius: 6px; padding: 6px;">
-          <div style="align-self: flex-start; margin-bottom: 4px;">
-            <input type="checkbox" class="ic-target-enabled" id="ic-target-enabled-${index}" ${preChecked ? 'checked' : ''}/>
-          </div>
-          <img src="${tokenImg}" style="width: 64px; height: 64px; border: 2px solid ${isSameDisposition ? 'green' : 'red'}; border-radius: 5px;" />
-          <label style="margin: 4px 0; font-weight: 600;">${tokenName}</label>
-          <select id="ic-target-variant-${index}" style="width: 100%;">${renderOptions(rememberedVariantIdx)}</select>
-          <div style="margin-top: 6px; display: flex; gap: 12px; align-items: center; justify-content: center;">
-            <label style="display:flex; gap:4px; align-items:center;" title="${game.i18n.localize('NAS.buffs.ApplyOnCastTooltip') || 'Apply immediately on cast'}">
-              <input type="radio" name="ic-target-timing-${index}" value="cast" ${rememberedApplyTiming === 'turn' ? '' : 'checked'}/>
-              ${game.i18n.localize('NAS.buffs.ApplyOnCastShort') || 'On cast'}
+        <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
+          <select id="ic-bulk-variant" style="min-width:130px;">${renderOptions(bulkVariantIndex)}</select>
+          ${commonButtons}
+        </div>
+        ${moreButtons ? `<details class="nas-variant-bulk-more" ${variantBulkMoreOpen ? "open" : ""}><summary style="cursor:pointer; width:max-content;">${escapeHtml(game.i18n.localize("NAS.buffs.TargetBulkMore"))}</summary><div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:6px;">${moreButtons}</div></details>` : ""}
+      `;
+    };
+    const targetBulkButtons = () => {
+      const selectCommonDefs = [
+        ["select", "NAS.buffs.TargetSelectVisible"],
+        ...(isSaveGatedVariant ? [
+          ["selectFailed", "NAS.buffs.TargetSelectFailed"],
+          ["selectSuccessful", "NAS.buffs.TargetSelectSaved"]
+        ] : [])
+      ];
+      const deselectCommonDefs = [
+        ["deselect", "NAS.buffs.TargetDeselectVisible"],
+        ...(isSaveGatedVariant ? [
+          ["deselectFailed", "NAS.buffs.TargetDeselectFailed"],
+          ["deselectSuccessful", "NAS.buffs.TargetDeselectSaved"]
+        ] : [])
+      ];
+      const selectMoreDefs = [
+        ["selectAllies", "NAS.buffs.TargetSelectAllies"],
+        ["selectNeutral", "NAS.buffs.TargetSelectNeutral"],
+        ["selectEnemies", "NAS.buffs.TargetSelectEnemies"]
+      ];
+      const deselectMoreDefs = [
+        ["deselectAllies", "NAS.buffs.TargetDeselectAllies"],
+        ["deselectNeutral", "NAS.buffs.TargetDeselectNeutral"],
+        ["deselectEnemies", "NAS.buffs.TargetDeselectEnemies"]
+      ];
+      const selectCommonButtons = selectCommonDefs.map(([actionName, labelKey]) => `<a href="#" role="button" class="nas-dialog-control" data-nas-target-bulk="${actionName}" style="${controlStyle}">${escapeHtml(game.i18n.localize(labelKey))}</a>`).join("");
+      const deselectCommonButtons = deselectCommonDefs.map(([actionName, labelKey]) => `<a href="#" role="button" class="nas-dialog-control" data-nas-target-bulk="${actionName}" style="${controlStyle}">${escapeHtml(game.i18n.localize(labelKey))}</a>`).join("");
+      const moreButtons = [
+        ...selectMoreDefs.map(([actionName, labelKey]) => `<a href="#" role="button" class="nas-dialog-control" data-nas-target-bulk="${actionName}" style="${controlStyle}">${escapeHtml(game.i18n.localize(labelKey))}</a>`),
+        ...deselectMoreDefs.map(([actionName, labelKey]) => `<a href="#" role="button" class="nas-dialog-control" data-nas-target-bulk="${actionName}" style="${controlStyle}">${escapeHtml(game.i18n.localize(labelKey))}</a>`)
+      ].join("");
+      return `
+        <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
+          <strong style="min-width:56px;">${escapeHtml(game.i18n.localize("NAS.buffs.TargetBulkSelectLabel"))}</strong>
+          ${selectCommonButtons}
+        </div>
+        <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
+          <strong style="min-width:56px;">${escapeHtml(game.i18n.localize("NAS.buffs.TargetBulkDeselectLabel"))}</strong>
+          ${deselectCommonButtons}
+        </div>
+        <details class="nas-target-bulk-more" ${targetBulkMoreOpen ? "open" : ""}><summary style="cursor:pointer; width:max-content;">${escapeHtml(game.i18n.localize("NAS.buffs.TargetBulkMore"))}</summary><div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:6px;">${moreButtons}</div></details>
+      `;
+    };
+    const renderUnifiedControls = () => `
+      <div class="nas-target-selection-controls" style="display:flex; flex-direction:column; gap:8px; margin:8px 0;">
+        <div class="nas-target-filters" style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;">${renderUnifiedFilters()}</div>
+        <div class="nas-target-bulk" style="display:flex; flex-direction:column; gap:6px; align-items:flex-start;">
+          ${targetBulkButtons()}
+        </div>
+        <div class="nas-target-variant-bulk" style="display:flex; flex-direction:column; gap:6px; align-items:flex-start;">
+          ${variantBulkButtons()}
+        </div>
+        ${isSaveGatedVariant ? `<div class="nas-target-save-bulk" style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
+          <a href="#" role="button" class="nas-dialog-control" data-nas-save-roll="visible" style="${controlStyle}"><i class="fas fa-dice-d20"></i>&nbsp;${escapeHtml(game.i18n.localize("NAS.buffs.RollSavesVisible"))}</a>
+          <a href="#" role="button" class="nas-dialog-control" data-nas-save-roll="all" style="${controlStyle}"><i class="fas fa-dice"></i>&nbsp;${escapeHtml(game.i18n.localize("NAS.buffs.RollSavesAllPending"))}</a>
+          <a href="#" role="button" class="nas-dialog-control" data-nas-save-refresh="true" style="${controlStyle}"><i class="fas fa-sync"></i>&nbsp;${escapeHtml(game.i18n.localize("NAS.buffs.RefreshSaveResults"))}</a>
+        </div>` : ""}
+      </div>
+    `;
+    const renderTargetCard = (state) => {
+      const target = state.target;
+      const tokenName = target.name || target.actor?.name || `Target ${state.index + 1}`;
+      const tokenImg = target.document?.texture?.src || target.texture?.src || target.actor?.img || "";
+      const isSameDisposition = targetIsAllyToCaster(target, action.token);
+      const groups = stateGroups(state);
+      const statusLabel = isSaveGatedVariant ? pendingTargetStatusLabel(state) : targetDispositionLabel(target, action.token);
+      const saveText = isSaveGatedVariant && state.saveTotal != null ? ` ${escapeHtml(String(state.saveTotal))}` : "";
+      const checkboxDisabled = stateCanBeEnabled(state) ? "" : "disabled";
+      const targetDisposition = targetDispositionValue(target);
+      const dispositionColor = game.user?.isGM === true && state.secret === true
+        ? secretColor
+        : targetDisposition === CONST.TOKEN_DISPOSITIONS.NEUTRAL
+          ? neutralColor
+          : (isSameDisposition ? "green" : "red");
+      return `
+        <div class="target-option nas-target-option" data-target-index="${state.index}" data-nas-target-groups="${escapeHtml(groups.join(" "))}" style="display:flex; flex-direction:column; align-items:center; width:150px; border:1px solid ${dispositionColor}; border-radius:6px; padding:6px; gap:4px;">
+          <input type="checkbox" class="ic-target-enabled" id="ic-target-enabled-${state.index}" ${state.enabled ? "checked" : ""} ${checkboxDisabled} style="margin:0;"/>
+          <img src="${tokenImg}" style="width:64px; height:64px; border:2px solid ${dispositionColor}; border-radius:5px; object-fit:cover;" />
+          <label for="ic-target-enabled-${state.index}" style="font-weight:600; text-align:center; line-height:1.15;">${escapeHtml(tokenName)}</label>
+          <select id="ic-target-variant-${state.index}" class="ic-target-variant" style="width:100%;">${renderOptions(state.variantIndex)}</select>
+          <div class="ic-target-timing" style="display:${state.applyTiming && state.applyTiming.length ? "flex" : "flex"}; gap:8px; align-items:center; justify-content:center; font-size:0.85em;">
+            <label style="display:flex; gap:3px; align-items:center;" title="${game.i18n.localize("NAS.buffs.ApplyOnCastTooltip") || "Apply immediately on cast"}">
+              <input type="radio" name="ic-target-timing-${state.index}" value="cast" ${state.applyTiming === "turn" ? "" : "checked"}/>
+              ${game.i18n.localize("NAS.buffs.ApplyOnCastShort") || "On cast"}
             </label>
-            <label style="display:flex; gap:4px; align-items:center;" title="${game.i18n.localize('NAS.buffs.ApplyOnTurnTooltip') || 'Apply at the start of the target’s turn'}">
-              <input type="radio" name="ic-target-timing-${index}" value="turn" ${rememberedApplyTiming === 'turn' ? 'checked' : ''}/>
-              ${game.i18n.localize('NAS.buffs.ApplyOnTurnShort') || 'On turn'}
+            <label style="display:flex; gap:3px; align-items:center;" title="${game.i18n.localize("NAS.buffs.ApplyOnTurnTooltip") || "Apply at the start of the target's turn"}">
+              <input type="radio" name="ic-target-timing-${state.index}" value="turn" ${state.applyTiming === "turn" ? "checked" : ""}/>
+              ${game.i18n.localize("NAS.buffs.ApplyOnTurnShort") || "On turn"}
             </label>
           </div>
-          <small style="color: ${isSameDisposition ? 'green' : 'red'};">${isSameDisposition ? game.i18n.localize('NAS.common.labels.ally') : game.i18n.localize('NAS.common.labels.foe')}</small>
+          <small style="color:${dispositionColor}; text-align:center;">${escapeHtml(targetDispositionLabel(target, action.token))}</small>
+          ${isSaveGatedVariant ? `<small style="text-align:center;">${escapeHtml(statusLabel)}${saveText}</small>` : ""}
         </div>
       `;
-    }).join('');
+    };
+    const renderTargetCards = () => renderedStates().map(renderTargetCard).join("") || `<p>${escapeHtml(game.i18n.localize("NAS.buffs.NoVisibleTargets"))}</p>`;
+    let activeUnifiedFilter = "all";
+    const readRenderedTargetState = (html) => {
+      const $html = typeof html.find === "function" ? html : $(html);
+      for (const state of renderedStates()) {
+        const enabledEl = $html.find(`#ic-target-enabled-${state.index}`);
+        if (enabledEl.length && !enabledEl.prop("disabled")) state.enabled = enabledEl.prop("checked") === true;
+        const variantEl = $html.find(`#ic-target-variant-${state.index}`);
+        if (variantEl.length) {
+          const variantIndex = Number(variantEl.val());
+          if (Number.isInteger(variantIndex) && buffs[variantIndex]) state.variantIndex = variantIndex;
+        }
+        const timingEl = $html.find(`input[name="ic-target-timing-${state.index}"]:checked`);
+        if (timingEl.length) state.applyTiming = timingEl.val() === "turn" ? "turn" : "cast";
+      }
+    };
+    const readBulkVariantState = ($html) => {
+      const variantIndex = Number($html.find("#ic-bulk-variant").val());
+      if (Number.isInteger(variantIndex) && buffs[variantIndex]) bulkVariantIndex = variantIndex;
+    };
+    const readMoreState = ($html) => {
+      const targetDetails = $html.find(".nas-target-bulk-more")?.[0];
+      const variantDetails = $html.find(".nas-variant-bulk-more")?.[0];
+      if (targetDetails) targetBulkMoreOpen = targetDetails.open === true;
+      if (variantDetails) variantBulkMoreOpen = variantDetails.open === true;
+    };
+    const updateCapHint = ($html) => {
+      if (!targetCap) return;
+      const visibleForUser = game.user?.isGM ? targetStates : renderedStates();
+      const enabledCount = visibleForUser.filter((state) => state.enabled).length;
+      const remaining = Math.max(targetCap - enabledCount, 0);
+      const hintEl = $html.find("#ic-cap-hint");
+      if (hintEl.length) {
+        hintEl.text(game.i18n.format("NAS.buffs.TargetCapHintRemaining", { cap: targetCap, remaining }));
+        hintEl.css("color", enabledCount > targetCap ? "red" : "");
+      }
+    };
+    const applyUnifiedFilter = ($html, filter = activeUnifiedFilter) => {
+      activeUnifiedFilter = filter;
+      $html.find("[data-nas-target-filter]").removeClass("active").css({
+        "box-shadow": "",
+        "border-color": "var(--color-border-light-primary, #999)"
+      });
+      $html.find(`[data-nas-target-filter="${filter}"]`).addClass("active").css({
+        "box-shadow": "0 0 4px red",
+        "border-color": "red"
+      });
+      $html.find(".nas-target-option").each((_index, el) => {
+        const groups = String(el.dataset.nasTargetGroups ?? "").split(/\s+/);
+        const visible = filter === "all" || groups.includes(filter);
+        el.style.display = visible ? "flex" : "none";
+      });
+    };
+    const refreshUnifiedDialog = ($html, dialog = null, { read = true } = {}) => {
+      readBulkVariantState($html);
+      readMoreState($html);
+      if (read) readRenderedTargetState($html);
+      $html.find("#ic-unified-target-controls").html(renderUnifiedControls());
+      $html.find("#ic-target-section").html(renderTargetCards());
+      wireUnifiedDialog($html, dialog);
+      applyUnifiedFilter($html, activeUnifiedFilter);
+      updateCapHint($html);
+      const allowSwitching = $html.find("#ic-allow-switching").prop("checked") === true;
+      $html.find(".ic-target-timing").css("display", allowSwitching ? "flex" : "none");
+      dialog?.setPosition?.({ height: "auto" });
+    };
+    const visibleRenderedStatesForDialog = ($html) => renderedStates().filter((state) => {
+      const el = $html.find(`.nas-target-option[data-target-index="${state.index}"]`)?.[0];
+      return el && el.style.display !== "none";
+    });
+    const rollUnifiedSaveStates = async ($html, dialog, statesToRoll) => {
+      readRenderedTargetState($html);
+      if (isSaveGatedVariant && saveDc == null) {
+        ui.notifications.warn(game.i18n.localize("NAS.buffs.SaveDcMissing"));
+        return;
+      }
+      for (const state of statesToRoll) {
+        if (!state || state.bypassed || state.saveTotal != null) continue;
+        const targetRef = serializePendingTarget(state.target, null);
+        const total = await rollBuffSaveForTargetRef(targetRef, state.target, saveType, saveDc, {
+          hiddenMessage: state.secret === true,
+          privateRoll: state.secret !== true
+        });
+        if (total != null) updateStateAfterSave(state, total);
+      }
+      refreshUnifiedDialog($html, dialog);
+    };
+    const setStatesEnabled = (statesToUpdate, enabled) => {
+      for (const state of statesToUpdate) {
+        if (stateCanBeEnabled(state)) state.enabled = enabled;
+      }
+    };
+    const validateUnifiedApply = ($html, { warn = true } = {}) => {
+      readRenderedTargetState($html);
+      if (isSaveGatedVariant && saveDc == null) {
+        if (warn) ui.notifications.warn(game.i18n.localize("NAS.buffs.SaveDcMissing"));
+        return false;
+      }
+      const unresolvedSaveStates = isSaveGatedVariant
+        ? targetStates.filter((state) => !state.bypassed && state.saveTotal == null)
+        : [];
+      if (unresolvedSaveStates.length > 0) {
+        if (warn) ui.notifications.warn(game.i18n.localize("NAS.buffs.SaveResultsRequired"));
+        return false;
+      }
+      if (targetCap && variantCapMode === 'enforce') {
+        const enabledCount = targetStates.filter((state) => state.enabled === true).length;
+        if (enabledCount > targetCap) {
+          if (warn) ui.notifications.warn(game.i18n.format('NAS.buffs.TargetCapExceeded', { cap: targetCap }));
+          return false;
+        }
+      }
+      return true;
+    };
+    const wireUnifiedApplyValidation = ($html, dialog) => {
+      const button = dialog?.element?.find?.("button[data-button='apply']")?.[0]
+        ?? dialog?.element?.[0]?.querySelector?.("button[data-button='apply']");
+      if (!button || button.dataset.nasApplyValidationWired === "true") return;
+      button.dataset.nasApplyValidationWired = "true";
+      button.addEventListener("click", (event) => {
+        if (validateUnifiedApply($html, { warn: true })) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }, true);
+    };
+    const wireUnifiedDialog = (html, dialog = null) => {
+      const $html = typeof html.find === "function" ? html : $(html);
+      $html.find("[data-nas-target-filter]").off("click").on("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        applyUnifiedFilter($html, event.currentTarget.dataset.nasTargetFilter);
+        dialog?.setPosition?.({ height: "auto" });
+      });
+      $html.find(".ic-target-enabled, .ic-target-variant, input[name^='ic-target-timing-']").off("change").on("change", () => {
+        readRenderedTargetState($html);
+        updateCapHint($html);
+      });
+      $html.find("#ic-bulk-variant").off("change").on("change", () => {
+        readBulkVariantState($html);
+      });
+      $html.find(".nas-target-bulk-more").off("toggle").on("toggle", (event) => {
+        targetBulkMoreOpen = event.currentTarget.open === true;
+      });
+      $html.find(".nas-variant-bulk-more").off("toggle").on("toggle", (event) => {
+        variantBulkMoreOpen = event.currentTarget.open === true;
+      });
+      $html.find("[data-nas-target-bulk]").off("click").on("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        readRenderedTargetState($html);
+        const actionName = event.currentTarget.dataset.nasTargetBulk;
+        const selectGroups = {
+          selectAllies: "allies",
+          selectNeutral: "neutral",
+          selectEnemies: "enemies",
+          selectSuccessful: "successful",
+          selectFailed: "failed"
+        };
+        const deselectGroups = {
+          deselectAllies: "allies",
+          deselectNeutral: "neutral",
+          deselectEnemies: "enemies",
+          deselectSuccessful: "successful",
+          deselectFailed: "failed"
+        };
+        if (actionName === "select") setStatesEnabled(visibleRenderedStatesForDialog($html), true);
+        else if (actionName === "deselect") setStatesEnabled(visibleRenderedStatesForDialog($html), false);
+        else if (selectGroups[actionName]) setStatesEnabled(targetStates.filter((state) => stateGroups(state).includes(selectGroups[actionName])), true);
+        else if (deselectGroups[actionName]) setStatesEnabled(targetStates.filter((state) => stateGroups(state).includes(deselectGroups[actionName])), false);
+        refreshUnifiedDialog($html, dialog, { read: false });
+      });
+      $html.find("[data-nas-variant-bulk]").off("click").on("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        readRenderedTargetState($html);
+        const variantIndex = Number($html.find("#ic-bulk-variant").val());
+        if (!Number.isInteger(variantIndex) || !buffs[variantIndex]) return;
+        bulkVariantIndex = variantIndex;
+        const group = event.currentTarget.dataset.nasVariantBulk;
+        const statesToUpdate = group === "visible" ? visibleRenderedStatesForDialog($html) : targetStates.filter((state) => stateMatchesGroup(state, group));
+        for (const state of statesToUpdate) state.variantIndex = variantIndex;
+        refreshUnifiedDialog($html, dialog, { read: false });
+      });
+      $html.find("[data-nas-save-roll]").off("click").on("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const mode = event.currentTarget.dataset.nasSaveRoll;
+        const candidates = mode === "visible" ? visibleRenderedStatesForDialog($html) : targetStates;
+        void rollUnifiedSaveStates($html, dialog, candidates.filter((state) => !state.bypassed && state.saveTotal == null));
+      });
+      $html.find("[data-nas-save-refresh]").off("click").on("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        refreshUnifiedDialog($html, dialog);
+      });
+    };
 
     const initialSwitching = !!remembered?.allowSwitching;
     let content = `<p>${game.i18n.localize('NAS.buffs.SelectBuffVariant')}: ${action.item?.name || game.i18n.localize('NAS.buffs.SpellFallback')}</p>`;
     content += `
-      <div class="form-group" style="display:grid; grid-template-columns: auto 1fr; align-items:center; gap:8px;">
-        <label style="display:flex; gap:6px; align-items:center;">
-          <input type="checkbox" id="ic-ally-toggle" ${rememberedAlliesToggle ? 'checked' : ''}/>
-          ${game.i18n.localize('NAS.buffs.Allies') || 'Allies'}
-        </label>
-        <select id="ic-ally-variant" style="width: 100%; display:${initialSwitching ? 'none' : (rememberedAlliesToggle ? 'block' : 'none')};">
-          <option value="none">${game.i18n.localize('NAS.common.labels.none')}</option>
-          ${renderOptions(allyDefaultIdx)}
-        </select>
-      </div>
-      <div class="form-group" style="display:grid; grid-template-columns: auto 1fr; align-items:center; gap:8px;">
-        <label style="display:flex; gap:6px; align-items:center;">
-          <input type="checkbox" id="ic-foe-toggle" ${rememberedFoesToggle ? 'checked' : ''}/>
-          ${game.i18n.localize('NAS.buffs.Foes') || 'Foes'}
-        </label>
-        <select id="ic-foe-variant" style="width: 100%; display:${initialSwitching ? 'none' : (rememberedFoesToggle ? 'block' : 'none')};">
-          <option value="none">${game.i18n.localize('NAS.common.labels.none')}</option>
-          ${renderOptions(foeDefaultIdx)}
-        </select>
-      </div>
       <div class="form-group" style="display:flex; gap:8px; align-items:center; margin-top:6px;">
         <input type="checkbox" id="ic-allow-switching" ${initialSwitching ? 'checked' : ''}/>
         <label for="ic-allow-switching">${game.i18n.localize('NAS.buffs.AllowSwitchingEachRound')}</label>
       </div>
       ${targetCap ? `<div id="ic-cap-hint" style="margin: 6px 0; color: var(--color-text);">${game.i18n.format('NAS.buffs.TargetCapHintRemaining', { cap: targetCap, remaining: targetCap })}</div>` : ''}
-      <div id="ic-target-section" style="display:${initialSwitching ? 'grid' : 'none'}; grid-template-columns: repeat(auto-fit, minmax(160px, 170px)); gap: 12px; justify-content: flex-start; border:1px solid #ccc; padding:8px; border-radius:6px; max-height: 340px; overflow-y:auto;">
-        ${targetCards}
+      <div id="ic-unified-target-controls">${renderUnifiedControls()}</div>
+      <div id="ic-target-section" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(145px, 150px)); gap: 10px; justify-content:flex-start; border:1px solid #ccc; padding:8px; border-radius:6px; max-height: 430px; overflow-y:auto;">
+        ${renderTargetCards()}
       </div>
       <div class="form-group" style="display: flex; align-items: center; gap: 6px; margin-top: 8px;">
         <label style="display: inline-flex; align-items: center; gap: 6px; margin: 0;">
@@ -1029,67 +1710,52 @@ export async function promptBuffSelection(buffs, action, options = {}) {
             label: game.i18n.localize('NAS.buffs.ApplyBuff'),
             callback: html => {
               const getEl = (sel) => typeof html.find === 'function' ? html.find(sel) : html.querySelector(sel);
-              const allyToggle = getEl('#ic-ally-toggle');
-              const foeToggle = getEl('#ic-foe-toggle');
               const allowSwitchingEl = getEl('#ic-allow-switching');
               const rememberEl = getEl('#ic-remember-mapping');
-              const allySelect = getEl('#ic-ally-variant');
-              const foeSelect = getEl('#ic-foe-variant');
 
-              const allyChecked = allyToggle && (allyToggle.checked ?? allyToggle.prop?.('checked'));
-              const foeChecked = foeToggle && (foeToggle.checked ?? foeToggle.prop?.('checked'));
-
-              const allyIdxRaw = allySelect ? (allySelect.value ?? allySelect.val?.()) : null;
-              const foeIdxRaw = foeSelect ? (foeSelect.value ?? foeSelect.val?.()) : null;
-              const allyIdx = allyChecked && allyIdxRaw !== 'none' ? Number(allyIdxRaw) : null;
-              const foeIdx = foeChecked && foeIdxRaw !== 'none' ? Number(foeIdxRaw) : null;
               const allowSwitching = allowSwitchingEl ? (allowSwitchingEl.checked ?? allowSwitchingEl.prop?.('checked')) : false;
               const remember = rememberEl ? (rememberEl.checked ?? rememberEl.prop?.('checked')) : false;
 
+              if (!validateUnifiedApply(typeof html.find === "function" ? html : $(html), { warn: true })) return false;
               const perTarget = [];
-              if (allowSwitching && targets.length > 0) {
+              if (targets.length > 0) {
                 let enabledCount = 0;
-                targets.forEach((t, idx) => {
-                  const enabledEl = getEl(`#ic-target-enabled-${idx}`);
-                  const enabled = enabledEl ? (enabledEl.checked ?? enabledEl.prop?.('checked')) : true;
+                targetStates.forEach((state) => {
+                  const enabled = state.enabled === true;
                   if (enabled) enabledCount += 1;
-                  const selectEl = getEl(`#ic-target-variant-${idx}`);
-                  const variantIdx = Number((selectEl?.value ?? selectEl?.val?.())) ?? 0;
-                  const timingCast = getEl(`input[name="ic-target-timing-${idx}"][value="cast"]`);
-                  const timingTurn = getEl(`input[name="ic-target-timing-${idx}"][value="turn"]`);
-                  let applyTiming = 'cast';
-                  if (timingTurn && (timingTurn.checked ?? timingTurn.prop?.('checked'))) applyTiming = 'turn';
-                  else if (timingCast && (timingCast.checked ?? timingCast.prop?.('checked'))) applyTiming = 'cast';
                   perTarget.push({
-                    targetId: t.id,
-                    actorId: t.actor?.id,
-                    variantIndex: variantIdx,
-                    applyTiming,
+                    targetId: state.target.id,
+                    actorId: state.target.actor?.id,
+                    variantIndex: state.variantIndex,
+                    applyTiming: state.applyTiming,
                     enabled
                   });
                 });
 
                 if (targetCap && enabledCount > targetCap && variantCapMode === 'enforce') {
                   ui.notifications.warn(game.i18n.format('NAS.buffs.TargetCapExceeded', { cap: targetCap }));
-                  action.shared.reject = true;
-                  return;
+                  return false;
                 }
               }
 
       const result = {
-                allies: allowSwitching ? null : (allyIdx !== null && !Number.isNaN(allyIdx) ? buffs[allyIdx] : null),
-                foes: allowSwitching ? null : (foeIdx !== null && !Number.isNaN(foeIdx) ? buffs[foeIdx] : null),
+                allies: null,
+                foes: null,
                 allowSwitching,
                 remember,
         perTarget,
-                applyAllies: !!allyChecked,
-                applyFoes: !!foeChecked,
-                variants: buffs
+                applyAllies: true,
+                applyFoes: true,
+                variants: buffs,
+                resolvedManualSelection: isSaveGatedVariant,
+                targetSaveResults: new Map(targetStates
+                  .filter((state) => state.saveTotal != null)
+                  .map((state) => [state.key, { [saveType]: state.saveTotal }])),
+                saveResultTargets: targetStates
+                  .filter((state) => state.saveTotal != null && state.secret !== true)
+                  .map((state) => ({ target: state.target, saveResults: { [saveType]: state.saveTotal } })),
+                publicSaveResultsOnly: isSaveGatedVariant
       };
-
-      if (allowSwitching && targetCap) {
-        result.perTarget = result.perTarget.filter(pt => pt.enabled !== false);
-      }
 
       resolve(result);
             }
@@ -1105,45 +1771,23 @@ export async function promptBuffSelection(buffs, action, options = {}) {
         render: html => {
           const $html = typeof html.find === 'function' ? html : $(html);
           const relayout = () => dlg.setPosition({ height: 'auto' });
-          $html.find('#ic-ally-toggle').on('change', ev => {
-            const checked = ev.currentTarget.checked;
-            const allowSwitch = $html.find('#ic-allow-switching').prop ? $html.find('#ic-allow-switching').prop('checked') : $html.find('#ic-allow-switching')[0]?.checked;
-            if (!allowSwitch) $html.find('#ic-ally-variant').css('display', checked ? 'block' : 'none');
-            relayout();
-          });
-          $html.find('#ic-foe-toggle').on('change', ev => {
-            const checked = ev.currentTarget.checked;
-            const allowSwitch = $html.find('#ic-allow-switching').prop ? $html.find('#ic-allow-switching').prop('checked') : $html.find('#ic-allow-switching')[0]?.checked;
-            if (!allowSwitch) $html.find('#ic-foe-variant').css('display', checked ? 'block' : 'none');
-            relayout();
-          });
+          wireUnifiedDialog($html, dlg);
+          wireUnifiedApplyValidation($html, dlg);
+          applyUnifiedFilter($html, activeUnifiedFilter);
+          $html.find(".ic-target-timing").css("display", initialSwitching ? "flex" : "none");
           $html.find('#ic-allow-switching').on('change', ev => {
             const checked = ev.currentTarget.checked;
-            $html.find('#ic-target-section').css('display', checked ? 'grid' : 'none');
-            $html.find('#ic-ally-variant').css('display', checked ? 'none' : ($html.find('#ic-ally-toggle').prop('checked') ? 'block' : 'none'));
-            $html.find('#ic-foe-variant').css('display', checked ? 'none' : ($html.find('#ic-foe-toggle').prop('checked') ? 'block' : 'none'));
+            $html.find(".ic-target-timing").css("display", checked ? "flex" : "none");
             relayout();
           });
-          if (targetCap) {
-            const updateCapHint = () => {
-              const enabledCount = $html.find('.ic-target-enabled:checked').length;
-              const hintEl = $html.find('#ic-cap-hint');
-              if (hintEl.length) {
-                const remaining = Math.max(targetCap - enabledCount, 0);
-                hintEl.text(game.i18n.format('NAS.buffs.TargetCapHintRemaining', { cap: targetCap, remaining }));
-                hintEl.css('color', enabledCount > targetCap ? 'red' : '');
-              }
-            };
-            $html.find('.ic-target-enabled').on('change', updateCapHint);
-            updateCapHint();
-          }
+          updateCapHint($html);
           setTimeout(relayout, 0);
         }
       }, { width: (() => {
-        const cols = Math.min(Math.max(targets.length || 1, 1), 4);
-        const card = 170;
-        const gap = 12;
-        const chrome = 120; 
+        const cols = Math.min(Math.max(renderedStates().length || 1, 1), 5);
+        const card = 150;
+        const gap = 10;
+        const chrome = 150; 
         return Math.max(400, cols * card + (cols - 1) * gap + chrome);
       })() });
       dlg.render(true);
@@ -1202,22 +1846,13 @@ export async function promptBuffSelection(buffs, action, options = {}) {
 }
 
 export async function promptTargetSelection(targets, action, communalOptions = null) {
-  let filteredTargets = targets;
-  if (!game.user.isGM) {
-    const casterToken = action.token;
-    const casterHasSeeInvisibility = casterToken?.actor?.system?.traits?.senses?.si === true;
-    filteredTargets = targets.filter(token => {
-      const actor = token.actor;
-      const isInvisible = actor.statuses.has("invisible");
-      const isHidden = token.document.hidden;
-      const disposition = token.document?.disposition ?? token?.disposition;
-      if (disposition === CONST.TOKEN_DISPOSITIONS.SECRET) return false;
-      if (isHidden) return false;
-      if (isInvisible && !casterHasSeeInvisibility) return false;
-      if (casterToken && !tokenCanSeeToken(casterToken, token)) return false;
-      return true;
-    });
-  }
+  const promptOptions = communalOptions && communalOptions.communal ? {} : (communalOptions ?? {});
+  const buffSaveGate = promptOptions.buffSaveGate ?? null;
+  const allTargets = Array.isArray(targets) ? targets : [];
+  const visibleTargets = game.user?.isGM === true
+    ? allTargets
+    : allTargets.filter((target) => !targetIsSecretForAutomation(target, action.token));
+  let filteredTargets = visibleTargets;
 
   const useEnhancedCommunalDialog = communalOptions &&
     communalOptions.communal &&
@@ -1327,36 +1962,228 @@ export async function promptTargetSelection(targets, action, communalOptions = n
   return new Promise(resolve => {
     let applied = false;
     const spellName = action.item.name;
-    let content = `<p>${game.i18n.format('NAS.buffs.SelectTargets', { name: spellName })}</p>`;
-    
-    content += `<div class="target-selection-container" style="max-height: 400px; overflow-y: auto; border: 1px solid #ccc; border-radius: 5px; padding: 10px; margin-top: 10px;">`;
-    content += `<div style="display: flex; flex-wrap: wrap; gap: 10px;">`;
-    
-    filteredTargets.forEach((target, index) => {
-      const tokenName = target.name || target.actor.name;
-      const tokenImg = target.document?.texture?.src || target.texture?.src;
-      const targetDisposition = target.document?.disposition || target?.disposition;
-      const actionDisposition = action.token?.disposition;
-      const isSameDisposition = targetDisposition === actionDisposition;
-      
-      let dispositionName = "Unknown";
-      if (targetDisposition === CONST.TOKEN_DISPOSITIONS.NEUTRAL) dispositionName = "Neutral";
-      else if (targetDisposition === CONST.TOKEN_DISPOSITIONS.FRIENDLY) dispositionName = "Friendly";
-      else if (targetDisposition === CONST.TOKEN_DISPOSITIONS.HOSTILE) dispositionName = "Hostile";
-      else if (targetDisposition === CONST.TOKEN_DISPOSITIONS.SECRET) dispositionName = "Secret";
-      
-      content += `
-        <div class="target-option" style="display: flex; flex-direction: column; align-items: center; width: 100px;">
-          <img src="${tokenImg}" style="width: 64px; height: 64px; border: 2px solid ${isSameDisposition ? 'green' : 'red'}; border-radius: 5px;" />
-          <input type="checkbox" id="target-${index}" name="target-${index}" checked style="margin: 6px 0 3px 0;" />
-          <label for="target-${index}" style="margin-bottom: 3px;">${tokenName}</label>
-          <div style="font-size: 0.8em; color: ${isSameDisposition ? 'green' : 'red'};">${dispositionName}</div>
+    const saveType = normalizeSaveType(buffSaveGate?.saveType);
+    const saveMode = normalizeBuffSaveHandlingMode(buffSaveGate?.mode);
+    const saveDc = coerceNumberOrNull(buffSaveGate?.dc);
+    const isSaveGatedManual = buffSaveGate?.deferred === true && REAL_SAVE_TYPES.has(saveType) && saveMode !== "ignore";
+    const secretColor = "#7b2cff";
+    const neutralColor = "#b58900";
+    const defaultEnabledForState = (state) => {
+      if (!isSaveGatedManual) return true;
+      if (state.bypassed) return true;
+      if (state.saveSucceeded == null) return false;
+      return saveMode === "failed" ? state.saveSucceeded === false : state.saveSucceeded === true;
+    };
+    const stateCanBeEnabled = (state) => !isSaveGatedManual || state.bypassed || state.saveTotal != null;
+    const updateStateAfterSave = (state, total) => {
+      state.saveTotal = coerceNumberOrNull(total);
+      state.saveSucceeded = state.saveTotal == null ? null : state.saveTotal >= saveDc;
+      state.enabled = defaultEnabledForState(state);
+    };
+    const stateGroups = (state) => {
+      const groups = new Set(targetFilterGroups(state.target, action.token));
+      if (state.enabled) groups.add("eligible");
+      if (state.bypassed) groups.add("bypassed");
+      if (state.saveSucceeded === true) groups.add("successful");
+      if (state.saveSucceeded === false) groups.add("failed");
+      if (isSaveGatedManual && !state.bypassed && state.saveTotal == null) groups.add("needs");
+      return [...groups];
+    };
+    const targetStates = allTargets.map((target, index) => {
+      const secret = targetIsSecretForAutomation(target, action.token);
+      const bypassed = isSaveGatedManual && buffSaveGate?.alliesBypass === true && targetIsAllyToCaster(target, action.token);
+      const state = {
+        target,
+        index,
+        key: targetAppliedKey(target),
+        rendered: game.user?.isGM === true || !secret,
+        secret,
+        bypassed,
+        saveTotal: null,
+        saveSucceeded: null,
+        enabled: true
+      };
+      state.enabled = defaultEnabledForState(state);
+      return state;
+    });
+    const renderedStates = () => targetStates.filter((state) => state.rendered);
+    const targetEntries = () => targetStates.map((state) => ({
+      target: state.target,
+      index: state.index,
+      groups: stateGroups(state),
+      rendered: state.rendered
+    }));
+    let activeFilter = "all";
+    let targetBulkMoreOpen = false;
+    const renderControls = () => `
+      ${targetSelectionControlsHtml(targetEntries(), { targetBulkMoreOpen })}
+      ${isSaveGatedManual ? `<div class="nas-target-save-bulk" style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:8px 0;">
+        <a href="#" role="button" class="nas-dialog-control" data-nas-save-roll="visible" style="${nasDialogControlStyle()}"><i class="fas fa-dice-d20"></i>&nbsp;${escapeHtml(game.i18n.localize("NAS.buffs.RollSavesVisible"))}</a>
+        <a href="#" role="button" class="nas-dialog-control" data-nas-save-roll="all" style="${nasDialogControlStyle()}"><i class="fas fa-dice"></i>&nbsp;${escapeHtml(game.i18n.localize("NAS.buffs.RollSavesAllPending"))}</a>
+        <a href="#" role="button" class="nas-dialog-control" data-nas-save-refresh="true" style="${nasDialogControlStyle()}"><i class="fas fa-sync"></i>&nbsp;${escapeHtml(game.i18n.localize("NAS.buffs.RefreshSaveResults"))}</a>
+      </div>` : ""}
+    `;
+    const renderTargetCards = () => renderedStates().map((state) => {
+      const target = state.target;
+      const tokenName = target.name || target.actor?.name || "";
+      const tokenImg = target.document?.texture?.src || target.texture?.src || target.actor?.img || "";
+      const isSameDisposition = targetIsAllyToCaster(target, action.token);
+      const dispositionName = targetDispositionLabel(target, action.token);
+      const targetDisposition = targetDispositionValue(target);
+      const dispositionColor = state.secret
+        ? secretColor
+        : targetDisposition === CONST.TOKEN_DISPOSITIONS.NEUTRAL
+          ? neutralColor
+          : (isSameDisposition ? "green" : "red");
+      const statusLabel = isSaveGatedManual ? pendingTargetStatusLabel(state) : "";
+      const saveText = isSaveGatedManual && state.saveTotal != null ? ` ${escapeHtml(String(state.saveTotal))}` : "";
+      const checkboxDisabled = isSaveGatedManual && !stateCanBeEnabled(state) ? "disabled" : "";
+      return `
+        <div class="target-option nas-target-option" data-target-index="${state.index}" data-nas-target-groups="${escapeHtml(stateGroups(state).join(" "))}" style="display: flex; flex-direction: column; align-items: center; width: 118px;">
+          <img src="${tokenImg}" style="width: 64px; height: 64px; border: 2px solid ${dispositionColor}; border-radius: 5px; object-fit:cover;" />
+          <input type="checkbox" id="target-${state.index}" name="target-${state.index}" ${state.enabled ? "checked" : ""} ${checkboxDisabled} style="margin: 6px 0 3px 0;" />
+          <label for="target-${state.index}" style="margin-bottom: 3px;">${escapeHtml(tokenName)}</label>
+          <div style="font-size: 0.8em; color: ${dispositionColor};">${escapeHtml(dispositionName)}</div>
+          ${isSaveGatedManual ? `<div style="font-size: 0.8em;">${escapeHtml(statusLabel)}${saveText}</div>` : ""}
         </div>
       `;
+    }).join("") || `<p>${escapeHtml(game.i18n.localize("NAS.buffs.NoVisibleTargets"))}</p>`;
+    const readState = (html) => {
+      const $html = typeof html.find === "function" ? html : $(html);
+      const targetDetails = $html.find(".nas-target-bulk-more")?.[0];
+      if (targetDetails) targetBulkMoreOpen = targetDetails.open === true;
+      for (const state of renderedStates()) {
+        const checkbox = $html.find(`#target-${state.index}`);
+        if (checkbox.length && !checkbox.prop("disabled")) state.enabled = checkbox.prop("checked") === true;
+      }
+    };
+    const applyFilter = ($html, filter = activeFilter) => {
+      activeFilter = filter;
+      $html.find("[data-nas-target-filter]").removeClass("active").css({
+        "box-shadow": "",
+        "border-color": "var(--color-border-light-primary, #999)"
+      });
+      $html.find(`[data-nas-target-filter="${filter}"]`).addClass("active").css({
+        "box-shadow": "0 0 4px red",
+        "border-color": "red"
+      });
+      $html.find(".nas-target-option").each((_index, el) => {
+        const groups = String(el.dataset.nasTargetGroups ?? "").split(/\s+/);
+        el.style.display = filter === "all" || groups.includes(filter) ? "flex" : "none";
+      });
+    };
+    const visibleStatesForDialog = ($html) => renderedStates().filter((state) => {
+      const el = $html.find(`.nas-target-option[data-target-index="${state.index}"]`)?.[0];
+      return el && el.style.display !== "none";
     });
-    
-    content += `</div></div>`;
-    
+    const setStatesEnabled = (statesToUpdate, enabled) => {
+      for (const state of statesToUpdate) {
+        if (stateCanBeEnabled(state)) state.enabled = enabled;
+      }
+    };
+    const refreshDialog = ($html, dialog = null, { read = true } = {}) => {
+      if (read) readState($html);
+      $html.find("#ic-manual-target-controls").html(renderControls());
+      $html.find("#ic-manual-target-section").html(renderTargetCards());
+      wireManualDialog($html, dialog);
+      applyFilter($html, activeFilter);
+      dialog?.setPosition?.({ height: "auto" });
+    };
+    const rollSaveStates = async ($html, dialog, statesToRoll) => {
+      readState($html);
+      if (isSaveGatedManual && saveDc == null) {
+        ui.notifications.warn(game.i18n.localize("NAS.buffs.SaveDcMissing"));
+        return;
+      }
+      for (const state of statesToRoll) {
+        if (!state || state.bypassed || state.saveTotal != null) continue;
+        const targetRef = serializePendingTarget(state.target, null);
+        const total = await rollBuffSaveForTargetRef(targetRef, state.target, saveType, saveDc, {
+          hiddenMessage: state.secret === true,
+          privateRoll: state.secret !== true
+        });
+        if (total != null) updateStateAfterSave(state, total);
+      }
+      refreshDialog($html, dialog, { read: false });
+    };
+    const validateApply = ($html, { warn = true } = {}) => {
+      readState($html);
+      if (isSaveGatedManual && saveDc == null) {
+        if (warn) ui.notifications.warn(game.i18n.localize("NAS.buffs.SaveDcMissing"));
+        return false;
+      }
+      if (isSaveGatedManual && targetStates.some((state) => !state.bypassed && state.saveTotal == null)) {
+        if (warn) ui.notifications.warn(game.i18n.localize("NAS.buffs.SaveResultsRequired"));
+        return false;
+      }
+      return true;
+    };
+    const wireApplyValidation = ($html, dialog) => {
+      const button = dialog?.element?.find?.("button[data-button='apply']")?.[0]
+        ?? dialog?.element?.[0]?.querySelector?.("button[data-button='apply']");
+      if (!button || button.dataset.nasApplyValidationWired === "true") return;
+      button.dataset.nasApplyValidationWired = "true";
+      button.addEventListener("click", (event) => {
+        if (validateApply($html, { warn: true })) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }, true);
+    };
+    const wireManualDialog = (html, dialog = null) => {
+      const $html = typeof html.find === "function" ? html : $(html);
+      $html.find("[data-nas-target-filter]").off("click").on("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        applyFilter($html, event.currentTarget.dataset.nasTargetFilter);
+        dialog?.setPosition?.({ height: "auto" });
+      });
+      $html.find("input[name^='target-']").off("change").on("change", () => readState($html));
+      $html.find(".nas-target-bulk-more").off("toggle").on("toggle", (event) => {
+        targetBulkMoreOpen = event.currentTarget.open === true;
+      });
+      $html.find("[data-nas-target-bulk]").off("click").on("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        readState($html);
+        const actionName = event.currentTarget.dataset.nasTargetBulk;
+        const selectGroups = {
+          selectAllies: "allies",
+          selectNeutral: "neutral",
+          selectEnemies: "enemies",
+          selectSuccessful: "successful",
+          selectFailed: "failed"
+        };
+        const deselectGroups = {
+          deselectAllies: "allies",
+          deselectNeutral: "neutral",
+          deselectEnemies: "enemies",
+          deselectSuccessful: "successful",
+          deselectFailed: "failed"
+        };
+        if (actionName === "select") setStatesEnabled(visibleStatesForDialog($html), true);
+        else if (actionName === "deselect") setStatesEnabled(visibleStatesForDialog($html), false);
+        else if (selectGroups[actionName]) setStatesEnabled(targetStates.filter((state) => stateGroups(state).includes(selectGroups[actionName])), true);
+        else if (deselectGroups[actionName]) setStatesEnabled(targetStates.filter((state) => stateGroups(state).includes(deselectGroups[actionName])), false);
+        refreshDialog($html, dialog, { read: false });
+      });
+      $html.find("[data-nas-save-roll]").off("click").on("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const mode = event.currentTarget.dataset.nasSaveRoll;
+        const candidates = mode === "visible" ? visibleStatesForDialog($html) : targetStates;
+        void rollSaveStates($html, dialog, candidates.filter((state) => !state.bypassed && state.saveTotal == null));
+      });
+      $html.find("[data-nas-save-refresh]").off("click").on("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        refreshDialog($html, dialog);
+      });
+    };
+
+    let content = `<p>${game.i18n.format(isSaveGatedManual ? 'NAS.buffs.SelectSaveGatedTargets' : 'NAS.buffs.SelectTargets', { name: spellName })}</p>`;
+    content += `<div id="ic-manual-target-controls">${renderControls()}</div>`;
+    content += `<div id="ic-manual-target-section" class="target-selection-container" style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-start; max-height: 430px; overflow-y: auto; border: 1px solid #ccc; border-radius: 5px; padding: 10px; margin-top: 10px;">${renderTargetCards()}</div>`;
+
     const dialog = new Dialog({
       title: game.i18n.localize('NAS.buffs.SelectBuffTargets'),
       content: content,
@@ -1365,20 +2192,20 @@ export async function promptTargetSelection(targets, action, communalOptions = n
           icon: '<i class="fas fa-check"></i>',
           label: game.i18n.localize('NAS.buffs.ApplyBuff'),
           callback: html => {
+            const $html = typeof html.find === "function" ? html : $(html);
+            if (!validateApply($html, { warn: true })) return false;
             applied = true;
-            const selectedTargets = [];
-            filteredTargets.forEach((target, index) => {
-              let isChecked;
-              if (typeof html.find === 'function') {
-                isChecked = html.find(`#target-${index}`).prop('checked');
-              } else {
-                const checkbox = html.querySelector(`#target-${index}`);
-                isChecked = checkbox ? checkbox.checked : false;
-              }
-              if (isChecked) {
-                selectedTargets.push(target);
-              }
-            });
+            const selectedTargets = targetStates.filter((state) => state.enabled === true).map((state) => state.target);
+            if (isSaveGatedManual) {
+              selectedTargets.nasResolvedManualSelection = true;
+              selectedTargets.nasTargetSaveResults = new Map(targetStates
+                .filter((state) => state.saveTotal != null)
+                .map((state) => [state.key, { [saveType]: state.saveTotal }]));
+              selectedTargets.nasSaveResultTargets = targetStates
+                .filter((state) => state.saveTotal != null && state.secret !== true)
+                .map((state) => ({ target: state.target, saveResults: { [saveType]: state.saveTotal } }));
+              selectedTargets.nasPublicSaveResultsOnly = true;
+            }
             resolve(selectedTargets);
           }
         },
@@ -1397,8 +2224,14 @@ export async function promptTargetSelection(targets, action, communalOptions = n
           action.shared.reject = true;
           resolve([]);
         }
+      },
+      render: html => {
+        const $html = typeof html.find === "function" ? html : $(html);
+        wireManualDialog($html, dialog);
+        wireApplyValidation($html, dialog);
+        applyFilter($html, activeFilter);
       }
-    });
+    }, { width: Math.max(420, Math.min(Math.max(renderedStates().length || 1, 1), 5) * 130 + 170) });
     
     dialog.render(true);
   });
@@ -1445,6 +2278,16 @@ function durationForTarget(target, perTargetDurations, fallbackDuration) {
   return fallbackDuration;
 }
 
+function manualSelectionResultOptions(targets) {
+  if (!targets || targets.nasResolvedManualSelection !== true) return {};
+  return {
+    resolvedManualSelection: true,
+    targetSaveResults: targets.nasTargetSaveResults instanceof Map ? targets.nasTargetSaveResults : undefined,
+    saveResultTargets: Array.isArray(targets.nasSaveResultTargets) ? targets.nasSaveResultTargets : undefined,
+    publicSaveResultsOnly: targets.nasPublicSaveResultsOnly === true
+  };
+}
+
 async function storeVariantMapping(spellKey, plan, buffs) {
   const mappings = game.settings.get(MODULE.ID, variantMappingSetting) || {};
   const toStore = { ...mappings };
@@ -1471,6 +2314,8 @@ async function handleVariantPlanApplication({ action, variants, plan, targetCont
 
   const defaultDuration = { units: durationUnits, value: String(durationValue) };
   const perTargetMap = new Map((plan.perTarget || []).map(pt => [pt.targetId, pt]));
+  const targetSaveResults = plan.targetSaveResults instanceof Map ? plan.targetSaveResults : new Map();
+  const saveResultTargets = Array.isArray(plan.saveResultTargets) ? plan.saveResultTargets : [];
   const { allies, foes } = splitTargetsByDisposition(action.token, filteredTargets);
   const applyAllies = plan.applyAllies !== false;
   const applyFoes = plan.applyFoes !== false;
@@ -1480,28 +2325,54 @@ async function handleVariantPlanApplication({ action, variants, plan, targetCont
   }
 
   const immediateBuckets = new Map();
+  const deferredSwitchingBuckets = new Map();
   const combat = game.combat;
   const scheduled = [];
 
   for (const target of filteredTargets) {
     const isAlly = allies.includes(target);
     if (plan.allowSwitching) {
-      if (isAlly && !applyAllies) continue;
-      if (!isAlly && !applyFoes) continue;
+      if (isAlly && !applyAllies) {
+        continue;
+      }
+      if (!isAlly && !applyFoes) {
+        continue;
+      }
     }
     const assignment = perTargetMap.get(target.id);
+    if (assignment?.enabled === false) {
+      continue;
+    }
     const variant = assignment ? variants[assignment.variantIndex] : (allies.includes(target) ? plan.allies : plan.foes);
-    if (!variant) continue;
+    if (!variant) {
+      continue;
+    }
 
     const duration = durationForTarget(target, perTargetDurations, defaultDuration);
 
     if (plan.allowSwitching) {
       if (buffSaveGate?.deferred) {
-        await applyOrQueueBuffToTargets(action, variant, [target], duration, casterLevel, {
-          silent: true,
-          [KNOWN_BUFF_AUTOMATION_OPTION]: knownBuffAutomation,
-          buffSaveGate
-        });
+        const targetKey = targetAppliedKey(target);
+        const variantIndex = variants.findIndex((entry) => entry === variant);
+        const bucketKey = `${variant.pack || "world"}|${variant.id || variantIndex}|${variant.name || ""}`;
+        if (!deferredSwitchingBuckets.has(bucketKey)) {
+          deferredSwitchingBuckets.set(bucketKey, {
+            variant,
+            targets: [],
+            targetBuffs: new Map(),
+            targetDurations: new Map()
+          });
+        }
+        const bucket = deferredSwitchingBuckets.get(bucketKey);
+        bucket.targets.push(target);
+        if (targetKey) {
+          bucket.targetBuffs.set(targetKey, variant);
+          bucket.targetDurations.set(targetKey, duration);
+          if (targetSaveResults.has(targetKey)) {
+            bucket.targetSaveResults ??= new Map();
+            bucket.targetSaveResults.set(targetKey, targetSaveResults.get(targetKey));
+          }
+        }
         continue;
       }
       await ensureVariantsOnTarget(target, variants, duration, casterLevel, { silent: true, [KNOWN_BUFF_AUTOMATION_OPTION]: knownBuffAutomation });
@@ -1534,10 +2405,30 @@ async function handleVariantPlanApplication({ action, variants, plan, targetCont
     }
   }
 
+  for (const bucket of deferredSwitchingBuckets.values()) {
+    await applyOrQueueBuffToTargets(action, bucket.variant, bucket.targets, defaultDuration, casterLevel, {
+      silent: true,
+      [KNOWN_BUFF_AUTOMATION_OPTION]: knownBuffAutomation,
+      buffSaveGate,
+      manualSelection: targetContext.manualSelection === true,
+      resolvedManualSelection: plan.resolvedManualSelection === true,
+      targetBuffs: bucket.targetBuffs,
+      targetDurations: bucket.targetDurations,
+      targetSaveResults: bucket.targetSaveResults,
+      saveResultTargets,
+      publicSaveResultsOnly: plan.publicSaveResultsOnly === true
+    });
+  }
+
   for (const bucket of immediateBuckets.values()) {
     await applyOrQueueBuffToTargets(action, bucket.variant, bucket.targets, bucket.duration ?? defaultDuration, casterLevel, {
       [KNOWN_BUFF_AUTOMATION_OPTION]: knownBuffAutomation,
-      buffSaveGate
+      buffSaveGate,
+      manualSelection: targetContext.manualSelection === true,
+      resolvedManualSelection: plan.resolvedManualSelection === true,
+      targetSaveResults,
+      saveResultTargets,
+      publicSaveResultsOnly: plan.publicSaveResultsOnly === true
     });
   }
 
@@ -1666,6 +2557,315 @@ function readTargetSaveTotal(message, targetRef, saveType) {
   return null;
 }
 
+function pendingTargetStatusLabel(entry) {
+  if (entry.bypassed) return game.i18n.localize("NAS.buffs.TargetStatusBypassed");
+  if (entry.saveSucceeded === true) return game.i18n.localize("NAS.buffs.TargetStatusSuccessful");
+  if (entry.saveSucceeded === false) return game.i18n.localize("NAS.buffs.TargetStatusFailed");
+  return game.i18n.localize("NAS.buffs.TargetStatusNoSave");
+}
+
+function pendingTargetGroups(plan, token, entry) {
+  const groups = new Set(["all"]);
+  if (entry.defaultSelected) groups.add("eligible");
+  if (entry.bypassed) groups.add("bypassed");
+  if (entry.saveSucceeded === true) groups.add("successful");
+  if (entry.saveSucceeded === false) groups.add("failed");
+  if (!entry.bypassed && entry.saveTotal == null) groups.add("needs");
+  if (targetIsHiddenOrUnavailable(token)) groups.add("hidden");
+  const disposition = targetDispositionValue(token);
+  if (disposition === CONST.TOKEN_DISPOSITIONS.NEUTRAL) groups.add("neutral");
+  else if (isPendingBuffAlly(plan, token)) groups.add("allies");
+  else groups.add("enemies");
+  return [...groups];
+}
+
+function pendingTargetSection(entry) {
+  if (entry.bypassed) return "bypassed";
+  if (entry.saveSucceeded === false) return "failed";
+  if (entry.saveSucceeded === true) return "successful";
+  return "needs";
+}
+
+function pendingTargetSectionLabel(section) {
+  const labels = {
+    needs: "NAS.buffs.TargetSectionNeedsSave",
+    failed: "NAS.buffs.TargetSectionFailed",
+    successful: "NAS.buffs.TargetSectionSuccessful",
+    bypassed: "NAS.buffs.TargetSectionBypassed"
+  };
+  return game.i18n.localize(labels[section] ?? labels.needs);
+}
+
+function extractRollTotal(rollResult) {
+  const rollLike = rollResult?.rolls?.[0] ?? rollResult?.roll ?? null;
+  const parsedRoll = typeof rollLike === "string" ? parseRollJson(rollLike) : rollLike;
+  const candidates = [
+    rollResult?.total,
+    rollResult?.roll?.total,
+    parsedRoll?.total,
+    parsedRoll?._total,
+    rollResult?.rolls?.[0]?.total,
+    rollResult?.terms?.[0]?.total,
+    parsedRoll?.terms?.[0]?.total
+  ];
+  for (const value of candidates) {
+    const total = coerceNumberOrNull(value);
+    if (total != null) return total;
+  }
+  return extractHtmlTotal(rollResult?.content);
+}
+
+async function createGmOnlySaveMessageFromRollData(rollResult) {
+  if (!rollResult || typeof globalThis.ChatMessage?.create !== "function") return null;
+  const gmIds = game.users?.filter?.((user) => user?.isGM)?.map?.((user) => user.id)?.filter?.(Boolean) ?? [];
+  if (!gmIds.length) return null;
+  const messageData = foundry.utils.deepClone(rollResult);
+  delete messageData.rolls;
+  messageData.whisper = gmIds;
+  messageData.blind = false;
+  messageData.sound = globalThis.CONFIG?.sounds?.dice;
+  return globalThis.ChatMessage.create(messageData);
+}
+
+async function rollBuffSaveForTargetRef(targetRef, token, saveType, dc, { hiddenMessage = false, privateRoll = false } = {}) {
+  const actor = token?.actor ?? tokenDocumentFromTarget(token)?.actor ?? null;
+  if (socket) {
+    try {
+      const result = await socket.executeAsGM("rollNasBuffSaveSocket", targetRef, saveType, dc, { hiddenMessage, privateRoll });
+      return coerceNumberOrNull(result?.total);
+    } catch (err) {
+      console.warn(`${MODULE.ID} | GM save roll socket failed for ${token?.name ?? actor?.name ?? "target"}.`, err);
+    }
+  }
+  if (!actor?.rollSavingThrow) return null;
+
+  const rollResult = await actor.rollSavingThrow(saveType, {
+    dc,
+    skipDialog: true,
+    fastForward: true,
+    token: token?.object ?? token,
+    chatMessage: hiddenMessage ? false : true,
+    rollMode: hiddenMessage ? undefined : (privateRoll ? "gmroll" : undefined),
+    noSound: hiddenMessage === true
+  });
+  const total = extractRollTotal(rollResult);
+  if (hiddenMessage) await createGmOnlySaveMessageFromRollData(rollResult);
+  return total;
+}
+
+async function waitForTargetSaveTotal(message, targetRef, saveType, attempts = 5) {
+  for (let i = 0; i < attempts; i += 1) {
+    const total = readTargetSaveTotal(message, targetRef, saveType);
+    if (total != null) return total;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return null;
+}
+
+async function writeTargetSaveTotal(message, targetRef, saveType, total) {
+  if (!message || !targetRef?.tokenUuid || total == null) return;
+  const targetDefense = foundry.utils.deepClone(message.getFlag("pf1", "targetDefense") ?? {});
+  foundry.utils.setProperty(targetDefense, `${targetRef.tokenUuid}.save.${saveType}`, total);
+  await message.setFlag("pf1", "targetDefense", targetDefense);
+}
+
+async function writePendingPlanSaveResults(message, plan, saveType) {
+  if (!message || (!Array.isArray(plan?.targets) && !Array.isArray(plan?.saveResultTargets))) return false;
+  const targetDefense = foundry.utils.deepClone(message.getFlag("pf1", "targetDefense") ?? {});
+  let changed = false;
+  const targetRefs = plan.publicSaveResultsOnly === true
+    ? (plan.saveResultTargets ?? [])
+    : [...(plan.saveResultTargets ?? []), ...(plan.targets ?? [])];
+  for (const targetRef of targetRefs) {
+    const total = saveResultForTargetRef(targetRef, saveType);
+    if (total == null || !targetRef?.tokenUuid) continue;
+    foundry.utils.setProperty(targetDefense, `${targetRef.tokenUuid}.save.${saveType}`, total);
+    changed = true;
+  }
+  if (changed) await message.setFlag("pf1", "targetDefense", targetDefense);
+  return changed;
+}
+
+async function rollPendingBuffSaves(message, entries, saveType, dc) {
+  const rollEntries = entries.filter((entry) => !entry.bypassed && entry.saveTotal == null && entry.token?.actor);
+  for (const entry of rollEntries) {
+    const before = readTargetSaveTotal(message, entry.targetRef, saveType);
+    if (before != null) continue;
+    let rollResult = null;
+    try {
+      rollResult = await entry.token.actor.rollSavingThrow(saveType, {
+        dc,
+        skipDialog: true,
+        fastForward: true,
+        reference: message.uuid,
+        message
+      });
+    } catch (err) {
+      console.warn(`${MODULE.ID} | Failed to roll save for ${entry.token?.name ?? entry.token?.actor?.name ?? "target"}.`, err);
+      continue;
+    }
+    const attachedTotal = await waitForTargetSaveTotal(message, entry.targetRef, saveType);
+    if (attachedTotal != null) continue;
+    const total = extractRollTotal(rollResult);
+    if (total != null) await writeTargetSaveTotal(message, entry.targetRef, saveType, total);
+  }
+}
+
+async function promptPendingBuffTargetSelection(message, plan, entries, saveType, dc) {
+  if (!entries.length) return [];
+  const buffName = plan?.buff?.name || game.i18n.localize("NAS.buffs.ApplyBuff");
+  const targetEntries = entries.map((entry, index) => ({
+    ...entry,
+    index,
+    groups: pendingTargetGroups(plan, entry.token, entry)
+  }));
+
+  return new Promise(resolve => {
+    let applied = false;
+    let content = `<p style="margin-bottom:8px;">${game.i18n.format("NAS.buffs.SelectSaveGatedTargets", { name: escapeHtml(buffName) })}</p>`;
+    content += targetSelectionControlsHtml(targetEntries);
+    content += `<div class="target-selection-container" style="max-height: 430px; overflow-y: auto; border: 1px solid #ccc; border-radius: 5px; padding: 10px; margin-top: 10px;">`;
+    const sectionOrder = ["needs", "failed", "successful", "bypassed"];
+    for (const section of sectionOrder) {
+      const sectionEntries = targetEntries.filter((entry) => pendingTargetSection(entry) === section);
+      if (!sectionEntries.length) continue;
+      content += `<section style="margin-bottom: 12px;"><h3 style="margin: 0 0 8px 0;">${escapeHtml(pendingTargetSectionLabel(section))}</h3>`;
+      content += `<div style="display: flex; flex-wrap: wrap; gap: 12px; align-items:flex-start;">`;
+      sectionEntries.forEach((entry) => {
+      const token = entry.token;
+      const tokenName = token?.name || token?.actor?.name || "";
+      const tokenImg = token?.document?.texture?.src || token?.texture?.src || token?.actor?.img || "";
+      const isAlly = isPendingBuffAlly(plan, token);
+      const statusLabel = pendingTargetStatusLabel(entry);
+      const saveText = entry.saveTotal == null ? "" : ` ${escapeHtml(String(entry.saveTotal))}`;
+      const canApply = entry.bypassed || entry.saveTotal != null;
+      content += `
+        <div class="target-option nas-target-option" data-nas-target-groups="${escapeHtml(entry.groups.join(" "))}" style="display: flex; flex-direction: column; align-items: center; width: 118px;">
+          <img src="${tokenImg}" style="width: 64px; height: 64px; border: 2px solid ${isAlly ? 'green' : 'red'}; border-radius: 5px;" />
+          <input type="checkbox" id="pending-target-${entry.index}" name="pending-target-${entry.index}" ${entry.defaultSelected ? "checked" : ""} ${canApply ? "" : "disabled"} style="margin: 6px 0 3px 0;" />
+          <label for="pending-target-${entry.index}" style="margin-bottom: 3px;">${escapeHtml(tokenName)}</label>
+          <div style="font-size: 0.8em; color: ${isAlly ? 'green' : 'red'};">${escapeHtml(targetDispositionLabel(token, { document: { disposition: plan?.caster?.disposition }, actor: { uuid: plan?.caster?.actorUuid } }))}</div>
+          <div style="font-size: 0.8em;">${escapeHtml(statusLabel)}${saveText}</div>
+        </div>
+      `;
+      });
+      content += `</div></section>`;
+    }
+
+    content += `</div>`;
+
+    const dialog = new Dialog({
+      title: game.i18n.localize("NAS.buffs.SelectBuffTargets"),
+      content,
+      buttons: {
+        rollVisible: {
+          icon: '<i class="fas fa-dice-d20"></i>',
+          label: game.i18n.localize("NAS.buffs.RollSavesVisible"),
+          callback: async html => {
+            applied = true;
+            const visibleEntries = targetEntries.filter((entry) => {
+              const el = (typeof html.find === "function")
+                ? html.find(`#pending-target-${entry.index}`).closest(".nas-target-option")?.[0]
+                : html.querySelector(`#pending-target-${entry.index}`)?.closest(".nas-target-option");
+              return el && el.style.display !== "none";
+            });
+            await rollPendingBuffSaves(message, visibleEntries, saveType, dc);
+            resolve({ action: "refresh" });
+          }
+        },
+        rollAll: {
+          icon: '<i class="fas fa-dice"></i>',
+          label: game.i18n.localize("NAS.buffs.RollSavesAllPending"),
+          callback: async () => {
+            applied = true;
+            await rollPendingBuffSaves(message, targetEntries, saveType, dc);
+            resolve({ action: "refresh" });
+          }
+        },
+        refresh: {
+          icon: '<i class="fas fa-sync"></i>',
+          label: game.i18n.localize("NAS.buffs.RefreshSaveResults"),
+          callback: () => {
+            applied = true;
+            resolve({ action: "refresh" });
+          }
+        },
+        apply: {
+          icon: '<i class="fas fa-check"></i>',
+          label: game.i18n.localize("NAS.buffs.ApplyBuff"),
+          callback: html => {
+            applied = true;
+            const selected = [];
+            targetEntries.forEach((entry) => {
+              let isChecked;
+              if (typeof html.find === "function") {
+                isChecked = html.find(`#pending-target-${entry.index}`).prop("checked");
+              } else {
+                const checkbox = html.querySelector(`#pending-target-${entry.index}`);
+                isChecked = checkbox ? checkbox.checked : false;
+              }
+              if (isChecked) selected.push(entry);
+            });
+            resolve({ action: "apply", selected });
+          }
+        },
+        cancel: {
+          icon: '<i class="fas fa-times"></i>',
+          label: game.i18n.localize("NAS.common.buttons.cancel"),
+          callback: () => {
+            applied = true;
+            resolve({ action: "cancel" });
+          }
+        }
+      },
+      default: "apply",
+      close: () => {
+        if (!applied) resolve({ action: "cancel" });
+      },
+      render: html => {
+        wireTargetSelectionControls(html, dialog);
+      }
+    }, { width: 640 });
+    dialog.render(true);
+  });
+}
+
+async function collectPendingBuffTargetEntries(message, plan, saveType, mode, dc, applied, skipped) {
+  const entries = [];
+
+  for (const targetRef of plan.targets ?? []) {
+    const appliedKey = pendingTargetAppliedKey(targetRef);
+    if (!appliedKey || applied.has(appliedKey) || skipped.has(appliedKey)) {
+      continue;
+    }
+
+    const token = await resolvePendingBuffTarget(targetRef);
+    if (!token?.actor) {
+      continue;
+    }
+
+    const bypassed = plan?.save?.alliesBypass === true && isPendingBuffAlly(plan, token);
+    let saveTotal = null;
+    let saveSucceeded = null;
+    if (!bypassed) {
+      if (dc == null) {
+        continue;
+      }
+      saveTotal = readTargetSaveTotal(message, targetRef, saveType);
+      saveSucceeded = saveTotal == null ? null : saveTotal >= dc;
+    }
+
+    const defaultSelected = bypassed || (saveSucceeded != null && (mode === "failed" ? !saveSucceeded : saveSucceeded));
+    entries.push({ targetRef, token, appliedKey, bypassed, saveTotal, saveSucceeded, defaultSelected });
+  }
+
+  return { entries };
+}
+
+async function resolvePendingBuffForTarget(plan, targetRef) {
+  return resolveBuffReference(targetRef?.buff ?? plan?.buff);
+}
+
 async function processPendingBuffPlan(message, plan) {
   const saveType = normalizeSaveType(plan?.save?.type ?? message?.system?.save?.type);
   const mode = normalizeBuffSaveHandlingMode(plan?.save?.mode);
@@ -1675,7 +2875,72 @@ async function processPendingBuffPlan(message, plan) {
 
   const dc = coerceNumberOrNull(plan?.save?.dc ?? message?.system?.save?.dc);
   const applied = new Set(Array.isArray(plan.appliedTargetUuids) ? plan.appliedTargetUuids : []);
+  const skipped = new Set(Array.isArray(plan.skippedTargetUuids) ? plan.skippedTargetUuids : []);
   let changed = false;
+
+  if (plan.resolvedManualSelection === true) {
+    changed = await writePendingPlanSaveResults(message, plan, saveType) || changed;
+    for (const targetRef of plan.targets ?? []) {
+      const appliedKey = pendingTargetAppliedKey(targetRef);
+      if (!appliedKey || applied.has(appliedKey)) continue;
+      const token = await resolvePendingBuffTarget(targetRef);
+      if (!token?.actor) {
+        skipped.add(appliedKey);
+        changed = true;
+        continue;
+      }
+      const buff = await resolvePendingBuffForTarget(plan, targetRef);
+      if (!buff) {
+        skipped.add(appliedKey);
+        changed = true;
+        continue;
+      }
+      await applyBuffToTargets(buff, [token], targetRef.duration ?? null, plan.casterLevel, plan.options ?? {});
+      applied.add(appliedKey);
+      changed = true;
+    }
+    plan.appliedTargetUuids = [...applied];
+    plan.skippedTargetUuids = [...skipped];
+    return changed;
+  }
+
+  if (plan.manualSelection === true) {
+    while (true) {
+      const { entries } = await collectPendingBuffTargetEntries(message, plan, saveType, mode, dc, applied, skipped);
+      if (entries.length === 0) {
+        return changed;
+      }
+
+      const result = await promptPendingBuffTargetSelection(message, plan, entries, saveType, dc);
+      if (result?.action === "refresh") continue;
+      if (result?.action !== "apply") return changed;
+
+      const selectedEntries = Array.isArray(result.selected) ? result.selected : [];
+      const selectedKeys = new Set(selectedEntries.map((entry) => entry.appliedKey));
+      for (const entry of entries) {
+        if (!selectedKeys.has(entry.appliedKey)) {
+          skipped.add(entry.appliedKey);
+          changed = true;
+        }
+      }
+
+      for (const entry of selectedEntries) {
+        const buff = await resolvePendingBuffForTarget(plan, entry.targetRef);
+        if (!buff) {
+          skipped.add(entry.appliedKey);
+          changed = true;
+          continue;
+        }
+        await applyBuffToTargets(buff, [entry.token], entry.targetRef.duration ?? null, plan.casterLevel, plan.options ?? {});
+        applied.add(entry.appliedKey);
+        changed = true;
+      }
+
+      plan.appliedTargetUuids = [...applied];
+      plan.skippedTargetUuids = [...skipped];
+      return changed;
+    }
+  }
   
   for (const targetRef of plan.targets ?? []) {
     const appliedKey = pendingTargetAppliedKey(targetRef);
@@ -1706,7 +2971,7 @@ async function processPendingBuffPlan(message, plan) {
             continue;
     }
 
-    const buff = await resolveBuffReference(plan.buff);
+    const buff = await resolvePendingBuffForTarget(plan, targetRef);
     if (!buff) {
             continue;
     }
@@ -1793,6 +3058,11 @@ export async function activateVariantForTarget(target, variant, variants, durati
   }
 }
 
+/**
+ * Normalize action/spell duration to PF1 buff duration semantics.
+ * - inst/perm => untimed permanent buff
+ * - seeText => untimed buff (subtype unchanged)
+ */
 function normalizeDurationForBuff(duration = {}) {
   const sourceUnits = (duration?.sourceUnits ?? duration?.units ?? "").toString().trim();
   const rawValue = duration?.value;
@@ -1872,12 +3142,12 @@ function normalizeDurationToEffectSeconds(normalizedDuration = {}) {
     case "week":
     case "weeks":
       return numericValue * 604800;
-      case "month":
-      case "months":
-        return numericValue * 2592000;
-      case "year":
-      case "years":
-        return numericValue * 31536000;
+    case "month":
+    case "months":
+      return numericValue * 2592000;
+    case "year":
+    case "years":
+      return numericValue * 31536000;
     case "":
       return 0;
     default:
@@ -1909,6 +3179,7 @@ export async function applyBuffToTargets(buff, targets, duration, casterLevel, o
   const activate = options.activate !== false;
   const silent = !!options.silent;
   const buffName = getKnownBuffApplicationName(buff, options) || buff?.name || "";
+  // If not GM, use socket to request GM to apply the buff
   if (!game.user.isGM) {
     return socket.executeAsGM(
       "applyBuffToTargetsSocket",
@@ -1924,6 +3195,7 @@ export async function applyBuffToTargets(buff, targets, duration, casterLevel, o
     );
   }
   
+  // Check for valid inputs
   if (!buff || !targets || targets.length === 0) {
     console.warn(`${MODULE.ID} | Cannot apply buff: Invalid buff or no targets`);
     return;
@@ -1953,8 +3225,7 @@ export async function applyBuffToTargets(buff, targets, duration, casterLevel, o
           const source = item.flags?.[MODULE.ID]?.sourceId || item.flags?.core?.sourceId || item._stats?.compendiumSource;
           if (!source || !source.startsWith("Compendium.")) return false;
 
-          const parts = source.split('.');
-
+          const parts = source.split('.');                    
           const itemIndex = parts.findIndex(part => part === "Item");
           if (itemIndex > 1) {
             const sourcePackId = parts.slice(1, itemIndex).join('.');
@@ -2086,8 +3357,15 @@ function checkAndConsumeSpellSlots({ action, filteredTargets, isCommunal, isArea
       ?? action.shared?.nasSpellContext?.metamagic?.slotIncrease
       ?? 0
     );
+    const preparedConsumptionSlotLevel = Number(
+      action.shared?.nasSpellContext?.metamagic?.preparedSpellbookConsumption?.targetSlotLevel
+      ?? action.shared?.nasSpellContext?.spellbookPreparedSpell?.consumption?.targetSlotLevel
+      ?? NaN
+    );
     const isSpontaneous = Boolean(spellbookData?.spontaneous);
-    const targetSpellLevel = isSpontaneous ? baseSpellLevel + slotIncrease : baseSpellLevel;
+    const targetSpellLevel = isSpontaneous && Number.isFinite(preparedConsumptionSlotLevel)
+      ? preparedConsumptionSlotLevel
+      : (isSpontaneous ? baseSpellLevel + slotIncrease : baseSpellLevel);
     const spellLevelKey = `spell${targetSpellLevel}`;
     const spellLevelData = spellbookData?.spells?.[spellLevelKey];
 
@@ -2139,7 +3417,7 @@ function checkAndConsumeSpellSlots({ action, filteredTargets, isCommunal, isArea
     const targetText = action.action?.target?.value
       || action.item?.system?.actions?.[0]?.target?.value
       || action.item?.system?.target?.value;
-      const casterLevel = getRuntimeCasterLevel(action);
+    const casterLevel = getRuntimeCasterLevel(action);
     const parsedCount = estimateScalableTargets(targetText, casterLevel);
     if (parsedCount && parsedCount >= filteredTargets.length) {
       let originalCost = 1;
@@ -2160,7 +3438,7 @@ function evaluateScalableTargetAllowance(action, filteredTargets) {
   const targetText = action.action?.target?.value
     || action.item?.system?.actions?.[0]?.target?.value
     || action.item?.system?.target?.value;
-    const casterLevel = getRuntimeCasterLevel(action);
+  const casterLevel = getRuntimeCasterLevel(action);
   const parsedCount = estimateScalableTargets(targetText, casterLevel);
   if (!forceScalable && (!parsedCount || parsedCount < filteredTargets.length)) {
     return null;
@@ -2411,7 +3689,3 @@ async function parseCommunalDuration({ action, durationUnits, rawDurationValue, 
 
   return null;
 }
-
-
-
-

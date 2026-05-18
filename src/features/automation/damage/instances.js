@@ -9,6 +9,13 @@ export function getTypeIdsFromInstance(inst) {
 export function toDamagePartModel(data) {
     const Ctor = pf1?.models?.action?.DamagePartModel;
     if (!Ctor) return data;
+    const copyEnumerableExtras = (model, source) => {
+        if (!model || !source || typeof source !== "object") return;
+        for (const key of Object.keys(source)) {
+            if (key === "types" || key === "type" || key === "formula" || key === "value") continue;
+            model[key] = source[key];
+        }
+    };
     const ensureEnumerableValue = (model, source) => {
         const rawValue = Number(source?.value ?? source?.total ?? source?.formula);
         if (!Number.isFinite(rawValue)) return;
@@ -30,10 +37,16 @@ export function toDamagePartModel(data) {
 
     const base = data?.toObject?.() ?? data;
     const m = new Ctor(base);
+    copyEnumerableExtras(m, data);
     if (!Number.isFinite(m.value)) {
         ensureEnumerableValue(m, data);
     }
     return m;
+}
+
+function markNasDamageRole(instance, role) {
+    if (instance && role) instance._nasDamageRole = role;
+    return instance;
 }
 
 export function buildNumericInstances(valueAbs, options) {
@@ -59,10 +72,13 @@ export function buildNumericInstances(valueAbs, options) {
     if (attack) {
         const baseParts = Array.isArray(attack.damage) ? attack.damage : [];
         const critParts = Array.isArray(attack.critDamage) ? attack.critDamage : [];
-        const parts = options.isCritical ? [...baseParts, ...critParts] : baseParts;
+        const parts = [
+            ...baseParts.map((part) => ({ part, role: "base" })),
+            ...(options.isCritical ? critParts.map((part) => ({ part, role: "critical" })) : [])
+        ];
 
         const out = [];
-        for (const p of parts) {
+        for (const { part: p, role } of parts) {
             if (!Number.isFinite(p?.total)) continue;
 
             const dt = p?.options?.damageType;
@@ -72,9 +88,9 @@ export function buildNumericInstances(valueAbs, options) {
             if (Ctor) {
                 const inst = new Ctor({ types });
                 inst.value = p.total;
-                out.push(inst);
+                out.push(markNasDamageRole(inst, role));
             } else {
-                out.push({ types, value: p.total });
+                out.push({ types, value: p.total, _nasDamageRole: role });
             }
         }
 

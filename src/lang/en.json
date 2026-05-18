@@ -3,6 +3,134 @@
     "legacy": {
       "blocked": "Nevela's Automation Suite is incompatible with the legacy module(s) {legacyList}. These modules are no longer supported. Disable them to use Nevela's Automation Suite. (The legacy migration tool remains available.)"
     },
+    "spellbookPreparation": {
+      "title": "Prepare {book}",
+      "actions": {
+        "apply": "Apply",
+        "addVariant": "Add prepared variant",
+        "autoSuffix": "Auto-title",
+        "configureMetamagic": "Inscribe metamagic",
+        "importCurrent": "Import current spellbook",
+        "importMissing": "Import missing spells",
+        "prepare": "Prepare",
+        "removeKnown": "Remove from known spells",
+        "removeVariant": "Remove prepared variant",
+        "startEmpty": "Start empty"
+      },
+      "labels": {
+        "arcanistMode": "Arcanist",
+        "atWill": "At will",
+        "bookmarks": "Spell levels",
+        "domain": "Domain",
+        "domainSlots": "Domain",
+        "decreaseCount": "Decrease prepared count",
+        "firstRunIntro": "Choose how NAS should initialize its known-spell list for this spellbook.",
+        "firstRunTitle": "Initialize Known Spellbook",
+        "heightenTo": "Heighten to",
+        "increaseCount": "Increase prepared count",
+        "importableSpells": "{count} current spells available to import.",
+        "importMissingSummary": "{count} current spells are not in the NAS spellbook.",
+        "inscriptionTitle": "Metamagic inscription",
+        "missingSource": "Missing source",
+        "noMetamagicFeats": "No actor-owned metamagic feats are available.",
+        "noResults": "No matching spells.",
+        "noSpells": "No spells in this spellbook.",
+        "normalSlots": "Prepared",
+        "notApplicable": "Not applicable",
+        "originalLevel": "Original level",
+        "overLimit": "Over limit",
+        "pending": "Pending",
+        "preparedMode": "Prepared",
+        "preparedSlot": "Prepared slot",
+        "preparedSlotShort": "Slot",
+        "reachSteps": "Reach steps",
+        "search": "Search",
+        "selected": "Prepared",
+        "sheetPreparedSlotBadge": "Slot {level}",
+          "slotCost": "Slot cost",
+          "slotCostShort": "Cost",
+          "slotIncrease": "+{value} slot",
+          "slotTooHigh": "Prepared slot would exceed 9th level.",
+          "slotUnavailable": "Unavailable slot",
+          "slotUnavailableLowAbility": "Unavailable: low casting ability score",
+          "slotUnknown": "Slot availability unknown",
+          "unavailableCap": "Unavailable",
+          "unknownCap": "?",
+        "unknownSpell": "Unknown spell",
+        "variantDefault": "Variant",
+        "variantSource": "from",
+        "variantSuffix": "Variant suffix"
+      },
+      "tooltips": {
+        "nextPage": "Next spell levels",
+        "prepare": "Prepare this spellbook",
+        "preparePending": "Prepare this spellbook for the new day",
+        "preparedSlotRelocated": "Prepared as {prepared}; original spell level {original}",
+        "previousPage": "Previous spell levels"
+      },
+      "warnings": {
+        "ineligible": "This spellbook cannot be prepared.",
+        "metamagicUnavailable": "This metamagic inscription is not available for this spell.",
+        "noPermission": "You do not have permission to prepare this spellbook.",
+        "notInitialized": "Initialize the NAS known spellbook before applying preparation.",
+        "overLimit": "Resolve over-prepared spell levels before applying preparation."
+      },
+      "confirm": {
+        "removeKnownContent": "Remove {spell} from the NAS known spellbook? The actor item will not be deleted.",
+        "removeKnownTitle": "Remove Known Spell"
+      },
+      "info": {
+        "applied": "{book} prepared.",
+        "knownImported": "{count} spells imported into the NAS spellbook.",
+        "knownMissingImported": "{count} spells imported into the NAS spellbook.",
+        "knownRemoved": "{spell} removed from the NAS known spellbook.",
+        "knownStartedEmpty": "NAS known spellbook initialized."
+      }
+    },
+    "lighting": {
+      "behaviorType": {
+        "name": "PF1 Lighting Zone (NAS)"
+      },
+      "behavior": {
+        "FIELDS": {
+          "zoneMode": {
+            "label": "Zone mode",
+            "hint": "How this region participates in PF1 light/darkness resolution (pair with core Adjust Darkness or lights for visuals if needed)."
+          },
+          "spellLevel": {
+            "label": "Spell level",
+            "hint": "Spell level for light/darkness stacking (0 if not from a spell or not applicable)."
+          },
+          "ambientSteps": {
+            "label": "Ambient steps",
+            "hint": "How many steps to reduce ambient light inside this zone (PF1 darkness spells); used by future automation."
+          },
+          "ambientLightLevel": {
+            "label": "Ambient light level",
+            "hint": "Prevailing PF1 light level inside this region before magical light or darkness modifiers are applied."
+          },
+          "notes": {
+            "label": "Notes",
+            "hint": "GM-facing reminder (e.g. spell name, caster)."
+          }
+        }
+      },
+      "zoneMode": {
+        "annotate": "Annotate only (resolver metadata)",
+        "supernaturalDarkness": "Supernatural darkness (darkvision typically ineffective)",
+        "magicalDarkness": "Magical darkness (spell-level interactions)",
+        "daylightNegation": "Daylight-style negation zone",
+        "suppressNonmagical": "Suppress non-magical light sources"
+      },
+      "lightLevel": {
+        "inherit": "Scene/default ambient",
+        "bright": "Bright light",
+        "normal": "Normal light",
+        "dim": "Dim light",
+        "darkness": "Darkness",
+        "supernaturalDarkness": "Supernatural darkness"
+      }
+    },
     "settings": {
       "enableDamageAutomation": {
         "name": "Enable Damage Automation",
@@ -11,6 +139,48 @@
       "enableMetamagicAutomation": {
         "name": "Enable Metamagic Automation",
         "hint": "When disabled, Nevela's Automation Suite will not add metamagic UI or automation (e.g. persistent/dazing save workflow, empower tooltip overrides)."
+      },
+      "spellbookPreparationMode": {
+        "name": "Spellbook Preparation Mode",
+        "hint": "Choose how NAS handles prepared spellbook and preconfigured metamagic spell variants.",
+        "choices": {
+          "classic": "Classic / off",
+          "variantsOnly": "Metamagic variants only",
+          "full": "Full spellbook preparation"
+        }
+      },
+      "spellbookAllowExtraCastTimeMetamagic": {
+        "name": "Allow Extra Cast-Time Metamagic",
+        "hint": "When enabled, generated prepared spell variants can still add different metamagic in the cast dialog. Duplicate prepared metamagic is still hidden."
+      },
+      "spellbookRestReset": {
+        "name": "Reset Prepared Spellbooks on Rest",
+        "hint": "When enabled in full spellbook mode, daily-use restoration clears prepared and arcanist spell preparation so the actor prepares again."
+      },
+      "spellbookHideSourceSpells": {
+        "name": "Hide Source Spellbook Spells",
+        "hint": "When enabled in full spellbook mode, NAS hides original known/source spell items after generated prepared spells are managed."
+      },
+      "spellbookAutoOpenAfterRest": {
+        "name": "Auto-Open Preparation After Rest",
+        "hint": "Personal preference: open owned spellbook preparation windows after a rest when preparation is requested."
+      },
+      "spellbookShowActorSheetPrepareControl": {
+        "name": "Show Actor Sheet Prepare Control",
+        "hint": "Personal preference: show NAS's prepare button on eligible spellbook headers."
+      },
+      "spellbookShowCastDialogPreparedPreview": {
+        "name": "Show Prepared Metamagic Preview",
+        "hint": "Personal preference: show read-only prepared metamagic details inside the cast dialog metamagic preview."
+      },
+      "spellbookAnimationMode": {
+        "name": "Spellbook Animation Mode",
+        "hint": "Personal preference: choose how much animation NAS uses for spellbook preparation UI.",
+        "choices": {
+          "full": "Full",
+          "reduced": "Reduced",
+          "off": "Off"
+        }
       },
       "enforceSpellAbilityMinimum": {
         "name": "Enforce Spell Ability Minimum",
@@ -68,6 +238,10 @@
       "saveRollTokenInteraction": {
         "name": "Save Roll Token Interaction",
         "hint": "Add a clickable token image to saving throw roll messages."
+      },
+      "hidePrivateSaveRollOutcomeFromPlayers": {
+        "name": "Hide Private Save Outcomes from Players",
+        "hint": "Hide PF1 save success or failure text from non-GM chat views when a save roll is whispered privately to the GM."
       },
       "enhancedDiceTooltipMode": {
         "name": "Enhanced Dice Tooltip",
@@ -360,7 +534,7 @@
         "buff": "Buff Automation",
         "damage": "Damage Automation",
         "condition": "Condition Automation",
-        "metamagic": "Metamagic Automation",
+        "spellcasting": "Spellcasting Automation",
         "translations": "Translations"
       },
       "config": {
@@ -874,8 +1048,57 @@
       "SelectBuffVariant": "Select Buff Variant",
       "SelectEnergyType": "Select Energy Type",
       "SelectTargets": "Select which targets should receive <strong>{name}</strong>:",
+      "SelectSaveGatedTargets": "Resolve saves and choose which targets should receive <strong>{name}</strong>:",
       "SelectBuffTargets": "Select Buff Targets",
       "ApplyBuff": "Apply Buff",
+      "TargetFilterAll": "All",
+      "TargetFilterAllies": "Allies",
+      "TargetFilterEnemies": "Enemies",
+      "TargetFilterNeutral": "Neutral",
+      "TargetFilterHidden": "Secret",
+      "TargetFilterEligible": "All eligible",
+      "TargetFilterNeedsSave": "Needs save",
+      "TargetFilterFailed": "Failed saves",
+      "TargetFilterSuccessful": "Successful saves",
+      "TargetFilterBypassed": "Bypassed",
+      "TargetBulkSelectLabel": "Select:",
+      "TargetBulkDeselectLabel": "Deselect:",
+      "TargetBulkMore": "More",
+      "TargetSelectVisible": "Select visible",
+      "TargetDeselectVisible": "Deselect visible",
+      "TargetSelectAllies": "Select allies",
+      "TargetSelectNeutral": "Select neutral",
+      "TargetSelectEnemies": "Select enemies",
+      "TargetSelectSaved": "Select saved",
+      "TargetSelectFailed": "Select failed",
+      "TargetDeselectAllies": "Deselect allies",
+      "TargetDeselectNeutral": "Deselect neutral",
+      "TargetDeselectEnemies": "Deselect enemies",
+      "TargetDeselectSaved": "Deselect saved",
+      "TargetDeselectFailed": "Deselect failed",
+      "TargetSetVariantVisible": "Set visible",
+      "TargetSetVariantAllies": "Set allies",
+      "TargetSetVariantEnemies": "Set enemies",
+      "TargetSetVariantNeutral": "Set neutral",
+      "TargetSetVariantSecret": "Set secret",
+      "TargetSetVariantNeedsSave": "Set needs save",
+      "TargetSetVariantFailed": "Set failed",
+      "TargetSetVariantSuccessful": "Set saved",
+      "TargetSetVariantBypassed": "Set bypassed",
+      "TargetSectionNeedsSave": "Needs save",
+      "TargetSectionFailed": "Failed save",
+      "TargetSectionSuccessful": "Successful save",
+      "TargetSectionBypassed": "Bypassed",
+      "TargetStatusFailed": "Failed",
+      "TargetStatusSuccessful": "Successful",
+      "TargetStatusNoSave": "No save",
+      "TargetStatusBypassed": "Bypassed",
+      "RollSavesVisible": "Roll saves for visible",
+      "RollSavesAllPending": "Roll saves for all pending",
+      "RefreshSaveResults": "Refresh",
+      "SaveDcMissing": "Unable to resolve the save DC for this action.",
+      "SaveResultsRequired": "Roll all pending saves before applying this buff.",
+      "NoVisibleTargets": "No visible targets.",
       "ApplyOnCast": "Apply on cast",
       "ApplyOnTurn": "Apply at target's turn",
       "ApplyOnCastShort": "On cast",
@@ -1053,8 +1276,10 @@
       },
       "preview": {
         "title": "Metamagic Preview",
+        "prepared": "Prepared: {value}",
         "selected": "Selected: {value}",
         "options": "Options: {value}",
+        "preparedSlotLevel": "Prepared slot level: {value}",
         "requiredSlotLevel": "Required slot level: {value}",
         "effectiveSpellLevel": "Effective spell level: {value}",
         "requiredSlotLevelUses": "Required slot level: {value} (uses 1 level {value} slot)",
@@ -1247,14 +1472,21 @@
       "grantedDefenseDI": "Damage Immunity",
       "grantedDefenseCI": "Condition Immunity",
       "grantedDefenseDV": "Damage Vulnerability",
+      "grantedDefenseFortification": "Fortification",
+      "fortificationLight": "Light (25%)",
+      "fortificationModerate": "Moderate (50%)",
+      "fortificationHeavy": "Heavy (75%)",
+      "fortificationImmune": "Immune (100%)",
       "grantedDefenseStackable": "Stackable",
       "chatSummary": {
         "onHitTitle": "On Hit — {item}",
         "onStruckTitle": "On Struck — {item}",
         "absorptionTitle": "Damage Absorption — {actor}",
+        "fortificationTitle": "Fortification — {actor}",
         "subtitleOnHit": "vs. {other} · {finalDamage} damage dealt on this hit",
         "subtitleOnStruck": "Struck by {other} — {finalDamage} damage was dealt on this hit",
         "absorptionSubtitle": "Struck by {other} — {incomingDamage} incoming damage",
+        "fortificationSubtitle": "Struck by {other} — {tier} ({chance}%)",
         "onHitFallback": "Reactive effect",
         "onStruckFallback": "Reactive effect",
         "unknownBuff": "Unnamed buff",
@@ -1266,6 +1498,9 @@
         "lineAbsorptionConvertDamage": "{item} converts {amount} damage to {type}.",
         "lineAbsorptionSpend": "{item} counts {amount} damage toward discharge. {remaining} absorption remains.",
         "lineAbsorptionReduce": "{item} reduces {amount} damage.",
+        "lineFortificationSuccess": "Fortification check {roll} vs {chance}% succeeds; {amount} critical/precision damage negated.",
+        "lineFortificationImmune": "Fortification immunity negates {amount} critical/precision damage.",
+        "lineFortificationFailure": "Fortification check {roll} vs {chance}% fails; {amount} damage negated.",
         "absorptionCombatText": "Absorbed {amount}",
         "lineApplyCondition": "{actor} gains {name}.",
         "lineRemoveCondition": "{actor} loses {name}.",
