@@ -181,6 +181,13 @@ function temporaryHpCompatibilityOptionsHtml(selected) {
   ).join("");
 }
 
+function fortificationOptionsHtml(selected) {
+  const current = normalizeGrantedDefenses({ fortification: selected }).fortification;
+  return getGrantedDefenseOptions("fortification").map((option) =>
+    `<option value="${foundry.utils.escapeHTML(option.id)}" ${option.id === current ? "selected" : ""}>${foundry.utils.escapeHTML(option.label)}</option>`
+  ).join("");
+}
+
 function buffSaveHandlingOptionsHtml(selected) {
   const current = normalizeBuffSaveHandlingMode(selected);
   return [
@@ -1810,6 +1817,7 @@ function toAbsorptionPayload(state) {
 }
 
 function normalizeTemporaryHpConfig(raw = {}, item = null) {
+  const formula = String(raw?.formula ?? raw?.amountFormula ?? raw?.maxFormula ?? raw?.max ?? raw?.amount ?? raw?.value ?? "").trim();
   const max = Number.isFinite(Number(raw?.max ?? raw?.amount ?? raw?.value))
     ? Math.max(0, Math.floor(Number(raw.max ?? raw.amount ?? raw.value)))
     : 0;
@@ -1822,6 +1830,7 @@ function normalizeTemporaryHpConfig(raw = {}, item = null) {
   return {
     enabled: raw?.enabled === true,
     max,
+    formula,
     remaining,
     capacity,
     label: String(raw?.label ?? item?.name ?? ""),
@@ -1843,17 +1852,22 @@ function toGrantedDefensesPayload(state) {
     eres: normalized.eres,
     di: normalized.di,
     ci: normalized.ci,
-    dv: normalized.dv
+    dv: normalized.dv,
+    fortification: normalized.fortification
   };
 }
 
 function toTemporaryHpPayload(state) {
   const normalized = normalizeTemporaryHpConfig(state);
+  const formula = String(normalized.formula ?? "").trim();
+  const formulaNumber = Number(formula);
+  const max = Number.isFinite(formulaNumber) ? Math.max(0, Math.floor(formulaNumber)) : normalized.max;
   return {
     enabled: normalized.enabled,
-    max: normalized.max,
-    remaining: Number.isFinite(Number(normalized.remaining)) ? normalized.remaining : normalized.max,
-    capacity: Number.isFinite(Number(normalized.capacity)) ? normalized.capacity : normalized.max,
+    max,
+    formula,
+    remaining: Number.isFinite(Number(normalized.remaining)) ? normalized.remaining : max,
+    capacity: Number.isFinite(Number(normalized.capacity)) ? normalized.capacity : max,
     label: normalized.label,
     duration: normalized.duration,
     sourceItemUuid: normalized.sourceItemUuid,
@@ -2964,6 +2978,9 @@ function attachGrantedDefenseResistanceField(section, item, state, key, onChange
 function makeGrantedDefenseWriteState(section, item, state, sheetAppId) {
   return ({ preserveResistanceState = false } = {}) => {
     state.enabled = section.querySelector('input[data-nas-key="enabled"]')?.checked === true;
+    state.fortification = normalizeGrantedDefenses({
+      fortification: section.querySelector('select[data-nas-key="fortification"]')?.value
+    }).fortification;
     ReactiveUiState.set(sheetAppId, "grantedDefenses", state);
     syncReactiveSectionCollapsedChrome(section, state.enabled);
     scheduleFlagSave(item, "grantedDefenses", (flags) => {
@@ -3013,6 +3030,14 @@ async function renderGrantedDefensesSection(sheet, root) {
           <a data-nas-defense-edit="eres" class="nas-reactive-trait-edit" title="${localize("editSelection")}" style="flex:0 0 auto;opacity:0.9;"><i class="fa-solid fa-edit" inert></i></a>
         </div>
       </div>
+      <div class="form-group">
+        <label>${localize("grantedDefenseFortification")}</label>
+        <div class="form-fields">
+          <select data-nas-key="fortification">
+            ${fortificationOptionsHtml(state.fortification)}
+          </select>
+        </div>
+      </div>
       ${["di", "ci", "dv"].map((key) => `
         <div class="form-group">
           <label>${localize(`grantedDefense${key.toUpperCase()}`)}</label>
@@ -3035,6 +3060,10 @@ async function renderGrantedDefensesSection(sheet, root) {
   const writeState = makeGrantedDefenseWriteState(section, item, state, sheet.appId);
 
   section.querySelector('input[data-nas-key="enabled"]')?.addEventListener("change", (event) => {
+    excludeNasChangeFromParentForm(event);
+    writeState();
+  });
+  section.querySelector('select[data-nas-key="fortification"]')?.addEventListener("change", (event) => {
     excludeNasChangeFromParentForm(event);
     writeState();
   });
@@ -3072,7 +3101,7 @@ async function renderTemporaryHpSection(sheet, root) {
       <div class="form-group">
         <label>${localize("temporaryHpAmount")}</label>
         <div class="form-fields">
-          <input type="number" min="0" step="1" data-nas-key="max" value="${Number(state.max) || 0}">
+          <input class="formula roll" type="text" data-nas-key="formula" value="${foundry.utils.escapeHTML(state.formula || String(Number(state.max) || 0))}" placeholder="${localize("formulaPlaceholder")}">
         </div>
       </div>
       <div class="form-group">
@@ -3108,7 +3137,9 @@ async function renderTemporaryHpSection(sheet, root) {
 
   const writeState = () => {
     state.enabled = section.querySelector('input[data-nas-key="enabled"]')?.checked === true;
-    state.max = Math.max(0, Math.floor(Number(section.querySelector('input[data-nas-key="max"]')?.value) || 0));
+    state.formula = String(section.querySelector('input[data-nas-key="formula"]')?.value ?? "").trim();
+    const numericFormula = Number(state.formula);
+    if (Number.isFinite(numericFormula)) state.max = Math.max(0, Math.floor(numericFormula));
     state.stackingMode = normalizeTemporaryHpStackingMode(section.querySelector('select[data-nas-key="stackingMode"]')?.value);
     state.compatibilityMode = normalizeTemporaryHpCompatibilityMode(section.querySelector('select[data-nas-key="compatibilityMode"]')?.value);
     state.label = item.name ?? "";
@@ -3120,6 +3151,7 @@ async function renderTemporaryHpSection(sheet, root) {
       const next = toTemporaryHpPayload(state);
       const resetPool = next.enabled && (
         previous.enabled !== true
+        || previous.formula !== next.formula
         || previous.max !== next.max
         || !Number.isFinite(Number(previous.remaining))
       );

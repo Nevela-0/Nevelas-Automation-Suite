@@ -68,6 +68,16 @@ import {
   METAMAGIC_DEFINITION as ExtendSpellDef,
   isDurationEligibleForExtendSpell
 } from "../metamagic/extendSpell.js";
+import {
+  buildMetamagicEligibilityContextFromDialog,
+  filterMetamagicSourcesForSpellContext,
+  getMetamagicSourceCanonicalName
+} from "../metamagic/metamagicEligibility.js";
+import { getPreparedVariantDialogState } from "../spellcasting/preparation/preparedVariantActionUse.js";
+import {
+  shouldAllowExtraCastTimeMetamagicForPreparedVariants,
+  shouldShowPreparedVariantCastDialogPreview
+} from "../spellcasting/preparation/settings.js";
 import { canIntensifyAnyDamagePart } from "../metamagic/intensifiedSpell.js";
 import { createGrappleCmbAttackEntry } from "../conditions/grappled/grappled.js";
 
@@ -362,8 +372,38 @@ function getSpellRangeUnits(dialog) {
 }
 
 function getCanonicalMetamagicName(source) {
-  const raw = source?.metaName ?? source?.label ?? "";
-  return resolveMetamagicNameFromDatabase(raw) ?? raw;
+  return getMetamagicSourceCanonicalName(source);
+}
+
+function getMetamagicNameKey(name) {
+  return (resolveMetamagicNameFromDatabase(name) ?? name ?? "").toString().trim().toLowerCase();
+}
+
+function getPreparedVariantStateForDialog(dialog) {
+  return getPreparedVariantDialogState(dialog?.action?.item ?? dialog?.item ?? null);
+}
+
+function getPreparedVariantMetamagicKeys(preparedVariantState) {
+  if (Array.isArray(preparedVariantState?.preparedMetamagicKeys)) {
+    return new Set(preparedVariantState.preparedMetamagicKeys.map((key) => (key ?? "").toString()).filter(Boolean));
+  }
+  return new Set(
+    (preparedVariantState?.preparedMetamagicNames ?? [])
+      .map((name) => getMetamagicNameKey(name))
+      .filter(Boolean)
+  );
+}
+
+function preparedVariantHasMetamagic(preparedVariantState, nameOrSource) {
+  if (preparedVariantState?.active !== true) return false;
+  const key = getMetamagicNameKey(getCanonicalMetamagicName(nameOrSource));
+  if (!key) return false;
+  return getPreparedVariantMetamagicKeys(preparedVariantState).has(key);
+}
+
+function preparedVariantHasAnyMetamagic(preparedVariantState) {
+  return preparedVariantState?.active === true
+    && getPreparedVariantMetamagicKeys(preparedVariantState).size > 0;
 }
 
 function filteredSourcesIncludeExtendSpell(sources) {
@@ -452,55 +492,11 @@ function canApplyIntensifiedSpell(dialog) {
   return canIntensifyAnyDamagePart(parts, cl);
 }
 
-function filterMetamagicSourcesForDialog(dialog, sources) {
-  const components = getSpellComponents(dialog);
-  const duration = getSpellDuration(dialog);
-  const activation = getSpellActivation(dialog);
-  const rangeUnits = getSpellRangeUnits(dialog);
-  const isAreaEffect = isAreaEffectSpell(dialog);
-  const abilityMod = getSpellbookAbilityMod(dialog);
-
-  return sources.filter((source) => {
-    const name = getCanonicalMetamagicName(source).toString().toLowerCase();
-    if (name === "still spell") {
-      return components?.somatic === true;
-    }
-    if (name === "silent spell") {
-      return components?.verbal === true;
-    }
-    if (name === "extend spell") {
-      return canApplyExtendSpell(duration);
-    }
-    if (name === "enlarge spell") {
-      return canApplyEnlargeSpell(rangeUnits);
-    }
-    if (name === "reach spell") {
-      return ["touch", "close", "medium"].includes(rangeUnits);
-    }
-    if (name === "quicken spell") {
-      return canApplyQuickenSpell(activation);
-    }
-    if (name === "selective spell") {
-      return isAreaEffect && isInstantDuration(duration) && abilityMod > 0;
-    }
-    if (name === "dazing spell") {
-      return hasDamageFormula(dialog);
-    }
-    if (name === "persistent spell") {
-      return Boolean(getSpellSaveType(dialog));
-    }
-    if (name === "heighten spell") {
-      const baseLevel = getSpellBaseLevel(dialog);
-      return baseLevel < 9;
-    }
-    if (name === "intensified spell") {
-      return canApplyIntensifiedSpell(dialog);
-    }
-    if (name === "maximize spell") {
-      return hasDamageFormula(dialog);
-    }
-    return true;
-  });
+function filterMetamagicSourcesForDialog(dialog, sources, options = {}) {
+  const filtered = filterMetamagicSourcesForSpellContext(sources, buildMetamagicEligibilityContextFromDialog(dialog));
+  const preparedVariantState = options.preparedVariantState ?? getPreparedVariantStateForDialog(dialog);
+  if (!preparedVariantHasAnyMetamagic(preparedVariantState)) return filtered;
+  return filtered.filter((source) => !preparedVariantHasMetamagic(preparedVariantState, source));
 }
 
 function hasAvailableDailyUses(item) {
@@ -672,6 +668,7 @@ export async function addMetamagicCheckbox(dialog, html) {
   if (!root) return;
   const form = root.querySelector?.('form') ?? root;
   if (!form) return;
+  const preparedVariantState = getPreparedVariantDialogState(item);
 
   let metamagicSources = [];
   let classFeatureSources = [];
@@ -764,10 +761,35 @@ export async function addMetamagicCheckbox(dialog, html) {
     checkboxLabel = "Metakinesis";
     traitModifierSources = await getRacialSpellLikeTraitSources(actor, item);
   }
-  const filteredSources = filterMetamagicSourcesForDialog(dialog, metamagicSources);
+  if (
+    preparedVariantState.active === true
+    && !shouldAllowExtraCastTimeMetamagicForPreparedVariants()
+  ) {
+    metamagicSources = [];
+    classFeatureSources = [];
+    healerBlessingStandaloneSources = [];
+    intenseCelebrationStandaloneSources = [];
+    naniteBloodlineArcanaStandaloneSources = [];
+    oneBodyTwoMindsStandaloneSources = [];
+    peerlessSpeedStandaloneSources = [];
+    succorFinalRevelationStandaloneSources = [];
+    mimicMetamagicStandaloneSources = [];
+    traitModifierSources = [];
+    eldritchResearcherSource = null;
+    spellPerfectionSource = null;
+    spontaneousMetafocusSource = null;
+    magicalLineageSource = null;
+    extendedScryingSource = null;
+    maleficiumSource = null;
+    maskFocusSource = null;
+  }
+  const filteredSources = filterMetamagicSourcesForDialog(dialog, metamagicSources, { preparedVariantState });
   const maskFocusForMetamagicUi =
     maskFocusSource && filteredSourcesIncludeExtendSpell(filteredSources) ? maskFocusSource : null;
-  if (filteredSources.length) {
+  if (
+    filteredSources.length
+    || (preparedVariantHasAnyMetamagic(preparedVariantState) && shouldShowPreparedVariantCastDialogPreview())
+  ) {
     renderMetamagicControls(dialog, form, filteredSources, {
       actor,
       actionItem: item,
@@ -776,6 +798,7 @@ export async function addMetamagicCheckbox(dialog, html) {
       maskFocusSource: maskFocusForMetamagicUi,
       baseSpellLevel: getSpellBaseLevel(dialog),
       baseSaveDc: getDialogSaveDc(dialog),
+      preparedVariantState
     });
   }
   if (traitModifierSources.length) {
@@ -824,12 +847,17 @@ export async function addMetamagicCheckbox(dialog, html) {
   const canUseBabele = game?.modules?.get("babele")?.active;
   const shouldResolveEnglishName = !isEnglish && canUseBabele;
   if (shouldResolveEnglishName && getActionItemType(dialog) === "spell") {
-    void refreshMetamagicControls(dialog, form, actor, classFeatureSources);
+    void refreshMetamagicControls(dialog, form, actor, classFeatureSources, preparedVariantState);
   }
 }
 
 function renderMetamagicControls(dialog, form, metamagicSources, options = {}) {
-  if (form.querySelector(`input[name="${METAMAGIC_FORM_KEY}"]`)) return;
+  if (form.querySelector(`input[name="${METAMAGIC_FORM_KEY}"]`)) {
+    return;
+  }
+  const preparedVariantState = options.preparedVariantState ?? getPreparedVariantStateForDialog(dialog);
+  const hasPreparedPreview = preparedVariantHasAnyMetamagic(preparedVariantState)
+    && shouldShowPreparedVariantCastDialogPreview();
 
   const container = getFlagsContainer(form);
   const labelElement = document.createElement('label');
@@ -855,6 +883,16 @@ function renderMetamagicControls(dialog, form, metamagicSources, options = {}) {
   optionsInput.name = METAMAGIC_OPTIONS_KEY;
   container.appendChild(optionsInput);
 
+  const prepareInfoContainer = (element) => {
+    element.classList.add('nas-metamagic-info');
+    element.style.border = '1px solid var(--color-border-light-tertiary, #888)';
+    element.style.borderRadius = '4px';
+    element.style.padding = '6px 8px';
+    element.style.marginBottom = '8px';
+    element.style.fontSize = '12px';
+    element.style.lineHeight = '1.35';
+    element.style.overflowWrap = 'break-word';
+  };
   const dropdown = document.createElement('details');
   dropdown.classList.add('metamagic-dropdown');
   dropdown.style.display = 'none';
@@ -870,14 +908,7 @@ function renderMetamagicControls(dialog, form, metamagicSources, options = {}) {
   listContainer.style.columnGap = '8px';
 
   const infoContainer = document.createElement('div');
-  infoContainer.classList.add('nas-metamagic-info');
-  infoContainer.style.border = '1px solid var(--color-border-light-tertiary, #888)';
-  infoContainer.style.borderRadius = '4px';
-  infoContainer.style.padding = '6px 8px';
-  infoContainer.style.marginBottom = '8px';
-  infoContainer.style.fontSize = '12px';
-  infoContainer.style.lineHeight = '1.35';
-  infoContainer.style.overflowWrap = 'break-word';
+  prepareInfoContainer(infoContainer);
   dropdown.appendChild(infoContainer);
 
   const featureContainer = document.createElement('div');
@@ -908,7 +939,8 @@ function renderMetamagicControls(dialog, form, metamagicSources, options = {}) {
     featureSources: Array.isArray(options.classFeatureSources) ? options.classFeatureSources : [],
     maskFocusSource: options.maskFocusSource ?? null,
     infoContainer,
-    metamagicToggleInput: input
+    metamagicToggleInput: input,
+    preparedVariantState
   });
   dropdown.style.display = input.checked ? '' : 'none';
   const storedOpen = DialogStateTracker.get(dialog.appId, METAMAGIC_DROPDOWN_KEY);
@@ -928,7 +960,8 @@ function renderMetamagicControls(dialog, form, metamagicSources, options = {}) {
       featOptions: getCurrentFeatOptions(dialog, form),
       actionItem: options.actionItem ?? null,
       selectedMetaNames: getSelectedMetaNames(listContainer),
-      dialog
+      dialog,
+      preparedVariantState
     });
     requestAttackDialogAutoLayout(dialog);
   });
@@ -1066,9 +1099,12 @@ function ensureMetamagicOptionsInput(form) {
 
 function getCurrentMetamagicOptions(dialog, form) {
   const tracked = DialogStateTracker.get(dialog.appId, METAMAGIC_OPTIONS_KEY);
-  if (tracked && typeof tracked === "object") return tracked;
+  const preparedVariantState = getPreparedVariantStateForDialog(dialog);
+  if (tracked && typeof tracked === "object") {
+    return prunePreparedVariantDuplicateOptions(tracked, preparedVariantState);
+  }
   const optionsInput = form.querySelector(`input[name="${METAMAGIC_OPTIONS_KEY}"]`);
-  return parseMetamagicOptionsInput(optionsInput?.value ?? "");
+  return prunePreparedVariantDuplicateOptions(parseMetamagicOptionsInput(optionsInput?.value ?? ""), preparedVariantState);
 }
 
 function getCurrentFeatOptions(dialog, form) {
@@ -1102,6 +1138,36 @@ function setFeatureStatesInOptions(options, featureStates) {
     delete nextOptions[METAMAGIC_FEATURE_STATE_KEY];
   }
   return nextOptions;
+}
+
+function prunePreparedVariantDuplicateOptions(options, preparedVariantState) {
+  const preparedKeys = getPreparedVariantMetamagicKeys(preparedVariantState);
+  if (!preparedKeys.size || !options || typeof options !== "object") return options ?? {};
+
+  const next = { ...options };
+  const featureStates = { ...getFeatureStatesFromOptions(next) };
+  const clearFeature = (featureId) => {
+    featureStates[featureId] = false;
+  };
+  const isPreparedChoice = (value) => {
+    const key = getMetamagicNameKey(value);
+    return Boolean(key && preparedKeys.has(key));
+  };
+
+  if (isPreparedChoice(next.mimicMetamagic?.chosenMetaName)) {
+    delete next.mimicMetamagic;
+    clearFeature(MIMIC_METAMAGIC_FEATURE_ID);
+  }
+  if (isPreparedChoice(next.peerlessSpeed?.chosenMetaName)) {
+    delete next.peerlessSpeed;
+    clearFeature("peerlessSpeed");
+  }
+  if (isPreparedChoice(next.succorFinalRevelation?.chosenMetaName)) {
+    delete next.succorFinalRevelation;
+    clearFeature("succorFinalRevelation");
+  }
+
+  return setFeatureStatesInOptions(next, featureStates);
 }
 
 function parseTraitSelectionInput(rawValue) {
@@ -2279,6 +2345,31 @@ function getMaskFocusDisplayNameFromDialog(dialog) {
   return (label?.getAttribute?.("data-nas-mf-label") ?? "").toString().trim();
 }
 
+function getPreparedVariantEffectiveSpellLevel(preparedVariantState, fallbackLevel) {
+  const base = Number(fallbackLevel ?? 0);
+  const safeBase = Number.isFinite(base) ? base : 0;
+  if (preparedVariantState?.active !== true) return safeBase;
+  if (!preparedVariantHasMetamagic(preparedVariantState, "Heighten Spell")) return safeBase;
+  const target = Number(preparedVariantState?.metamagicOptions?.heightenSpellLevel ?? safeBase);
+  return Number.isFinite(target) ? Math.max(safeBase, target) : safeBase;
+}
+
+function getPreparedVariantHeightenIncrease(preparedVariantState, fallbackLevel) {
+  const base = Number(fallbackLevel ?? 0);
+  const safeBase = Number.isFinite(base) ? base : 0;
+  return Math.max(0, getPreparedVariantEffectiveSpellLevel(preparedVariantState, safeBase) - safeBase);
+}
+
+function getPreparedVariantOtherSlotIncrease(preparedVariantState) {
+  if (preparedVariantState?.active !== true) return 0;
+  return (Array.isArray(preparedVariantState.metamagic) ? preparedVariantState.metamagic : [])
+    .filter((selection) => getMetamagicNameKey(selection?.name) !== "heighten spell")
+    .reduce((total, selection) => {
+      const increase = Number(selection?.slotIncrease ?? 0);
+      return total + (Number.isFinite(increase) ? Math.max(0, increase) : 0);
+    }, 0);
+}
+
 function updateMetamagicInfoSection(infoContainer, {
   selectedMetaNames = [],
   options = {},
@@ -2287,7 +2378,8 @@ function updateMetamagicInfoSection(infoContainer, {
   baseSpellLevel = 0,
   baseSaveDc = null,
   metamagicEnabled = true,
-  dialog = null
+  dialog = null,
+  preparedVariantState = null
 } = {}) {
   if (!infoContainer) return;
   const previewModeRaw = game?.settings?.get?.(MODULE.ID, "metamagicPreviewMode");
@@ -2306,15 +2398,24 @@ function updateMetamagicInfoSection(infoContainer, {
   }
   infoContainer.style.display = "";
 
+  const preparedState = preparedVariantState?.active === true
+    ? preparedVariantState
+    : getPreparedVariantStateForDialog(dialog);
+  const hasPreparedVariantMetamagic = preparedVariantHasAnyMetamagic(preparedState);
+  const originalBase = hasPreparedVariantMetamagic
+    ? Number(preparedState.originalSpellLevel ?? baseSpellLevel)
+    : Number(baseSpellLevel ?? 0);
+  const safeBase = Number.isFinite(originalBase) ? originalBase : 0;
+  const preparedSlotLevel = Number(preparedState?.preparedSlotLevel ?? safeBase);
+  const safePreparedSlotLevel = Number.isFinite(preparedSlotLevel) ? preparedSlotLevel : safeBase;
   const selected = metamagicEnabled ? selectedMetaNames : [];
   const heightenIncrease = selected.includes("Heighten Spell")
-    ? getSlotIncreaseForSelection("Heighten Spell", options, baseSpellLevel, featOptions)
+    ? getSlotIncreaseForSelection("Heighten Spell", options, safeBase, featOptions)
     : 0;
   const otherIncrease = selected.reduce(
-    (total, name) => total + (name === "Heighten Spell" ? 0 : getSlotIncreaseForSelection(name, options, baseSpellLevel, featOptions)),
+    (total, name) => total + (name === "Heighten Spell" ? 0 : getSlotIncreaseForSelection(name, options, safeBase, featOptions)),
     0
   );
-  const safeBase = Number.isFinite(Number(baseSpellLevel)) ? Number(baseSpellLevel) : 0;
   const features = getFeatureStatesFromOptions(options);
   const timelessSoulEnabled = features.timelessSoul === true;
   const hasQuickenSelected = selected.includes("Quicken Spell");
@@ -2336,7 +2437,7 @@ function updateMetamagicInfoSection(infoContainer, {
   const reducedOther = timelessSoulApplies
     ? timelessSoulFixedQuicken + Math.max(0, otherExcludingQuicken + slotAdjustment)
     : Math.max(0, otherIncrease + slotAdjustment);
-  let consumedIncrease = heightenIncrease + reducedOther;
+  let consumedIncrease = Math.max(heightenIncrease, reducedOther);
   let spellPerfectionWaiver = 0;
   const spellPerfection = featOptions?.spellPerfection;
   if (
@@ -2362,7 +2463,20 @@ function updateMetamagicInfoSection(infoContainer, {
     consumedIncrease = Math.max(consumedIncrease, 1);
   }
   const metamagicMasteryOn = features.metamagicMastery === true;
-  const resultLevel = metamagicMasteryOn ? safeBase : safeBase + consumedIncrease;
+  const preparedHeightenIncrease = getPreparedVariantHeightenIncrease(preparedState, safeBase);
+  const preparedOtherIncrease = getPreparedVariantOtherSlotIncrease(preparedState);
+  const dynamicOtherForPreparedSlot = Math.max(0, reducedOther - spellPerfectionWaiver);
+  const finalSlotIncrease = hasPreparedVariantMetamagic
+    ? Math.max(
+      preparedHeightenIncrease,
+      heightenIncrease,
+      preparedOtherIncrease + dynamicOtherForPreparedSlot,
+      consumedIncrease
+    )
+    : consumedIncrease;
+  const resultLevel = metamagicMasteryOn
+    ? (hasPreparedVariantMetamagic ? safePreparedSlotLevel : safeBase)
+    : safeBase + finalSlotIncrease;
   const activeFeatures = Object.entries(features)
     .filter(([, value]) => value === true)
     .map(([key]) => key.replace(/([A-Z])/g, " $1").replace(/^./, (m) => m.toUpperCase()));
@@ -2386,9 +2500,23 @@ function updateMetamagicInfoSection(infoContainer, {
   }
 
   const selectedText = selected.length ? selected.join(", ") : game.i18n.localize("NAS.common.labels.none");
+  const preparedText = hasPreparedVariantMetamagic
+    && shouldShowPreparedVariantCastDialogPreview()
+    ? preparedState.preparedMetamagicNames.join(", ")
+    : "";
+  const preparedPreviewLine = preparedText
+    ? `<div>${formatMetamagic("preview.prepared", { value: preparedText })}</div>`
+    : "";
+  const preparedSlotPreviewLine = hasPreparedVariantMetamagic
+    && shouldShowPreparedVariantCastDialogPreview()
+    ? `<div>${formatMetamagic("preview.preparedSlotLevel", { value: safePreparedSlotLevel })}</div>`
+    : "";
   const detailsText = detailLines.length ? detailLines.join(" | ") : game.i18n.localize("NAS.common.labels.none");
   const activeFeaturesText = activeFeatures.length ? activeFeatures.join(", ") : game.i18n.localize("NAS.common.labels.none");
-  const effectiveSpellLevel = safeBase + heightenIncrease;
+  const effectiveSpellLevel = Math.max(
+    safeBase + heightenIncrease,
+    getPreparedVariantEffectiveSpellLevel(preparedState, safeBase)
+  );
   const hasSlotMathModifiers = otherIncrease !== 0 || slotAdjustment !== 0 || timelessSoulReduction > 0;
   const reducedOtherText = timelessSoulApplies
     ? `${timelessSoulFixedQuicken + Math.max(0, otherExcludingQuicken + slotAdjustment)}`
@@ -2433,8 +2561,10 @@ function updateMetamagicInfoSection(infoContainer, {
     const conciseSaveDcText = saveDcText.replace(/\s*\(([^)]+)\)\s*/g, " - $1");
     infoContainer.innerHTML = `
       <div><strong>${localizeMetamagic("preview.title")}</strong></div>
+      ${preparedPreviewLine}
       <div>${formatMetamagic("preview.selected", { value: selectedText })}</div>
       <div>${formatMetamagic("preview.options", { value: detailsText })}</div>
+      ${preparedSlotPreviewLine}
       <div>${formatMetamagic("preview.requiredSlotLevel", { value: resultLevel })}</div>
       ${mmPreviewLine}
       <div>${conciseSaveDcText}</div>
@@ -2446,9 +2576,11 @@ function updateMetamagicInfoSection(infoContainer, {
 
   infoContainer.innerHTML = `
     <div><strong>${localizeMetamagic("preview.title")}</strong></div>
+    ${preparedPreviewLine}
     <div>${formatMetamagic("preview.selected", { value: selectedText })}</div>
     <div>${formatMetamagic("preview.options", { value: detailsText })}</div>
     <div>${formatMetamagic("preview.effectiveSpellLevel", { value: effectiveSpellLevel })}</div>
+    ${preparedSlotPreviewLine}
     <div>${formatMetamagic("preview.requiredSlotLevelUses", { value: resultLevel })}</div>
     ${mmPreviewLine}
     ${hasSlotMathModifiers ? `<div>${slotModsText}</div>` : ""}
@@ -3135,11 +3267,17 @@ function renderPeerlessSpeedStandaloneControl(dialog, form, actor, sources) {
     [source.id]: Boolean(initialChecked)
   };
   if (initialChecked) {
-    const initialMetaName = existingPeerlessChoice || "Quicken Spell";
-    nextOptions = setPeerlessSpeedOption(nextOptions, {
-      enabled: true,
-      chosenMetaName: initialMetaName
-    });
+    const initialMetaName = eligibleChoices.includes(existingPeerlessChoice)
+      ? existingPeerlessChoice
+      : (eligibleChoices[0] ?? "");
+    if (initialMetaName) {
+      nextOptions = setPeerlessSpeedOption(nextOptions, {
+        enabled: true,
+        chosenMetaName: initialMetaName
+      });
+    } else {
+      nextStates[source.id] = false;
+    }
   }
   nextOptions = setFeatureStatesInOptions(nextOptions, nextStates);
   DialogStateTracker.set(dialog.appId, METAMAGIC_OPTIONS_KEY, nextOptions);
@@ -3715,7 +3853,12 @@ function renderMimicMetamagicStandaloneControl(dialog, form, actor, sources) {
 
 function updateMetamagicCheckboxOptions(dialog, listContainer, dataInput, optionsInput, metamagicSources, options = {}) {
   const storedSelections = DialogStateTracker.get(dialog.appId, METAMAGIC_SELECT_KEY) || [];
-  const storedOptions = DialogStateTracker.get(dialog.appId, METAMAGIC_OPTIONS_KEY) || {};
+  const preparedVariantState = options.preparedVariantState ?? getPreparedVariantStateForDialog(dialog);
+  const storedOptions = prunePreparedVariantDuplicateOptions(
+    DialogStateTracker.get(dialog.appId, METAMAGIC_OPTIONS_KEY) || {},
+    preparedVariantState
+  );
+  DialogStateTracker.set(dialog.appId, METAMAGIC_OPTIONS_KEY, storedOptions);
   const infoContainer = options.infoContainer ?? null;
   const featureContainer = options.featureContainer ?? null;
   const featureSources = Array.isArray(options.featureSources) ? options.featureSources : [];
@@ -3770,7 +3913,8 @@ function updateMetamagicCheckboxOptions(dialog, listContainer, dataInput, option
           featOptions: getCurrentFeatOptions(dialog, form),
           actionItem,
           selectedMetaNames: getSelectedMetaNames(listContainer),
-          dialog
+          dialog,
+          preparedVariantState
         });
       });
 
@@ -3798,7 +3942,8 @@ function updateMetamagicCheckboxOptions(dialog, listContainer, dataInput, option
             featOptions: getCurrentFeatOptions(dialog, form),
             actionItem,
             selectedMetaNames: getSelectedMetaNames(listContainer),
-            dialog
+            dialog,
+            preparedVariantState
           });
         });
       }
@@ -3818,7 +3963,8 @@ function updateMetamagicCheckboxOptions(dialog, listContainer, dataInput, option
               featOptions: getCurrentFeatOptions(dialog, form),
               actionItem,
               selectedMetaNames: getSelectedMetaNames(listContainer),
-              dialog
+              dialog,
+              preparedVariantState
             });
             return;
           }
@@ -3843,7 +3989,8 @@ function updateMetamagicCheckboxOptions(dialog, listContainer, dataInput, option
             featOptions: getCurrentFeatOptions(dialog, form),
             actionItem,
             selectedMetaNames: getSelectedMetaNames(listContainer),
-            dialog
+            dialog,
+            preparedVariantState
           });
         });
       }
@@ -3853,6 +4000,10 @@ function updateMetamagicCheckboxOptions(dialog, listContainer, dataInput, option
       listContainer.appendChild(labelElement);
     });
 
+  const renderedCheckedIds = Array.from(
+    listContainer.querySelectorAll('input[type="checkbox"]:checked')
+  ).map((checkbox) => checkbox.value);
+  DialogStateTracker.set(dialog.appId, METAMAGIC_SELECT_KEY, renderedCheckedIds);
   updateMetamagicNames(dataInput, true, listContainer);
   updateMetamagicOptionsInput(optionsInput, storedOptions);
   renderFeatureSection(
@@ -3878,7 +4029,8 @@ function updateMetamagicCheckboxOptions(dialog, listContainer, dataInput, option
     featOptions: getCurrentFeatOptions(dialog, form),
     actionItem,
     selectedMetaNames: getSelectedMetaNames(listContainer),
-    dialog
+    dialog,
+    preparedVariantState
   });
   requestAttackDialogAutoLayout(dialog);
 }
@@ -3984,15 +4136,26 @@ function promptHeightenSpellLevel(levelChoices, baseLevel) {
   });
 }
 
-async function refreshMetamagicControls(dialog, form, actor, classFeatureSources = []) {
+async function refreshMetamagicControls(dialog, form, actor, classFeatureSources = [], preparedVariantState = null) {
   const item = dialog?.action?.item ?? null;
+  const preparedState = preparedVariantState ?? getPreparedVariantStateForDialog(dialog);
   let maskFocusSource = null;
   if (getActionItemType(dialog) === "spell" && item && !isSpellLikeSpellbookItem(item)) {
     maskFocusSource = await getMaskFocusSource(actor);
   }
-  const metamagicSources = await getAvailableMetamagicSources(actor, { resolveEnglishNames: true });
-  const filteredSources = filterMetamagicSourcesForDialog(dialog, metamagicSources);
-  if (!filteredSources.length) return;
+  const metamagicSources = (
+    preparedState.active === true
+    && !shouldAllowExtraCastTimeMetamagicForPreparedVariants()
+  )
+    ? []
+    : await getAvailableMetamagicSources(actor, { resolveEnglishNames: true });
+  const filteredSources = filterMetamagicSourcesForDialog(dialog, metamagicSources, { preparedVariantState: preparedState });
+  if (
+    !filteredSources.length
+    && !(preparedVariantHasAnyMetamagic(preparedState) && shouldShowPreparedVariantCastDialogPreview())
+  ) {
+    return;
+  }
 
   const maskFocusForMetamagicUi =
     maskFocusSource && filteredSourcesIncludeExtendSpell(filteredSources) ? maskFocusSource : null;
@@ -4017,7 +4180,8 @@ async function refreshMetamagicControls(dialog, form, actor, classFeatureSources
       featureSources: classFeatureSources,
       maskFocusSource: maskFocusForMetamagicUi,
       infoContainer,
-      metamagicToggleInput
+      metamagicToggleInput,
+      preparedVariantState: preparedState
     });
     requestAttackDialogAutoLayout(dialog);
     return;
@@ -4029,6 +4193,7 @@ async function refreshMetamagicControls(dialog, form, actor, classFeatureSources
     baseSpellLevel: getSpellBaseLevel(dialog),
     baseSaveDc: getDialogSaveDc(dialog),
     classFeatureSources,
-    maskFocusSource
+    maskFocusSource,
+    preparedVariantState: preparedState
   });
 }

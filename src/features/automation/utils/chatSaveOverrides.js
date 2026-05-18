@@ -5,7 +5,7 @@ import { getDazingExtraRoundsForTarget } from "../metamagic/dazingSpell.js";
 const SAVE_BUTTON_SELECTOR = 'button[data-action="save"]';
 const LISTENER_FLAG = "nasPersistentSaveListener";
 const MESSAGE_HOOK_FLAG = "nasPersistentSaveHook";
-const SAVE_TOKEN_FLAG = "nasSaveTokenInteraction";
+export const SAVE_TOKEN_FLAG = "nasSaveTokenInteraction";
 const PERSISTENT_SAVE_QUEUE = [];
 let hooksRegistered = false;
 
@@ -43,7 +43,7 @@ function takePersistentSave({ actorId, saveType }) {
   return PERSISTENT_SAVE_QUEUE.splice(index, 1)[0];
 }
 
-function buildTokenHeaderHtml(tokenDoc, labelText) {
+export function buildTokenHeaderHtml(tokenDoc, labelText) {
   const img = tokenDoc?.texture?.src ?? tokenDoc?.img ?? "";
   const name = tokenDoc?.name ?? "";
   const uuid = tokenDoc?.uuid ?? "";
@@ -61,6 +61,45 @@ function buildTokenHeaderHtml(tokenDoc, labelText) {
 function getPersistentLabel(isSecond) {
   if (!isSecond) return "";
   return game.i18n.localize("NAS.metamagic.PersistentSaveSecond");
+}
+
+function canSuppressPrivateSaveOutcome(message) {
+  if (game.user?.isGM) return false;
+  if (!game.settings.get(MODULE.ID, "hidePrivateSaveRollOutcomeFromPlayers")) return false;
+  if (message?.isContentVisible !== false) return false;
+  if (!Array.isArray(message?.whisper) || message.whisper.length === 0) return false;
+  const content = String(message?.content ?? "");
+  return /saving throw/i.test(content) || /save/i.test(message?.flavor ?? "");
+}
+
+function isOutcomeElement(element) {
+  if (!element) return false;
+  const text = element.textContent?.trim?.() ?? "";
+  if (!/^(success|failure)$/i.test(text)) return false;
+  const classText = String(element.className ?? "");
+  return /success|failure|result|outcome|save/i.test(classText);
+}
+
+function suppressPrivateSaveOutcome(html) {
+  const root = htmlElementFromRenderArg(html);
+  if (!root) return;
+
+  const candidates = root.querySelectorAll?.(
+    ".success, .failure, .result, .outcome, .save-result, .dc-result, [class*='success'], [class*='failure']"
+  ) ?? [];
+  candidates.forEach((element) => {
+    if (isOutcomeElement(element)) element.style.display = "none";
+  });
+
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const textNodes = [];
+  while (walker.nextNode()) textNodes.push(walker.currentNode);
+  textNodes.forEach((node) => {
+    if (!/^\s*(success|failure)\s*$/i.test(node.nodeValue ?? "")) return;
+    const parent = node.parentElement;
+    if (parent && isOutcomeElement(parent)) return;
+    node.nodeValue = "";
+  });
 }
 
 function attachTokenImageInteractions(html) {
@@ -130,7 +169,7 @@ function registerPersistentSaveChatMessageHook() {
 
   Hooks.on("pf1ActorRollSave", async (actor, message, savingThrowId) => {
     const entry = takePersistentSave({ actorId: actor?.id, saveType: savingThrowId });
-    if (!message) return;
+    if (!message || typeof message.update !== "function") return;
     const allowGlobal = game.settings.get(MODULE.ID, "saveRollTokenInteraction");
     const labelText = getPersistentLabel(entry?.second);
     if (!allowGlobal && !labelText) return;
@@ -177,6 +216,8 @@ function registerPersistentSaveChatMessageHook() {
   });
 
   onRenderChatMessageCompat((message, html) => {
+    if (canSuppressPrivateSaveOutcome(message)) suppressPrivateSaveOutcome(html);
+
     const allowGlobal = message?.flags?.[MODULE.ID]?.[SAVE_TOKEN_FLAG];
     const isPersistent = message?.flags?.[MODULE.ID]?.metamagic?.persistentSave;
     if (!allowGlobal && !isPersistent) return;

@@ -62,6 +62,7 @@ import {
   resolveFeatSaveDcBase,
 } from "../utils/saveDcUtils.js";
 import { getRuntimeSpellLevel } from "../utils/spellLevels.js";
+import { shouldDeferPreparedVariantHigherSlotConsumption } from "../spellcasting/preparation/preparedVariantConsumption.js";
 
 const SHORT_CAST_TYPES = new Set(["swift", "immediate", "move"]);
 const STANDARD_CAST_TYPE = "standard";
@@ -84,6 +85,7 @@ const SPELL_PERFECTION_FEATURE_ID = "spellPerfection";
 const SPONTANEOUS_METAFOCUS_FEATURE_ID = "spontaneousMetafocus";
 const CURATOR_MYSTIC_SECRETS_ID = "curatorOfMysticSecrets";
 const SUCCOR_ELIGIBLE_METAMAGIC = new Set(["Enlarge Spell", "Extend Spell", "Silent Spell", "Still Spell"]);
+const SPELLBOOK_PREPARED_METAMAGIC_SOURCE_ID = "spellbookPreparedSpell";
 
 function localizeMetamagic(path) {
   return game.i18n.localize(`NAS.metamagic.${path}`);
@@ -386,6 +388,16 @@ function isClassFeatureEnabledOrDefault(context, featureId, defaultEnabled = fal
   return Boolean(defaultEnabled);
 }
 
+function combineHeightenAndOtherSlotIncrease(heightenDelta, otherSlotIncrease) {
+  const heighten = Number(heightenDelta);
+  const other = Number(otherSlotIncrease);
+  return Math.max(
+    0,
+    Number.isFinite(heighten) ? heighten : 0,
+    Number.isFinite(other) ? other : 0
+  );
+}
+
 function hasAnySlotIncreasingMetamagic(context, baseSpellLevel) {
   const heightenLevel = Number(context?.metamagic?.heightenLevel ?? 0);
   const heightenIncrease = Number.isFinite(baseSpellLevel)
@@ -396,8 +408,107 @@ function hasAnySlotIncreasingMetamagic(context, baseSpellLevel) {
     ?? context?.metamagic?.slotIncrease
     ?? 0
   );
-  const total = (Number.isFinite(slotIncrease) ? slotIncrease : 0) + heightenIncrease;
+  const total = combineHeightenAndOtherSlotIncrease(heightenIncrease, slotIncrease);
   return total > 0;
+}
+
+function normalizeMetamagicRuntimeName(name) {
+  const raw = (name ?? "").toString().trim();
+  if (!raw) return "";
+  return resolveMetamagicNameFromDatabase(raw) ?? raw;
+}
+
+function getMetamagicRuntimeNameKey(name) {
+  return normalizeMetamagicRuntimeName(name).toLowerCase();
+}
+
+function getFiniteNonNegativeNumber(value, fallback = 0) {
+  const number = Number(value ?? fallback);
+  if (!Number.isFinite(number)) return Math.max(0, fallback);
+  return Math.max(0, number);
+}
+
+function getPreparedSpellbookMetamagicRuntimeState(context, appliedNames = []) {
+  const preparedSpell = context?.spellbookPreparedSpell;
+  if (preparedSpell?.generated !== true) {
+    return {
+      active: false,
+      appliedPreparedNames: [],
+      appliedDynamicNames: [],
+      appliedPreparedSlotIncrease: 0,
+      appliedPreparedRuntimeSlotCredit: 0,
+      configuredPreparedSlotIncrease: 0,
+      consumedSlotCreditBasis: 0,
+      shouldBypassCastTime: false
+    };
+  }
+
+  const normalizedAppliedNames = (Array.isArray(appliedNames) ? appliedNames : [])
+    .map((name) => normalizeMetamagicRuntimeName(name))
+    .filter(Boolean);
+  const appliedKeys = new Set(normalizedAppliedNames.map((name) => getMetamagicRuntimeNameKey(name)).filter(Boolean));
+  const preparedSelections = Array.isArray(preparedSpell.metamagic) ? preparedSpell.metamagic : [];
+  const preparedSelectionKeys = new Set(
+    preparedSelections
+      .map((selection) => getMetamagicRuntimeNameKey(selection?.name))
+      .filter(Boolean)
+  );
+  const levelDelta = getFiniteNonNegativeNumber(preparedSpell.preparedSlotLevel, 0)
+    - getFiniteNonNegativeNumber(preparedSpell.originalSpellLevel, 0);
+  const configuredPreparedSlotIncrease = Math.max(
+    0,
+    getFiniteNonNegativeNumber(preparedSpell.preparedSlotIncrease, Math.max(0, levelDelta)),
+    Math.max(0, levelDelta)
+  );
+
+  const appliedPreparedSelections = preparedSelections.filter((selection) => {
+    const key = getMetamagicRuntimeNameKey(selection?.name);
+    return key && appliedKeys.has(key);
+  });
+  const appliedPreparedRuntimeSlotCredit = appliedPreparedSelections.reduce((total, selection) => {
+    const increase = Number(selection?.slotIncrease ?? 0);
+    return total + (Number.isFinite(increase) ? Math.max(0, increase) : 0);
+  }, 0);
+  const appliedPreparedNames = appliedPreparedSelections
+    .map((selection) => normalizeMetamagicRuntimeName(selection?.name))
+    .filter(Boolean);
+  const allPreparedSelectionsApplied = preparedSelections.length > 0
+    && appliedPreparedSelections.length === preparedSelections.length;
+  const appliedPreparedSlotIncrease = allPreparedSelectionsApplied
+    ? configuredPreparedSlotIncrease
+    : appliedPreparedRuntimeSlotCredit;
+  const appliedPreparedKeys = new Set(appliedPreparedNames.map((name) => getMetamagicRuntimeNameKey(name)).filter(Boolean));
+  const appliedDynamicNames = normalizedAppliedNames.filter((name) => {
+    const key = getMetamagicRuntimeNameKey(name);
+    return key && !appliedPreparedKeys.has(key);
+  });
+  const consumedSlotCreditBasis = appliedPreparedNames.length > 0
+    ? Math.max(appliedPreparedRuntimeSlotCredit, allPreparedSelectionsApplied ? configuredPreparedSlotIncrease : 0)
+    : 0;
+
+  preparedSpell.appliedPreparedMetamagicNames = appliedPreparedNames;
+  preparedSpell.appliedDynamicMetamagicNames = appliedDynamicNames;
+  preparedSpell.configuredPreparedSlotIncrease = configuredPreparedSlotIncrease;
+  preparedSpell.appliedPreparedSlotIncrease = appliedPreparedSlotIncrease;
+  preparedSpell.appliedPreparedRuntimeSlotCredit = appliedPreparedRuntimeSlotCredit;
+
+  return {
+    active: preparedSelections.length > 0 || preparedSelectionKeys.size > 0,
+    appliedPreparedNames,
+    appliedDynamicNames,
+    appliedPreparedSlotIncrease,
+    appliedPreparedRuntimeSlotCredit,
+    configuredPreparedSlotIncrease,
+    consumedSlotCreditBasis,
+    shouldBypassCastTime: appliedPreparedNames.length > 0 && appliedDynamicNames.length === 0
+  };
+}
+
+function getPreparedSpellbookConsumedSlotCredit(consumedSlotIncrease, preparedRuntimeState) {
+  if (!preparedRuntimeState?.active) return 0;
+  const consumed = getFiniteNonNegativeNumber(consumedSlotIncrease, 0);
+  const creditBasis = getFiniteNonNegativeNumber(preparedRuntimeState.consumedSlotCreditBasis, 0);
+  return Math.min(consumed, creditBasis);
 }
 
 function resolveBaseSaveDc(action, context) {
@@ -676,7 +787,7 @@ function computeConsumedSlotIncreaseForMetamagic(context, baseSpellLevel, hasApp
   const reducedOtherSlotIncrease = timelessSoulActive
     ? (quickenBaseIncrease - timelessSoulReduction) + Math.max(0, nonQuickenIncrease + slotAdjustment)
     : Math.max(0, normalizedOtherIncrease + slotAdjustment);
-  const preWaiverConsumedSlotIncrease = (Number.isFinite(heightenDelta) ? heightenDelta : 0) + reducedOtherSlotIncrease;
+  const preWaiverConsumedSlotIncrease = combineHeightenAndOtherSlotIncrease(heightenDelta, reducedOtherSlotIncrease);
   const spellPerfectionWaiver = getSpellPerfectionMetamagicWaiver(context, baseSpellLevel, { hasAppliedMetamagic });
   let consumedSlotIncrease = Math.max(0, preWaiverConsumedSlotIncrease - spellPerfectionWaiver);
   const minimumConsumedSlotLevel = getMaleficiumMinimumConsumedSlotLevel(context, { hasAppliedMetamagic });
@@ -1121,8 +1232,17 @@ export async function applyMetamagicSelections(action, context) {
   const normalizedRealSelections = selectionsWithoutExtend
     .map((name) => resolveMetamagicNameFromDatabase(name) ?? name)
     .filter(Boolean);
+  const normalizedDynamicRealSelections = context?.spellbookPreparedSpell?.generated === true
+    ? (
+      Array.isArray(context.spellbookPreparedSpell.dynamicMetamagicNames)
+        ? context.spellbookPreparedSpell.dynamicMetamagicNames
+          .map((name) => resolveMetamagicNameFromDatabase(name) ?? name)
+          .filter(Boolean)
+        : []
+    )
+    : normalizedRealSelections;
 
-    const baseSpellLevel = getRuntimeSpellLevel(action);
+  const baseSpellLevel = getRuntimeSpellLevel(action);
 
   let mimicMetaName = "";
   let mimicMetaIncrease = 0;
@@ -1542,6 +1662,10 @@ export async function applyMetamagicSelections(action, context) {
 
   const sorcererState = await getSorcererArcaneMetamagicState(context?.actor ?? action?.actor, action?.item ?? null);
   const hasAppliedMetamagic = Array.isArray(context?.metamagic?.applied) && context.metamagic.applied.length > 0;
+  const preparedSpellbookRuntime = getPreparedSpellbookMetamagicRuntimeState(
+    context,
+    context?.metamagic?.applied ?? []
+  );
   const spellPerfectionStatus = getSpellPerfectionStatus(context);
   const spontaneousMetafocusStatus = getSpontaneousMetafocusStatus(context);
   let succorWaiverActive = false;
@@ -1656,8 +1780,8 @@ export async function applyMetamagicSelections(action, context) {
   }
 
   let chosenBypass = null;
-  const mimicOnlyRequested = mimicWasApplied && normalizedRealSelections.length === 0;
-  const peerlessOnlyRequested = peerlessWasApplied && normalizedRealSelections.length === 0 && !mimicWasApplied;
+  const mimicOnlyRequested = mimicWasApplied && normalizedDynamicRealSelections.length === 0;
+  const peerlessOnlyRequested = peerlessWasApplied && normalizedDynamicRealSelections.length === 0 && !mimicWasApplied;
   if (hasAppliedMetamagic) {
     const selectedArcaneApotheosis = isClassFeatureSelected(context, ARCANE_APOTHEOSIS_FEATURE_ID);
     const selectedMetamagicAdept = isClassFeatureSelected(context, METAMAGIC_ADEPT_FEATURE_ID);
@@ -1771,9 +1895,13 @@ export async function applyMetamagicSelections(action, context) {
     if (isClassFeatureSelected(context, METAMAGIC_MASTERY_FEATURE_ID)) {
       const mmActor = context?.actor ?? action?.actor;
       const wmState = await getWizardMetamagicMasteryState(mmActor, action?.item ?? null);
-      const preR = slotMath.consumedSlotIncrease;
+      const preparedCredit = getPreparedSpellbookConsumedSlotCredit(
+        slotMath.consumedSlotIncrease,
+        preparedSpellbookRuntime
+      );
+      const preR = Math.max(0, slotMath.consumedSlotIncrease - preparedCredit);
       const debitCount = Math.max(1, preR);
-      if (wmState.eligible && wmState.metamagicMasteryItem) {
+      if (preR > 0 && wmState.eligible && wmState.metamagicMasteryItem) {
         const spellbookKey = (action?.item?.system?.spellbook ?? "").toString();
         const maxCastable = getSpellbookMaxCastableSpellLevel(mmActor, spellbookKey);
         const baseLevel = Number.isFinite(baseSpellLevel) ? baseSpellLevel : 0;
@@ -1845,6 +1973,10 @@ export async function applyMetamagicSelections(action, context) {
     bypassCastTimeIncrease = true;
     context.metamagic.castTimeBypassSource ??= SUCCOR_FINAL_REVELATION_FEATURE_ID;
   }
+  if (preparedSpellbookRuntime.shouldBypassCastTime) {
+    bypassCastTimeIncrease = true;
+    context.metamagic.castTimeBypassSource ??= SPELLBOOK_PREPARED_METAMAGIC_SOURCE_ID;
+  }
   if (mimicWasApplied && action.shared?.reject !== true && action.shared?.scriptData?.reject !== true) {
     action.shared ??= {};
     action.shared.nasPendingPhrenicPoolSpend = {
@@ -1873,7 +2005,12 @@ export async function applyMetamagicSelections(action, context) {
   } = slotMath;
   const mimicSlotWaiver = mimicWasApplied ? Math.max(0, mimicMetaIncrease) : 0;
   const consumedAfterMimic = Math.max(0, rawConsumedSlotIncrease - mimicSlotWaiver);
-  const consumedSlotIncrease = metamagicMasterySlotBypass ? 0 : consumedAfterMimic;
+  const preparedSpellbookConsumedSlotCredit = getPreparedSpellbookConsumedSlotCredit(
+    consumedAfterMimic,
+    preparedSpellbookRuntime
+  );
+  const dynamicConsumedSlotIncrease = Math.max(0, consumedAfterMimic - preparedSpellbookConsumedSlotCredit);
+  const consumedSlotIncrease = metamagicMasterySlotBypass ? 0 : dynamicConsumedSlotIncrease;
 
   context.metamagic.otherSlotIncrease = normalizedOtherIncrease;
   context.metamagic.heightenDelta = Number.isFinite(heightenDelta) ? heightenDelta : 0;
@@ -1882,6 +2019,13 @@ export async function applyMetamagicSelections(action, context) {
   context.metamagic.timelessSoulActive = timelessSoulActive === true;
   context.metamagic.reducedOtherSlotIncrease = reducedOtherSlotIncrease;
   context.metamagic.mimicSlotWaiver = mimicSlotWaiver;
+  context.metamagic.preparedSpellbookSlotIncrease = preparedSpellbookRuntime.configuredPreparedSlotIncrease;
+  context.metamagic.preparedSpellbookAppliedSlotIncrease = preparedSpellbookRuntime.appliedPreparedSlotIncrease;
+  context.metamagic.preparedSpellbookRuntimeSlotCredit = preparedSpellbookRuntime.appliedPreparedRuntimeSlotCredit;
+  context.metamagic.preparedSpellbookConsumedSlotCredit = preparedSpellbookConsumedSlotCredit;
+  context.metamagic.dynamicConsumedSlotIncrease = dynamicConsumedSlotIncrease;
+  context.metamagic.appliedPreparedMetamagicNames = preparedSpellbookRuntime.appliedPreparedNames;
+  context.metamagic.appliedDynamicMetamagicNames = preparedSpellbookRuntime.appliedDynamicNames;
   context.metamagic.consumedSlotIncrease = consumedSlotIncrease;
   // Backward-compatible mirror while consumers migrate to consumedSlotIncrease.
   context.metamagic.effectiveSlotIncrease = consumedSlotIncrease;
@@ -1907,7 +2051,11 @@ export async function applyMetamagicSelections(action, context) {
   }
   context.metamagic.activeFeatureLabels = activeFeatureLabels;
 
-  if (consumedSlotIncrease > 0) {
+  const deferPreparedSpellbookHigherSlotConsumption = consumedSlotIncrease > 0
+    && shouldDeferPreparedVariantHigherSlotConsumption(action, context);
+  context.metamagic.preparedSpellbookHigherSlotConsumptionDeferred = deferPreparedSpellbookHigherSlotConsumption;
+
+  if (consumedSlotIncrease > 0 && !deferPreparedSpellbookHigherSlotConsumption) {
     await consumeHigherSpellSlot(action, consumedSlotIncrease);
   }
 

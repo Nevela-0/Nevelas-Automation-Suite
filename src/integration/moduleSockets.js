@@ -1,6 +1,7 @@
 import { MODULE } from '../common/module.js';
 import { chatMessageStyle } from '../common/foundryCompat.js';
 import { applyBuffToTargets } from '../features/automation/buffs/buffs.js';
+import { buildTokenHeaderHtml, SAVE_TOKEN_FLAG } from '../features/automation/utils/chatSaveOverrides.js';
 import {
     applyMirrorImageStateSocket,
     undoMirrorImageOperationSocket
@@ -61,6 +62,7 @@ export function initializeSockets() {
     socket.register("toggleReactiveBuffSocket", toggleReactiveBuffSocket);
     socket.register("grantNasTemporaryHpSocket", grantNasTemporaryHpSocket);
     socket.register("spendNasTemporaryHpSocket", spendNasTemporaryHpSocket);
+    socket.register("rollNasBuffSaveSocket", rollNasBuffSaveSocket);
     socket.register("setMirrorImageBuffStateSocket", applyMirrorImageStateSocket);
     socket.register("undoMirrorImageOperationSocket", undoMirrorImageOperationSocket);
 }
@@ -296,8 +298,6 @@ async function rollMassiveDamageSave(actorId, damageAmount, threshold) {
     if (roll.rolls && roll.rolls.length > 0) {
         total = roll.rolls[0].total || 0;
     }
-    
-    console.log("Massive damage save roll result:", total);
     const success = total >= 15;
     
     if (!success) {
@@ -336,8 +336,6 @@ export function checkMassiveDamage(damage, maxHP, token) {
     const damageThreshold = Math.max(Math.floor(maxHP / 2), 50);
     
     if (damage >= damageThreshold) {
-        console.log(`Massive damage threshold met: ${damage} damage >= ${damageThreshold} threshold for ${token.name}`);
-        
         if (!game.modules.get("socketlib")?.active) {
             ui.notifications.warn(formatSockets("warnings.massiveDamageNoSocketLib", {
                 name: token.name,
@@ -378,9 +376,6 @@ export function checkMassiveDamage(damage, maxHP, token) {
         if (nonGmOwners.length > 0) {
             const targetUserId = nonGmOwners[0][0];
             socket.executeAsUser("rollMassiveDamageSave", targetUserId, actorId, damage, damageThreshold)
-                .then(result => {
-                    console.log("Massive damage save result:", result);
-                })
                 .catch(error => {
                     console.error("Error rolling massive damage save:", error);
                     const activeGm = game.users.find(u => u.active && u.isGM);
@@ -710,6 +705,84 @@ Hooks.on('preUpdateToken', (tokenDocument, updateData, options, userId) => {
 
 function sendNotification(type, message) {
     ui.notifications[type](message);
+}
+
+function socketNumberOrNull(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+}
+
+function socketParseRollJson(value) {
+    if (typeof value !== "string" || value.trim().length === 0) return null;
+    try {
+        if (typeof globalThis.Roll?.fromJSON === "function") {
+            const roll = globalThis.Roll.fromJSON(value);
+            if (roll) return roll;
+        }
+    } catch (_err) {
+    }
+    try {
+        return JSON.parse(value);
+    } catch (_err) {
+        return null;
+    }
+}
+
+function socketExtractRollTotal(result) {
+    const rollLike = result?.rolls?.[0] ?? result?.roll ?? null;
+    const parsedRoll = typeof rollLike === "string" ? socketParseRollJson(rollLike) : rollLike;
+    const candidates = [
+        result?.total,
+        result?.roll?.total,
+        parsedRoll?.total,
+        parsedRoll?._total,
+        parsedRoll?.terms?.[0]?.total,
+    ];
+    for (const value of candidates) {
+        const total = socketNumberOrNull(value);
+        if (total != null) return total;
+    }
+    return null;
+}
+
+async function createGmOnlyBuffSaveMessage(messageData, tokenDocument = null) {
+    if (!messageData || typeof globalThis.ChatMessage?.create !== "function") return null;
+    const gmIds = game.users?.filter?.((user) => user?.isGM)?.map?.((user) => user.id)?.filter?.(Boolean) ?? [];
+    if (!gmIds.length) return null;
+    const data = foundry.utils.deepClone(messageData);
+    delete data.rolls;
+    if (game.settings.get(MODULE.ID, "saveRollTokenInteraction") && tokenDocument) {
+        data.content = `${buildTokenHeaderHtml(tokenDocument, "")}${data.content ?? ""}`;
+        foundry.utils.setProperty(data, `flags.${MODULE.ID}.${SAVE_TOKEN_FLAG}`, true);
+        if (tokenDocument.uuid) {
+            foundry.utils.setProperty(data, `flags.${MODULE.ID}.metamagic.tokenUuid`, tokenDocument.uuid);
+        }
+    }
+    data.whisper = gmIds;
+    data.blind = false;
+    data.sound = globalThis.CONFIG?.sounds?.dice;
+    return globalThis.ChatMessage.create(data);
+}
+
+async function rollNasBuffSaveSocket(targetRef, saveType, dc, options = {}) {
+    if (game.user?.isGM !== true) return { total: null, created: false };
+    const { token, tokenDocument, tokenActor } = await resolveTokenContext(targetRef?.tokenUuid);
+    const actor = tokenActor ?? (targetRef?.actorUuid ? await fromUuid(targetRef.actorUuid) : null);
+    if (!actor?.rollSavingThrow) return { total: null, created: false };
+    const hiddenMessage = options?.hiddenMessage === true;
+    const privateRoll = options?.privateRoll === true;
+    const result = await actor.rollSavingThrow(saveType, {
+        dc,
+        skipDialog: true,
+        fastForward: true,
+        token: token ?? tokenDocument?.object,
+        chatMessage: hiddenMessage ? false : true,
+        rollMode: hiddenMessage ? undefined : (privateRoll ? "gmroll" : undefined),
+        noSound: hiddenMessage === true
+    });
+    const total = socketExtractRollTotal(result);
+    if (hiddenMessage) await createGmOnlyBuffSaveMessage(result, tokenDocument);
+    return { total, created: hiddenMessage ? true : Boolean(result?.id ?? result?._id) };
 }
 
 function sendNotificationToOwners(token, type, message) {

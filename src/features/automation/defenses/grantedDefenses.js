@@ -5,6 +5,13 @@ import { createNasId } from "../utils/nasIds.js";
 
 export const GRANTED_DEFENSE_FLAG = "grantedDefenses";
 export const ITEM_REACTIVE_FLAG_KEY = "itemReactiveEffects";
+export const FORTIFICATION_TIERS = {
+  none: { id: "none", rank: 0, chance: 0, labelKey: "NAS.common.labels.none" },
+  light: { id: "light", rank: 1, chance: 25, labelKey: "NAS.reactive.fortificationLight" },
+  moderate: { id: "moderate", rank: 2, chance: 50, labelKey: "NAS.reactive.fortificationModerate" },
+  heavy: { id: "heavy", rank: 3, chance: 75, labelKey: "NAS.reactive.fortificationHeavy" },
+  immune: { id: "immune", rank: 4, chance: 100, labelKey: "NAS.reactive.fortificationImmune" }
+};
 
 function uniqueStrings(values = []) {
   return [...new Set(
@@ -17,6 +24,15 @@ function uniqueStrings(values = []) {
 function numberOrZero(value) {
   const n = Number(value);
   return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+}
+
+export function normalizeFortificationTier(value) {
+  const key = String(value ?? "none").trim().toLowerCase();
+  return FORTIFICATION_TIERS[key]?.id ?? "none";
+}
+
+export function getFortificationTierData(value) {
+  return FORTIFICATION_TIERS[normalizeFortificationTier(value)] ?? FORTIFICATION_TIERS.none;
 }
 
 function normalizeResistanceEntry(entry = {}) {
@@ -60,7 +76,8 @@ export function normalizeGrantedDefenses(raw = {}) {
     eres: normalizeResistanceGrant(raw?.eres),
     di: uniqueStrings(raw?.di),
     ci: uniqueStrings(raw?.ci),
-    dv: uniqueStrings(raw?.dv)
+    dv: uniqueStrings(raw?.dv),
+    fortification: normalizeFortificationTier(raw?.fortification)
   };
 }
 
@@ -68,11 +85,38 @@ export function hasGrantedDefenseData(item) {
   return Boolean(item?.flags?.[MODULE.ID]?.[ITEM_REACTIVE_FLAG_KEY]?.[GRANTED_DEFENSE_FLAG]);
 }
 
+function grantedDefenseSourceStatus(item) {
+  if (!item) return { active: false, reason: "missing-item" };
+  if (!["buff", "equipment"].includes(item.type)) {
+    return {
+      active: false,
+      reason: "unsupported-item-type",
+      type: item.type
+    };
+  }
+  if (item.type === "buff") {
+    const active = item.isActive ?? item.system?.active === true;
+    return {
+      active,
+      reason: active ? "active-buff" : "inactive-buff",
+      isActive: item.isActive,
+      systemActive: item.system?.active
+    };
+  }
+  const active = item.system?.equipped === true && (item.system?.quantity ?? 1) > 0;
+  const notBroken = item.isBroken !== true;
+  return {
+    active: active && notBroken,
+    reason: active && notBroken ? "active-equipment" : "inactive-equipment",
+    isActive: item.isActive,
+    equipped: item.system?.equipped,
+    quantity: item.system?.quantity,
+    isBroken: item.isBroken
+  };
+}
+
 export function isGrantedDefenseSourceActive(item) {
-  if (!item || !["buff", "equipment"].includes(item.type)) return false;
-  if (item.type === "buff") return item.isActive ?? item.system?.active === true;
-  const active = item.isActive ?? (item.system?.equipped === true && (item.system?.quantity ?? 1) > 0);
-  return active && item.isBroken !== true;
+  return grantedDefenseSourceStatus(item).active === true;
 }
 
 export function getGrantedDefenseOptions(kind) {
@@ -80,6 +124,13 @@ export function getGrantedDefenseOptions(kind) {
   if (kind === "eres") return getDamageTypes("resistance").filter((option) => option.id !== "all");
   if (kind === "di") return getDamageTypes("immunity").filter((option) => option.id !== "all");
   if (kind === "dv") return getDamageTypes("immunity").filter((option) => option.id !== "all");
+  if (kind === "fortification") {
+    return Object.values(FORTIFICATION_TIERS).map((tier) => ({
+      id: tier.id,
+      label: game.i18n.localize(tier.labelKey),
+      chance: tier.chance
+    }));
+  }
   if (kind === "ci") {
     const out = [];
     for (const condition of pf1?.registry?.conditions ?? []) {
@@ -179,12 +230,25 @@ function addTraitSetValue(trait, kind, id) {
 function collectGrantedDefenseContributions(actor) {
   const out = [];
   for (const item of actor?.items ?? []) {
-    if (!hasGrantedDefenseData(item) || !isGrantedDefenseSourceActive(item)) continue;
-    const config = normalizeGrantedDefenses(item.flags[MODULE.ID][ITEM_REACTIVE_FLAG_KEY][GRANTED_DEFENSE_FLAG]);
+    if (!hasGrantedDefenseData(item)) continue;
+    const status = grantedDefenseSourceStatus(item);
+    const rawConfig = item.flags[MODULE.ID][ITEM_REACTIVE_FLAG_KEY][GRANTED_DEFENSE_FLAG];
+    if (!status.active) continue;
+    const config = normalizeGrantedDefenses(rawConfig);
     if (!config.enabled) continue;
     out.push({ item, config });
   }
   return out;
+}
+
+export function getActorGrantedFortification(actor) {
+  let best = { ...FORTIFICATION_TIERS.none, item: null };
+  for (const { item, config } of collectGrantedDefenseContributions(actor)) {
+    const tier = getFortificationTierData(config.fortification);
+    if (tier.rank <= best.rank) continue;
+    best = { ...tier, item };
+  }
+  return best;
 }
 
 export function applyGrantedDefenseOverlay(actor) {

@@ -86,6 +86,7 @@ import {
   enforceSpellAbilityMinimumOnPreCreateItem,
   enforceSpellAbilityMinimumOnPreUpdateItem
 } from '../features/automation/spellcasting/abilityLimit.js';
+import { registerSpellbookPreparation } from '../features/automation/spellcasting/preparation/index.js';
 import {
   registerEldritchResearcherItemHook,
   registerSpontaneousMetafocusItemHook,
@@ -309,6 +310,7 @@ Hooks.once("init", () => {
   registerMagicalLineageItemHook();
   registerTransmuterOfKoradaItemHook();
   registerWayangSpellhunterItemHook();
+  registerSpellbookPreparation();
 });
 
 onRenderChatMessageCompat(handleNasRenderChatMessage);
