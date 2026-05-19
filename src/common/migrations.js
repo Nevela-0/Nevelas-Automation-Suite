@@ -3,6 +3,19 @@ import { MODULE } from "./module.js";
 const fu = globalThis.foundry?.utils;
 const duplicateFn = fu?.duplicate ?? globalThis.duplicate;
 const mergeObjectFn = fu?.mergeObject ?? globalThis.mergeObject;
+const REACTIVE_FLAG_KEY = "itemReactiveEffects";
+const REACTIVE_TOP_LEVEL_ENABLED_SECTIONS = [
+  "onHit",
+  "onStruck",
+  "absorption",
+  "grantedDefenses",
+  "temporaryHp",
+  "appliedBuffOverrides"
+];
+const REACTIVE_ACTION_CONFIG_MAPS = [
+  "onHitByAction",
+  "onHitByActionOverride"
+];
 
 function entriesFromWorldStorage() {
   const storage = game.settings?.storage?.get?.("world");
@@ -450,6 +463,113 @@ async function migrateTokenActorItems(legacyIds, newId, progress) {
   }
 }
 
+function stripLegacyTopLevelEnabled(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  if (!Object.prototype.hasOwnProperty.call(value, "enabled")) return false;
+  delete value.enabled;
+  return true;
+}
+
+function stripLegacyReactiveSectionToggles(rawReactive) {
+  if (!rawReactive || typeof rawReactive !== "object") return { changed: false, reactive: rawReactive };
+  const reactive = duplicateFn(rawReactive);
+  let changed = false;
+
+  for (const key of REACTIVE_TOP_LEVEL_ENABLED_SECTIONS) {
+    changed = stripLegacyTopLevelEnabled(reactive[key]) || changed;
+  }
+
+  for (const mapKey of REACTIVE_ACTION_CONFIG_MAPS) {
+    const map = reactive[mapKey];
+    if (!map || typeof map !== "object" || Array.isArray(map)) continue;
+    for (const config of Object.values(map)) {
+      changed = stripLegacyTopLevelEnabled(config) || changed;
+    }
+  }
+
+  const buffSaveByAction = reactive.buffSaveByAction;
+  if (buffSaveByAction && typeof buffSaveByAction === "object" && !Array.isArray(buffSaveByAction)) {
+    for (const config of Object.values(buffSaveByAction)) {
+      if (!config || typeof config !== "object" || Array.isArray(config)) continue;
+      if (Object.prototype.hasOwnProperty.call(config, "override")) {
+        delete config.override;
+        changed = true;
+      }
+    }
+  }
+
+  return { changed, reactive };
+}
+
+function stripLegacyReactiveSectionTogglesForItem(item) {
+  const raw = item?.getFlag?.(MODULE.ID, REACTIVE_FLAG_KEY)
+    ?? item?.flags?.[MODULE.ID]?.[REACTIVE_FLAG_KEY];
+  return stripLegacyReactiveSectionToggles(raw);
+}
+
+async function migrateWorldItemReactiveSectionToggles(progress, stats) {
+  for (const item of game.items ?? []) {
+    const { changed, reactive } = stripLegacyReactiveSectionTogglesForItem(item);
+    if (changed) {
+      await item.update({ [`flags.${MODULE.ID}.${REACTIVE_FLAG_KEY}`]: reactive });
+      stats.worldUpdated += 1;
+    }
+    stats.worldScanned += 1;
+    if (progress) await progress.increment(`World Item: ${item.name ?? item.id}`);
+  }
+}
+
+async function migrateActorItemReactiveSectionToggles(progress, stats) {
+  for (const actor of game.actors ?? []) {
+    const itemUpdates = [];
+    for (const item of actor.items ?? []) {
+      const { changed, reactive } = stripLegacyReactiveSectionTogglesForItem(item);
+      if (changed) {
+        itemUpdates.push({ _id: item.id, [`flags.${MODULE.ID}.${REACTIVE_FLAG_KEY}`]: reactive });
+        stats.actorUpdated += 1;
+      }
+      stats.actorScanned += 1;
+      if (progress) await progress.increment(`Actor Item: ${item.name ?? item.id} (Actor: ${actor.name ?? actor.id})`);
+    }
+    if (itemUpdates.length > 0) await actor.updateEmbeddedDocuments("Item", itemUpdates);
+  }
+}
+
+async function migrateTokenActorItemReactiveSectionToggles(progress, stats) {
+  for (const scene of game.scenes ?? []) {
+    for (const token of scene.tokens ?? []) {
+      const actor = token.actor;
+      if (!actor) continue;
+      const itemUpdates = [];
+      for (const item of actor.items ?? []) {
+        const { changed, reactive } = stripLegacyReactiveSectionTogglesForItem(item);
+        if (changed) {
+          itemUpdates.push({ _id: item.id, [`flags.${MODULE.ID}.${REACTIVE_FLAG_KEY}`]: reactive });
+          stats.tokenUpdated += 1;
+        }
+        stats.tokenScanned += 1;
+        if (progress) await progress.increment(`Token Item: ${item.name ?? item.id} (Token: ${token.name ?? token.id})`);
+      }
+      if (itemUpdates.length > 0) await actor.updateEmbeddedDocuments("Item", itemUpdates);
+    }
+  }
+}
+
+async function migrateReactiveSectionToggles(progress) {
+  const stats = {
+    worldScanned: 0,
+    worldUpdated: 0,
+    actorScanned: 0,
+    actorUpdated: 0,
+    tokenScanned: 0,
+    tokenUpdated: 0
+  };
+  await migrateWorldItemReactiveSectionToggles(progress, stats);
+  await migrateActorItemReactiveSectionToggles(progress, stats);
+  await migrateTokenActorItemReactiveSectionToggles(progress, stats);
+  return stats;
+}
+
 async function migrateCustomDamageTypeFlags(legacyIds, newId) {
   const ids = Array.isArray(legacyIds) ? legacyIds : [legacyIds];
   let customDamageTypes;
@@ -776,6 +896,7 @@ export async function runSuiteMigrations({ force = false } = {}) {
     await migrateCollectionFlags(game.combats, [MODULE.LEGACY_IC], MODULE.ID, progress, combat => `Combat: ${combat.name ?? combat.id}`);
     await migrateSceneTokens(legacyIds, MODULE.ID, progress);
     await migrateTokenActorItems(legacyIds, MODULE.ID, progress);
+    await migrateReactiveSectionToggles(progress);
     await migrateConcealmentConditionToConcealed(progress);
 
     progress?.update({ detail: "Finalizing migration..." });
@@ -809,8 +930,14 @@ function countMigrationTargets() {
       count += token.actor?.items?.size ?? 0;
     }
   }
+  count += game.items?.size ?? 0;
+  for (const actor of game.actors ?? []) {
+    count += actor.items?.size ?? 0;
+  }
+  for (const scene of game.scenes ?? []) {
+    for (const token of scene.tokens ?? []) {
+      count += token.actor?.items?.size ?? 0;
+    }
+  }
   return count;
 }
-
-
-

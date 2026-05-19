@@ -54,6 +54,23 @@ export function elementFromHtmlLike(html) {
   return null;
 }
 
+export function escapeHtmlForSheet(value) {
+  const text = String(value ?? "");
+  const foundryEscape = globalThis.foundry?.utils?.escapeHTML;
+  if (typeof foundryEscape === "function") return foundryEscape(text);
+
+  const handlebarsEscape = globalThis.Handlebars?.escapeExpression;
+  if (typeof handlebarsEscape === "function") return handlebarsEscape(text);
+
+  return text.replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;"
+  }[character]));
+}
+
 export function htmlElementFromRenderArg(html) {
   return elementFromHtmlLike(html);
 }

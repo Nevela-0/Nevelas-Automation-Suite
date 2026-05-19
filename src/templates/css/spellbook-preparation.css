@@ -70,7 +70,14 @@
   color: #5a341e;
 }
 
-.nas-prepared-slot-relocated .nas-prepared-slot-hints {
+.sheet .item-hints.koboldworks .hint.nas-known-spell-missing {
+  border-color: rgba(106, 85, 66, 0.55);
+  background-color: rgba(255, 248, 225, 0.36);
+  color: #5b4634;
+}
+
+.nas-prepared-slot-relocated .nas-prepared-slot-hints,
+.nas-known-spell-missing-source .nas-prepared-slot-hints {
   display: inline-flex;
   align-items: center;
   gap: 2px;
@@ -78,7 +85,8 @@
   min-width: 0;
 }
 
-.nas-prepared-slot-relocated .nas-prepared-slot-badge {
+.nas-prepared-slot-relocated .nas-prepared-slot-badge,
+.nas-known-spell-missing-source .nas-known-spell-missing-badge {
   display: inline-flex;
   align-items: center;
   gap: 3px;
@@ -535,6 +543,12 @@
 
 .nas-prep-slot-cost {
   white-space: nowrap;
+}
+
+.nas-known-spell-missing-source .nas-known-spell-missing-badge {
+  border-color: rgba(106, 85, 66, 0.42);
+  background: rgba(255, 248, 225, 0.34);
+  color: #5b4634;
 }
 
 .nas-prep-slot-cost-short,

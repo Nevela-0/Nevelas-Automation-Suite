@@ -360,7 +360,7 @@ function postReactiveChatSummary({ ownerActor, otherActor, ownerItemPlain, trigg
 }
 
 function buildOnHitFromRaw(raw) {
-  if (!raw || raw.enabled !== true || !Array.isArray(raw.effects) || raw.effects.length === 0) {
+  if (!raw || !Array.isArray(raw.effects) || raw.effects.length === 0) {
     return null;
   }
   return {
@@ -394,7 +394,7 @@ function getOnStruckConfigs(targetActor) {
     if (!isItemOnStruckActive(item)) continue;
     const flags = getReactiveFlags(item);
     const raw = flags?.onStruck ?? null;
-    if (!raw || raw.enabled !== true) continue;
+    if (!raw) continue;
     const effects = Array.isArray(raw.effects) ? raw.effects.map(normalizeEffect) : [];
     const rules = Array.isArray(raw.rules) && raw.rules.length
       ? raw.rules.map((rule) => normalizeOnStruckDamageRule(rule))
@@ -1071,7 +1071,7 @@ export function hasOnStruckReactiveData(item) {
 
 export async function initializeOnStruckReactiveItem(item) {
   const raw = item?.flags?.[MODULE.ID]?.[REACTIVE_FLAG_KEY]?.onStruck;
-  if (!raw?.enabled) return false;
+  if (!raw) return false;
   const rules = Array.isArray(raw.rules) ? raw.rules.map((rule) => normalizeOnStruckDamageRule(rule)) : [];
   const pool = normalizeOnStruckPool(raw.pool ?? raw[ON_STRUCK_POOL_KEY] ?? {});
   if (!pool.enabled || !rules.some((rule) => rule.spendPool === true)) {
@@ -1089,7 +1089,7 @@ export async function initializeOnStruckReactiveItem(item) {
 
 export async function resetOnStruckReactiveItem(item) {
   const raw = item?.flags?.[MODULE.ID]?.[REACTIVE_FLAG_KEY]?.onStruck;
-  if (!raw?.enabled) return false;
+  if (!raw) return false;
   const pool = normalizeOnStruckPool(raw.pool ?? raw[ON_STRUCK_POOL_KEY] ?? {});
   if (!pool.enabled) {
     refreshTokenEffectBadgesForActor(item?.actor);
@@ -1116,7 +1116,6 @@ export function registerOnStruckTokenEffectBadgeProvider() {
         const active = isItemOnStruckActive(item);
         const pool = normalizeOnStruckPool(raw.pool ?? raw[ON_STRUCK_POOL_KEY] ?? {});
         if (!active) continue;
-        if (!raw?.enabled) continue;
         if (!pool.enabled || !pool.showBadge || !Number.isFinite(Number(pool.remaining)) || pool.remaining <= 0) continue;
         badges.push({
           item,

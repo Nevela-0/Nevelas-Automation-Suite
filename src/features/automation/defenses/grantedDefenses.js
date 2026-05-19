@@ -71,14 +71,37 @@ function normalizeResistanceGrant(raw = {}) {
 
 export function normalizeGrantedDefenses(raw = {}) {
   return {
-    enabled: raw?.enabled === true,
+    enabled: isGrantedDefenseConfigActive(raw),
     dr: normalizeResistanceGrant(raw?.dr),
     eres: normalizeResistanceGrant(raw?.eres),
     di: uniqueStrings(raw?.di),
     ci: uniqueStrings(raw?.ci),
     dv: uniqueStrings(raw?.dv),
-    fortification: normalizeFortificationTier(raw?.fortification)
+    fortification: normalizeFortificationTier(raw?.fortification),
+    criticalImmunity: raw?.criticalImmunity === true
   };
+}
+
+function resistanceGrantConfigured(grant) {
+  return Boolean(
+    String(grant?.custom ?? "").trim()
+    || (Array.isArray(grant?.value) && grant.value.some((entry) =>
+      Number(entry?.amount ?? entry?.value) > 0
+      || (Array.isArray(entry?.types) && entry.types.length > 0)
+    ))
+  );
+}
+
+function isGrantedDefenseConfigActive(raw = {}) {
+  return Boolean(
+    resistanceGrantConfigured(raw?.dr)
+    || resistanceGrantConfigured(raw?.eres)
+    || (Array.isArray(raw?.di) && raw.di.length > 0)
+    || (Array.isArray(raw?.ci) && raw.ci.length > 0)
+    || (Array.isArray(raw?.dv) && raw.dv.length > 0)
+    || normalizeFortificationTier(raw?.fortification) !== "none"
+    || raw?.criticalImmunity === true
+  );
 }
 
 export function hasGrantedDefenseData(item) {
@@ -249,6 +272,10 @@ export function getActorGrantedFortification(actor) {
     best = { ...tier, item };
   }
   return best;
+}
+
+export function actorHasGrantedCriticalImmunity(actor) {
+  return collectGrantedDefenseContributions(actor).some(({ config }) => config.criticalImmunity === true);
 }
 
 export function applyGrantedDefenseOverlay(actor) {

@@ -5,6 +5,11 @@ import { refreshTokenEffectBadgesForActor } from "../utils/tokenEffectBadges.js"
 import { showTemporaryHpCombatText, showTemporaryHpGainCombatText } from "../utils/healthDeltaText.js";
 import { createNasId, ensureNasId } from "../utils/nasIds.js";
 import { getStoredBuffCasterLevel } from "../utils/spellLevels.js";
+import {
+  APPLIED_BUFF_LOCKOUTS_KEY,
+  APPLIED_BUFF_RUNTIME_KEY,
+  appliedBuffLockoutKey
+} from "./appliedBuffOverrides.js";
 
 const REACTIVE_FLAG_KEY = "itemReactiveEffects";
 const TEMP_HP_FLAG_KEY = "temporaryHp";
@@ -114,6 +119,47 @@ function normalizeTemporaryHpCompatibilityMode(value) {
   return TEMP_HP_COMPATIBILITY_MODES.has(mode) ? mode : "stacksWithAll";
 }
 
+function normalizeTimePeriod(value, fallback = "hour") {
+  const units = String(value ?? fallback).trim();
+  const periods = globalThis.CONFIG?.PF1?.timePeriods ?? {};
+  if (periods[units]) return units;
+  return ["round", "minute", "hour", "day"].includes(units) ? units : fallback;
+}
+
+function timePeriodSeconds(value, units) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount <= 0) return 0;
+  const unit = normalizeTimePeriod(units, "hour");
+  const roundSeconds = Number(globalThis.CONFIG?.time?.roundTime ?? 6) || 6;
+  if (unit === "round") return amount * roundSeconds;
+  if (unit === "minute") return amount * 60;
+  if (unit === "hour") return amount * 3600;
+  if (unit === "day") return amount * 86400;
+  return amount;
+}
+
+function normalizeTemporaryHpRegeneration(raw = {}) {
+  const value = raw && typeof raw === "object" ? raw : {};
+  return {
+    enabled: value.enabled === true,
+    formula: String(value.formula ?? value.amountFormula ?? "").trim(),
+    timing: String(value.timing ?? "turnStart") === "turnStart" ? "turnStart" : "turnStart",
+    lastCombatKey: String(value.lastCombatKey ?? "")
+  };
+}
+
+function normalizeTemporaryHpDepletion(raw = {}) {
+  const value = raw && typeof raw === "object" ? raw : {};
+  return {
+    mode: String(value.mode ?? "none") === "deactivateSource" ? "deactivateSource" : "none",
+    lockout: {
+      enabled: value.lockout?.enabled === true,
+      value: String(value.lockout?.value ?? "24"),
+      units: normalizeTimePeriod(value.lockout?.units, "hour")
+    }
+  };
+}
+
 function now() {
   return Date.now();
 }
@@ -132,7 +178,7 @@ function isSourceItemActive(item) {
 function tempHpConfig(item) {
   const raw = item?.flags?.[MODULE.ID]?.[REACTIVE_FLAG_KEY]?.[TEMP_HP_FLAG_KEY] ?? {};
   return {
-    enabled: raw?.enabled === true,
+    enabled: isTemporaryHpRawConfigured(raw),
     poolId: String(raw?.poolId ?? `legacy-${item?.id ?? createNasId()}`),
     sourceKey: deriveTempHpSourceKey({
       sourceKey: raw?.sourceKey,
@@ -149,9 +195,26 @@ function tempHpConfig(item) {
     duration: foundry.utils.deepClone(raw?.duration ?? null),
     stackingMode: normalizeTemporaryHpStackingMode(raw?.stackingMode),
     compatibilityMode: normalizeTemporaryHpCompatibilityMode(raw?.compatibilityMode),
+    regeneration: normalizeTemporaryHpRegeneration(raw?.regeneration),
+    depletion: normalizeTemporaryHpDepletion(raw?.depletion),
     createdAt: Number.isFinite(Number(raw?.createdAt)) ? Number(raw.createdAt) : 0,
     showBadge: raw?.showBadge !== false
   };
+}
+
+function isTemporaryHpRawConfigured(raw = {}) {
+  return Boolean(
+    raw && typeof raw === "object" && (
+      String(raw.formula ?? raw.amountFormula ?? raw.maxFormula ?? "").trim()
+      || Number(raw.max ?? raw.amount ?? raw.value) > 0
+      || Number(raw.remaining) > 0
+      || raw.regeneration?.enabled === true
+      || String(raw.regeneration?.formula ?? "").trim()
+      || String(raw.depletion?.mode ?? "none") !== "none"
+      || raw.depletion?.lockout?.enabled === true
+      || (Array.isArray(raw.pools) && raw.pools.some((pool) => pool?.enabled !== false && isTemporaryHpRawConfigured(pool)))
+    )
+  );
 }
 
 function deriveTempHpSourceKey({ sourceKey = "", sourceItemUuid = "", sourceBuffUuid = "", item = null } = {}) {
@@ -184,6 +247,8 @@ function normalizeTempHpPoolEntry(entry = {}, item = null) {
     duration: foundry.utils.deepClone(entry?.duration ?? null),
     stackingMode: normalizeTemporaryHpStackingMode(entry?.stackingMode),
     compatibilityMode: normalizeTemporaryHpCompatibilityMode(entry?.compatibilityMode),
+    regeneration: normalizeTemporaryHpRegeneration(entry?.regeneration),
+    depletion: normalizeTemporaryHpDepletion(entry?.depletion),
     createdAt: Number.isFinite(Number(entry?.createdAt)) ? Number(entry.createdAt) : 0,
     showBadge: entry?.showBadge !== false
   };
@@ -192,7 +257,7 @@ function normalizeTempHpPoolEntry(entry = {}, item = null) {
 function tempHpPoolEntries(item) {
   const raw = item?.flags?.[MODULE.ID]?.[REACTIVE_FLAG_KEY]?.[TEMP_HP_FLAG_KEY] ?? {};
   if (Array.isArray(raw?.pools)) {
-    return raw.pools.map((pool) => normalizeTempHpPoolEntry(pool, item));
+    return raw.pools.map((pool) => normalizeTempHpPoolEntry({ ...raw, ...pool }, item));
   }
   if (!hasTemporaryHpData(item)) return [];
   return [normalizeTempHpPoolEntry(tempHpConfig(item), item)];
@@ -212,6 +277,8 @@ function serializeTempHpPool(pool) {
     duration: foundry.utils.deepClone(pool?.duration ?? null),
     stackingMode: normalizeTemporaryHpStackingMode(pool?.stackingMode),
     compatibilityMode: normalizeTemporaryHpCompatibilityMode(pool?.compatibilityMode),
+    regeneration: normalizeTemporaryHpRegeneration(pool?.regeneration),
+    depletion: normalizeTemporaryHpDepletion(pool?.depletion),
     createdAt: Number.isFinite(Number(pool?.createdAt)) ? Number(pool.createdAt) : now(),
     showBadge: pool?.showBadge !== false
   };
@@ -230,7 +297,6 @@ function tempHpPoolUpdate(pools = []) {
   const serialized = pools.map((pool) => serializeTempHpPool(pool));
   const aggregate = aggregateTempHpPools(serialized);
   return {
-    [flagPath("enabled")]: aggregate.enabled,
     [flagPath("remaining")]: aggregate.remaining,
     [flagPath("max")]: aggregate.max,
     [flagPath("pools")]: serialized
@@ -367,6 +433,8 @@ function poolDescriptor(item, pool = null) {
     duration: config.duration,
     stackingMode: config.stackingMode,
     compatibilityMode: config.compatibilityMode,
+    regeneration: config.regeneration,
+    depletion: config.depletion,
     sourceItemUuid: config.sourceItemUuid,
     sourceBuffUuid: config.sourceBuffUuid,
     createdAt: config.createdAt,
@@ -663,6 +731,99 @@ export async function grantNasTemporaryHp(actor, {
   };
 }
 
+function appliedBuffSourceId(item) {
+  return String(
+    item?.flags?.[MODULE.ID]?.sourceId
+    ?? item?.flags?.core?.sourceId
+    ?? item?._stats?.compendiumSource
+    ?? item?.flags?.[MODULE.ID]?.[REACTIVE_FLAG_KEY]?.[APPLIED_BUFF_RUNTIME_KEY]?.appliedBuffUuid
+    ?? item?.uuid
+    ?? ""
+  );
+}
+
+async function resolveItemByUuid(uuid) {
+  const target = String(uuid ?? "").trim();
+  if (!target) return null;
+  try {
+    const doc = await fromUuid(target);
+    return doc?.documentName === "Item" || doc?.constructor?.documentName === "Item" ? doc : null;
+  } catch (_err) {
+    return null;
+  }
+}
+
+async function recordTemporaryHpLockout(poolItem, pool) {
+  const depletion = normalizeTemporaryHpDepletion(pool?.depletion);
+  if (depletion.lockout.enabled !== true) return;
+  const seconds = timePeriodSeconds(depletion.lockout.value, depletion.lockout.units);
+  if (seconds <= 0) return;
+  const sourceItem = await resolveItemByUuid(pool?.sourceItemUuid) ?? poolItem;
+  if (!sourceItem) return;
+  const buffUuid = appliedBuffSourceId(poolItem);
+  if (!buffUuid) return;
+  const expiresAt = Math.floor(Number(game.time?.worldTime ?? 0) + seconds);
+  const key = appliedBuffLockoutKey(buffUuid);
+  await sourceItem.update({
+    [`flags.${MODULE.ID}.${REACTIVE_FLAG_KEY}.${APPLIED_BUFF_LOCKOUTS_KEY}.${key}`]: {
+      buffUuid,
+      sourceBuffName: String(poolItem?.name ?? pool?.label ?? ""),
+      expiresAt,
+      createdAt: Number(game.time?.worldTime ?? 0) || 0
+    }
+  }, { render: false });
+}
+
+async function handleTemporaryHpPoolDepleted(poolItem, pool) {
+  const depletion = normalizeTemporaryHpDepletion(pool?.depletion);
+  if (depletion.mode !== "deactivateSource" && depletion.lockout.enabled !== true) return;
+  await recordTemporaryHpLockout(poolItem, pool);
+}
+
+function temporaryHpLockoutLabel(expiresAt) {
+  const remaining = Math.max(0, Math.ceil((Number(expiresAt) - Number(game.time?.worldTime ?? 0)) / 60));
+  if (remaining >= 60) {
+    const hours = Math.ceil(remaining / 60);
+    return `${hours} hour${hours === 1 ? "" : "s"}`;
+  }
+  return `${remaining} minute${remaining === 1 ? "" : "s"}`;
+}
+
+async function temporaryHpLockoutStateForItem(item, config = null) {
+  const current = config ?? tempHpConfig(item);
+  const depletion = normalizeTemporaryHpDepletion(current?.depletion);
+  if (depletion.lockout.enabled !== true) return null;
+  const sourceItem = await resolveItemByUuid(current?.sourceItemUuid) ?? item;
+  if (!sourceItem) return null;
+  const buffUuid = appliedBuffSourceId(item);
+  if (!buffUuid) return null;
+  const key = appliedBuffLockoutKey(buffUuid);
+  const lockout = sourceItem.flags?.[MODULE.ID]?.[REACTIVE_FLAG_KEY]?.[APPLIED_BUFF_LOCKOUTS_KEY]?.[key] ?? null;
+  const expiresAt = Number(lockout?.expiresAt);
+  const nowSeconds = Number(game.time?.worldTime ?? 0) || 0;
+  if (!Number.isFinite(expiresAt) || expiresAt <= nowSeconds) return null;
+  return { sourceItem, expiresAt, lockout };
+}
+
+async function blockTemporaryHpReactivationForLockout(item, config = null) {
+  const state = await temporaryHpLockoutStateForItem(item, config);
+  if (!state) return false;
+  const pools = tempHpPoolEntries(item).map((pool) => ({
+    ...pool,
+    enabled: false,
+    remaining: 0
+  }));
+  const updates = pools.length ? tempHpPoolUpdate(pools) : {};
+  if (item?.type === "buff" && item.system?.active === true) updates["system.active"] = false;
+  if (Object.keys(updates).length) await item.update(updates, { render: false });
+  refreshNasTemporaryHpDisplay(item?.actor);
+  ui.notifications?.warn?.(game.i18n.format("NAS.reactive.appliedBuffLockoutActive", {
+    item: state.sourceItem?.name ?? item?.name ?? "",
+    remaining: temporaryHpLockoutLabel(state.expiresAt)
+  }));
+  return true;
+}
+
 export async function spendNasTemporaryHp(actor, damageAmount = 0, options = {}) {
   const incoming = numberOrZero(damageAmount);
   if (!actor || incoming <= 0) {
@@ -687,6 +848,9 @@ export async function spendNasTemporaryHp(actor, damageAmount = 0, options = {})
     const spend = Math.min(remainingDamage, numberOrZero(pool.remaining));
     if (spend <= 0) continue;
     const nextRemaining = numberOrZero(pool.remaining) - spend;
+    if (nextRemaining <= 0) {
+      await handleTemporaryHpPoolDepleted(pool.item, pool);
+    }
     const itemPools = tempHpPoolEntries(pool.item).map((entry) => entry.poolId === pool.poolId
       ? { ...entry, remaining: nextRemaining, enabled: nextRemaining > 0 }
       : entry
@@ -721,6 +885,123 @@ export async function spendNasTemporaryHp(actor, damageAmount = 0, options = {})
   };
 }
 
+async function regenerateTemporaryHpForActorTurn(actor, combat) {
+  if (!game.user?.isGM || !actor || !combat) return;
+  const combatKey = `${combat.id ?? "combat"}:${combat.round ?? 0}:${combat.turn ?? 0}`;
+  let refreshed = false;
+  for (const item of actor.items ?? []) {
+    if (!hasTemporaryHpData(item) || !isSourceItemActive(item)) continue;
+    const pools = tempHpPoolEntries(item);
+    let changed = false;
+    const nextPools = [];
+    for (const pool of pools) {
+      const regen = normalizeTemporaryHpRegeneration(pool.regeneration);
+      if (pool.enabled === false || regen.enabled !== true || regen.timing !== "turnStart") {
+        nextPools.push(pool);
+        continue;
+      }
+      if (regen.lastCombatKey === combatKey) {
+        nextPools.push(pool);
+        continue;
+      }
+      const max = numberOrZero(pool.max);
+      const current = numberOrZero(pool.remaining);
+      const amount = current > 0 && max > current
+        ? await evaluateTemporaryHpFormula(item, regen.formula, 0)
+        : 0;
+      const remaining = amount > 0 ? Math.min(max, current + amount) : current;
+      nextPools.push({
+        ...pool,
+        remaining,
+        enabled: remaining > 0,
+        regeneration: {
+          ...regen,
+          lastCombatKey: combatKey
+        }
+      });
+      changed = true;
+    }
+    if (!changed) continue;
+    await item.update(tempHpPoolUpdate(nextPools), { render: false });
+    refreshed = true;
+  }
+  if (refreshed) refreshNasTemporaryHpDisplay(actor);
+}
+
+function activeBuffRuntime(item) {
+  if (item?.type !== "buff" || item.system?.active !== true) return null;
+  const runtime = item.flags?.[MODULE.ID]?.[REACTIVE_FLAG_KEY]?.[APPLIED_BUFF_RUNTIME_KEY];
+  if (!runtime || typeof runtime !== "object") return null;
+  if (runtime.chargeUpkeep?.enabled !== true) return null;
+  return runtime;
+}
+
+async function deactivateBuffForUnpaidUpkeep(item, sourceItem = null) {
+  await item.update({ "system.active": false }, { render: false });
+  refreshNasTemporaryHpDisplay(item.actor);
+  ui.notifications?.warn?.(game.i18n.format("NAS.reactive.appliedBuffUpkeepFailed", {
+    buff: item.name,
+    item: sourceItem?.name ?? item.flags?.[MODULE.ID]?.[REACTIVE_FLAG_KEY]?.[APPLIED_BUFF_RUNTIME_KEY]?.sourceItemName ?? ""
+  }));
+}
+
+async function processTemporaryHpChargeUpkeep(nowSeconds = Number(game.time?.worldTime ?? 0) || 0) {
+  if (!game.user?.isGM) return;
+  for (const actor of game.actors ?? []) {
+    for (const item of actor.items ?? []) {
+      const runtime = activeBuffRuntime(item);
+      if (!runtime) continue;
+      const upkeep = runtime.chargeUpkeep ?? {};
+      const interval = Math.max(1, Math.floor(Number(upkeep.intervalSeconds) || timePeriodSeconds(upkeep.intervalValue, upkeep.intervalUnits) || 60));
+      const last = Number.isFinite(Number(runtime.lastUpkeepWorldTime))
+        ? Number(runtime.lastUpkeepWorldTime)
+        : Number(runtime.startedAtWorldTime ?? nowSeconds);
+      const chunks = Math.floor((nowSeconds - last) / interval);
+      if (chunks <= 0) continue;
+
+      const sourceItem = await resolveItemByUuid(runtime.sourceItemUuid);
+      if (!sourceItem) {
+        await deactivateBuffForUnpaidUpkeep(item, null);
+        continue;
+      }
+      const costEach = await evaluateTemporaryHpFormula(sourceItem, upkeep.costFormula, 1);
+      const totalCost = Math.max(0, Math.floor(costEach)) * chunks;
+      const nextLast = last + (chunks * interval);
+      if (totalCost <= 0) {
+        await item.update({
+          [`flags.${MODULE.ID}.${REACTIVE_FLAG_KEY}.${APPLIED_BUFF_RUNTIME_KEY}.lastUpkeepWorldTime`]: nextLast
+        }, { render: false });
+        continue;
+      }
+      const uses = sourceItem.system?.uses;
+      const remaining = Number(uses?.value);
+      if (!uses || !Number.isFinite(remaining) || remaining < totalCost) {
+        if (uses && Number.isFinite(remaining) && remaining > 0) {
+          const affordableChunks = Math.min(chunks, Math.floor(remaining / Math.max(1, Math.floor(costEach))));
+          if (affordableChunks > 0) {
+            await sourceItem.update({
+              "system.uses.value": Math.max(0, remaining - (affordableChunks * Math.max(1, Math.floor(costEach))))
+            }, { render: false });
+          }
+        }
+        await item.update({
+          [`flags.${MODULE.ID}.${REACTIVE_FLAG_KEY}.${APPLIED_BUFF_RUNTIME_KEY}.lastUpkeepWorldTime`]: nextLast
+        }, { render: false });
+        await deactivateBuffForUnpaidUpkeep(item, sourceItem);
+        continue;
+      }
+      await sourceItem.update({ "system.uses.value": Math.max(0, remaining - totalCost) }, { render: false });
+      await item.update({
+        [`flags.${MODULE.ID}.${REACTIVE_FLAG_KEY}.${APPLIED_BUFF_RUNTIME_KEY}.lastUpkeepWorldTime`]: nextLast
+      }, { render: false });
+    }
+  }
+}
+
+function actorFromCombatant(combatant) {
+  return combatant?.actor ?? combatant?.token?.actor ?? combatant?.token?.object?.actor ?? null;
+}
+
 export async function initializeNasTemporaryHpItem(item) {
   if (!item || !hasTemporaryHpData(item)) {
     return false;
@@ -731,6 +1012,9 @@ export async function initializeNasTemporaryHpItem(item) {
   }
   if (!isSourceItemActive(item)) {
     refreshNasTemporaryHpDisplay(item.actor);
+    return false;
+  }
+  if (await blockTemporaryHpReactivationForLockout(item, config)) {
     return false;
   }
   if (config.remaining > 0) {
@@ -753,8 +1037,15 @@ export async function initializeNasTemporaryHpItem(item) {
 export async function resetNasTemporaryHpItem(item) {
   if (!item || !hasTemporaryHpData(item)) return false;
   const config = tempHpConfig(item);
+  if (!config.enabled || !isSourceItemActive(item)) {
+    refreshNasTemporaryHpDisplay(item?.actor);
+    return false;
+  }
+  if (await blockTemporaryHpReactivationForLockout(item, config)) {
+    return false;
+  }
   const resolvedMax = await evaluateTemporaryHpFormula(item, config.formula, config.max);
-  if (!config.enabled || !isSourceItemActive(item) || resolvedMax <= 0) {
+  if (resolvedMax <= 0) {
     refreshNasTemporaryHpDisplay(item?.actor);
     return false;
   }
@@ -1032,6 +1323,18 @@ export function registerNasTemporaryHpPools() {
     }));
   }
   registerTemporaryHpSheetDocumentListeners();
+  Hooks.on("updateWorldTime", (worldTime, dt) => {
+    if (!game.user?.isGM || Number(dt) <= 0) return;
+    void processTemporaryHpChargeUpkeep(Number(worldTime) || Number(game.time?.worldTime ?? 0) || 0);
+  });
+  Hooks.on("updateCombat", (combat, update, options) => {
+    if (!game.user?.isGM) return;
+    const hasTurnOrRound = update?.turn !== undefined || update?.round !== undefined;
+    if (!hasTurnOrRound || options?.direction === -1) return;
+    const actor = actorFromCombatant(combat?.combatant);
+    void regenerateTemporaryHpForActorTurn(actor, combat);
+    void processTemporaryHpChargeUpkeep(Number(game.time?.worldTime ?? 0) || 0);
+  });
   Hooks.on("updateItem", async (item, change) => {
     if (!hasTemporaryHpData(item)) {
       return;

@@ -1,7 +1,12 @@
 import { elementFromHtmlLike } from "../../../../common/foundryCompat.js";
 import { getEligibleSpellbookIds } from "./eligibility.js";
 import { isSpellbookPreparationPending } from "./flags.js";
-import { getPreparedSlotMarkerLabels, isItemHintsIntegrationActive } from "./itemHintsCompat.js";
+import {
+  getPreparedSlotMarkerLabels,
+  getUntrackedKnownSpellMarker,
+  isItemHintsIntegrationActive
+} from "./itemHintsCompat.js";
+import { getKnownSpells } from "./knownSpells.js";
 import { SpellbookPreparationApp } from "./app.js";
 import {
   getGeneratedPreparedSpellItemFlag,
@@ -219,6 +224,39 @@ function annotatePreparedSlotRow(row, renderedLevel, preparedSlotLevel) {
   container.append(badge);
 }
 
+function annotateUntrackedKnownSpellRow(actor, item, row) {
+  if (!row) return;
+
+  const marker = getUntrackedKnownSpellMarker(actor, item);
+  if (!marker) return;
+
+  row.classList.add("nas-known-spell-missing-source");
+
+  if (isItemHintsIntegrationActive()) {
+    row.querySelector(".nas-known-spell-missing-badge")?.remove();
+    return;
+  }
+
+  const container = getFallbackHintContainer(row);
+  if (!container) return;
+
+  const existing = row.querySelector(".nas-known-spell-missing-badge");
+  if (existing) {
+    existing.textContent = marker.label;
+    existing.dataset.tooltip = marker.tooltip;
+    existing.setAttribute("aria-label", marker.tooltip);
+    return;
+  }
+
+  const badge = document.createElement("span");
+  badge.classList.add("nas-known-spell-missing-badge");
+  badge.dataset.tooltip = marker.tooltip;
+  badge.setAttribute("aria-label", marker.tooltip);
+  badge.textContent = marker.label;
+
+  container.append(badge);
+}
+
 function relocateGeneratedPreparedSpellItems(actor, root, bookId) {
   if (!isSpellbookPreparedItemsManaged(actor, bookId)) return;
 
@@ -252,7 +290,7 @@ function relocateGeneratedPreparedSpellItems(actor, root, bookId) {
   }
 }
 
-function hideManagedSourceSpellItems(actor, root, bookId) {
+function annotateUntrackedKnownSpellItems(actor, root, bookId) {
   if (!isSpellbookPreparedItemsManaged(actor, bookId)) return;
 
   const body = getSpellbookBody(root, bookId);
@@ -267,6 +305,36 @@ function hideManagedSourceSpellItems(actor, root, bookId) {
     ) {
       continue;
     }
+
+    if (!getUntrackedKnownSpellMarker(actor, item)) continue;
+
+    for (const row of findItemSheetRows(body, item.id)) {
+      annotateUntrackedKnownSpellRow(actor, item, row);
+    }
+  }
+}
+
+function hideManagedSourceSpellItems(actor, root, bookId) {
+  if (!isSpellbookPreparedItemsManaged(actor, bookId)) return;
+
+  const body = getSpellbookBody(root, bookId);
+  if (!body) return;
+
+  const knownSourceIds = new Set(getKnownSpells(actor, bookId)
+    .map((entry) => normalizeId(entry.sourceItemId))
+    .filter(Boolean));
+
+  for (const item of getActorItems(actor)) {
+    if (
+      item?.type !== "spell"
+      || normalizeId(item.system?.spellbook) !== normalizeId(bookId)
+      || isGeneratedPreparedSpellItem(item)
+      || isAtWillSpell(item)
+    ) {
+      continue;
+    }
+
+    if (!knownSourceIds.has(normalizeId(item.id))) continue;
 
     for (const row of findItemSheetRows(body, item.id)) {
       row.classList.add("nas-hidden-known-spell-source");
@@ -283,6 +351,7 @@ export function injectSpellbookPreparationActorSheetControls(app, html) {
   if (!root || !actor) return;
 
   for (const bookId of getEligibleSpellbookIds(actor)) {
+    annotateUntrackedKnownSpellItems(actor, root, bookId);
     if (shouldHideSpellbookSourceSpells()) hideManagedSourceSpellItems(actor, root, bookId);
     relocateGeneratedPreparedSpellItems(actor, root, bookId);
     if (actor.isOwner !== false && shouldShowSpellbookPrepareControl()) {

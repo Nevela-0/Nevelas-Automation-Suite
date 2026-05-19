@@ -62,7 +62,7 @@ function absorptionConfig(item) {
     ? raw.rules.map((rule) => normalizeAbsorptionRule({ ...rule, amountFormula: perAttackFormula }, perAttackFormula))
     : defaultAbsorptionRules(preset, perAttackFormula, { energyType });
   return {
-    enabled: raw?.enabled === true,
+    enabled: isAbsorptionRawConfigured(raw),
     preset,
     energyType,
     totalFormula,
@@ -245,6 +245,24 @@ function damageTypesMatchAbsorptionRule(rule, sourceOptions = {}, applyDamageOpt
   return incomingTypes.some((type) => filterTypes.has(type));
 }
 
+function isAbsorptionRawConfigured(raw = {}) {
+  const preset = normalizeAbsorptionPresetId(raw?.preset);
+  const defaults = absorptionPresetDefaults(preset, raw);
+  const energyType = normalizeAbsorptionPresetEnergyType(preset, raw?.energyType ?? defaults.energyType);
+  return Boolean(
+    raw && typeof raw === "object" && (
+      raw.enabled === true
+      || preset !== "ablativeBarrier"
+      || energyType !== normalizeAbsorptionPresetEnergyType(preset, defaults.energyType)
+      || (String(raw.totalFormula ?? "").trim() && String(raw.totalFormula).trim() !== String(defaults.totalFormula))
+      || (String(raw.perAttackFormula ?? "").trim() && String(raw.perAttackFormula).trim() !== String(defaults.perAttackFormula))
+      || (raw.remaining != null && Number.isFinite(Number(raw.remaining)))
+      || (raw.capacity != null && Number.isFinite(Number(raw.capacity)))
+      || (preset === "custom" && Array.isArray(raw.rules) && raw.rules.length > 0)
+    )
+  );
+}
+
 function normalizedDamageAbsorptionTypesForInstance(instance) {
   const typeIds = new Set();
   for (const key of ["typeIds", "types", "type", "damageType", "damageTypes"]) {
@@ -393,7 +411,6 @@ function activeGrantedDefenseDrEntries(item) {
     : item.system?.equipped === true && (item.system?.quantity ?? 1) > 0 && item.isBroken !== true;
   if (!active) return [];
   const config = item.flags?.[MODULE.ID]?.[REACTIVE_FLAG_KEY]?.[GRANTED_DEFENSE_FLAG];
-  if (config?.enabled !== true) return [];
   return Array.isArray(config?.dr?.value) ? config.dr.value.filter((entry) => Number(entry?.amount ?? entry?.value) > 0) : [];
 }
 

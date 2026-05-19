@@ -44,6 +44,8 @@ import { getSpellbookAnimationMode, isSpellbookPreparationFullModeEnabled } from
 const TEMPLATE_PATH = `modules/${MODULE.ID}/src/templates/spellbook-preparation-form.html`;
 const SPELL_LEVEL_COUNT = 10;
 const SPELLS_PER_PAGE = 10;
+const VARIANT_PAGE_WEIGHT = 2;
+const INSCRIPTION_PAGE_WEIGHT = 3;
 
 function localize(key, fallback = key) {
   const fullKey = `NAS.spellbookPreparation.${key}`;
@@ -158,22 +160,79 @@ function getLevelBookmarkLabel(level) {
   return "?";
 }
 
-function buildLevelPages(level) {
-  const pageCount = Math.max(1, Math.ceil(level.spells.length / SPELLS_PER_PAGE));
-  const pages = [];
+function getSpellPageWeight(spell) {
+  let weight = spell.isVariant ? VARIANT_PAGE_WEIGHT : 1;
+  if (spell.inscriptionOpen) weight += INSCRIPTION_PAGE_WEIGHT;
+  return Math.max(1, weight);
+}
 
-  for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
-    const start = pageIndex * SPELLS_PER_PAGE;
-    pages.push({
-      ...level,
-      spells: level.spells.slice(start, start + SPELLS_PER_PAGE),
-      pageNumber: pageIndex + 1,
-      pageCount,
-      hasMultiplePages: pageCount > 1
-    });
+function groupConsecutiveKnownSpells(spells) {
+  const groups = [];
+
+  for (const spell of spells) {
+    const lastGroup = groups.at(-1);
+    if (lastGroup?.[0]?.knownSpellId && lastGroup[0].knownSpellId === spell.knownSpellId) {
+      lastGroup.push(spell);
+    } else {
+      groups.push([spell]);
+    }
   }
 
-  return pages;
+  return groups;
+}
+
+function addLevelPage(pages, level, spells) {
+  pages.push({
+    ...level,
+    spells
+  });
+}
+
+function numberLevelPages(pages) {
+  const pageCount = Math.max(1, pages.length);
+
+  return pages.map((page, index) => ({
+    ...page,
+    pageNumber: index + 1,
+    pageCount,
+    hasMultiplePages: pageCount > 1
+  }));
+}
+
+function buildLevelPages(level) {
+  const pages = [];
+  let currentSpells = [];
+  let currentWeight = 0;
+
+  const flushPage = () => {
+    if (!currentSpells.length) return;
+    addLevelPage(pages, level, currentSpells);
+    currentSpells = [];
+    currentWeight = 0;
+  };
+
+  for (const group of groupConsecutiveKnownSpells(level.spells)) {
+    const groupWeight = group.reduce((total, spell) => total + getSpellPageWeight(spell), 0);
+
+    if (groupWeight <= SPELLS_PER_PAGE) {
+      if (currentSpells.length && currentWeight + groupWeight > SPELLS_PER_PAGE) flushPage();
+      currentSpells.push(...group);
+      currentWeight += groupWeight;
+      continue;
+    }
+
+    for (const spell of group) {
+      const spellWeight = getSpellPageWeight(spell);
+      if (currentSpells.length && currentWeight + spellWeight > SPELLS_PER_PAGE) flushPage();
+      currentSpells.push(spell);
+      currentWeight += spellWeight;
+    }
+  }
+
+  flushPage();
+  if (!pages.length) addLevelPage(pages, level, []);
+
+  return numberLevelPages(pages);
 }
 
 function buildPreparedEntryState(actor, bookId, knownSpell, preparedEntry, mode, managed, desiredById = null, options = {}) {

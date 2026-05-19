@@ -11,6 +11,16 @@ import {
   KNOWN_BUFF_AUTOMATION_OPTION,
   promptKnownBuffAutomationForAction
 } from './knownBuffAutomation.js';
+import {
+  APPLIED_BUFF_OVERRIDE_OPTION,
+  APPLIED_BUFF_SOURCE_ITEM_NAME_OPTION,
+  APPLIED_BUFF_SOURCE_ITEM_UUID_OPTION,
+  APPLIED_BUFF_TARGET_UUID_OPTION,
+  appliedBuffOverrideOptionsFor,
+  appliedBuffOverrideUpdates,
+  getAppliedBuffLockoutState,
+  primaryAppliedBuffUuid
+} from './appliedBuffOverrides.js';
 
 const BUFF_SAVE_ACTION_SHEET_KEY = "buffSaveByAction";
 const PENDING_BUFF_AUTOMATION_KEY = "pendingBuffAutomation";
@@ -192,6 +202,69 @@ function serializeBuffReference(buff) {
 function serializeKnownBuffAutomation(options = {}) {
   const known = options?.[KNOWN_BUFF_AUTOMATION_OPTION];
   return known ? foundry.utils.deepClone(known) : null;
+}
+
+function serializeAppliedBuffOverrideOptions(options = {}) {
+  const override = options?.[APPLIED_BUFF_OVERRIDE_OPTION];
+  if (!override) return {};
+  return {
+    [APPLIED_BUFF_OVERRIDE_OPTION]: foundry.utils.deepClone(override),
+    [APPLIED_BUFF_SOURCE_ITEM_UUID_OPTION]: String(options?.[APPLIED_BUFF_SOURCE_ITEM_UUID_OPTION] ?? ""),
+    [APPLIED_BUFF_SOURCE_ITEM_NAME_OPTION]: String(options?.[APPLIED_BUFF_SOURCE_ITEM_NAME_OPTION] ?? ""),
+    [APPLIED_BUFF_TARGET_UUID_OPTION]: String(options?.[APPLIED_BUFF_TARGET_UUID_OPTION] ?? "")
+  };
+}
+
+async function resolveSourceItemFromAppliedBuffOptions(options = {}) {
+  const uuid = String(options?.[APPLIED_BUFF_SOURCE_ITEM_UUID_OPTION] ?? "").trim();
+  if (!uuid) return null;
+  try {
+    const doc = await fromUuid(uuid);
+    return doc?.documentName === "Item" || doc?.constructor?.documentName === "Item" ? doc : null;
+  } catch (_err) {
+    return null;
+  }
+}
+
+function appliedBuffLockoutLabel(expiresAt) {
+  const remaining = Math.max(0, Math.ceil((Number(expiresAt) - Number(game.time?.worldTime ?? 0)) / 60));
+  if (remaining >= 60) {
+    const hours = Math.ceil(remaining / 60);
+    return `${hours} hour${hours === 1 ? "" : "s"}`;
+  }
+  return `${remaining} minute${remaining === 1 ? "" : "s"}`;
+}
+
+async function shouldBlockAppliedBuffForLockout(sourceItem, buff, options = {}) {
+  const override = options?.[APPLIED_BUFF_OVERRIDE_OPTION];
+  if (!override) return false;
+  if (override?.temporaryHp?.lockout?.enabled !== true) return false;
+  const item = sourceItem ?? await resolveSourceItemFromAppliedBuffOptions(options);
+  if (!item) return false;
+  const buffUuid = String(options?.[APPLIED_BUFF_TARGET_UUID_OPTION] ?? override?.buffUuid ?? primaryAppliedBuffUuid(buff));
+  if (!buffUuid) return false;
+  const state = getAppliedBuffLockoutState(item, buffUuid);
+  if (!state.locked) return false;
+  ui.notifications?.warn?.(game.i18n.format("NAS.reactive.appliedBuffLockoutActive", {
+    item: item.name,
+    remaining: appliedBuffLockoutLabel(state.expiresAt)
+  }));
+  return true;
+}
+
+async function applyAppliedBuffOverrideToItem(targetBuff, options = {}) {
+  const override = options?.[APPLIED_BUFF_OVERRIDE_OPTION];
+  if (!targetBuff || !override || options.activate === false) return false;
+  const updates = await appliedBuffOverrideUpdates({
+    targetBuff,
+    override,
+    sourceItemUuid: options?.[APPLIED_BUFF_SOURCE_ITEM_UUID_OPTION],
+    sourceItemName: options?.[APPLIED_BUFF_SOURCE_ITEM_NAME_OPTION],
+    appliedBuffUuid: options?.[APPLIED_BUFF_TARGET_UUID_OPTION] ?? override?.buffUuid
+  });
+  if (!Object.keys(updates).length) return false;
+  await targetBuff.update(updates, { render: false });
+  return true;
 }
 
 function serializeDuration(duration) {
@@ -526,8 +599,15 @@ function queuePendingBuffApplication(action, buff, targets, duration, casterLeve
 
 async function applyOrQueueBuffToTargets(action, buff, targets, duration, casterLevel, options = {}) {
   const buffSaveGate = options.buffSaveGate ?? resolveBuffSaveGate(action);
-  if (queuePendingBuffApplication(action, buff, targets, duration, casterLevel, { ...options, buffSaveGate })) return;
-  await applyBuffToTargets(buff, targets, duration, casterLevel, options);
+  const appliedBuffOptions = appliedBuffOverrideOptionsFor(action?.item, buff);
+  const mergedOptions = { ...options, ...appliedBuffOptions };
+  if (await shouldBlockAppliedBuffForLockout(action?.item, buff, mergedOptions)) {
+    action.shared ??= {};
+    action.shared.reject = true;
+    return;
+  }
+  if (queuePendingBuffApplication(action, buff, targets, duration, casterLevel, { ...mergedOptions, buffSaveGate })) return;
+  await applyBuffToTargets(buff, targets, duration, casterLevel, mergedOptions);
 }
 
 export function attachPendingBuffAutomationToChatData(actionUse) {
@@ -3201,6 +3281,8 @@ export async function applyBuffToTargets(buff, targets, duration, casterLevel, o
     return;
   }
 
+  if (await shouldBlockAppliedBuffForLockout(null, buff, options)) return;
+
   const normalizedDuration = normalizeDurationForBuff(duration);
   const durationUpdate = {
     "system.duration.units": normalizedDuration.units,
@@ -3253,6 +3335,7 @@ export async function applyBuffToTargets(buff, targets, duration, casterLevel, o
             ...(casterLevel !== undefined ? { "system.level": casterLevel } : {})
           });
           await configureKnownBuffAutomation(existingBuff, { ...options, casterLevel });
+          await applyAppliedBuffOverrideToItem(existingBuff, options);
           continue;
         }
 
@@ -3264,6 +3347,7 @@ export async function applyBuffToTargets(buff, targets, duration, casterLevel, o
         });
         await syncBuffEffectDuration(existingBuff, normalizedDuration);
         await configureKnownBuffAutomation(existingBuff, { ...options, casterLevel });
+        await applyAppliedBuffOverrideToItem(existingBuff, options);
         
         if (!silent) ui.notifications.info(game.i18n.format('NAS.buffs.UpdatedExisting', { name: buffName, actor: actor.name }));
       } else {
@@ -3310,8 +3394,10 @@ export async function applyBuffToTargets(buff, targets, duration, casterLevel, o
           await newBuff.update({"system.active": true});
           await syncBuffEffectDuration(newBuff, normalizedDuration);
           await configureKnownBuffAutomation(newBuff, { ...options, casterLevel });
+          await applyAppliedBuffOverrideToItem(newBuff, options);
         } else if (newItems && newItems.length > 0) {
           await configureKnownBuffAutomation(newItems[0], { ...options, casterLevel });
+          await applyAppliedBuffOverrideToItem(newItems[0], options);
         }
         
         if (!silent) ui.notifications.info(game.i18n.format('NAS.buffs.Applied', { name: buffName, actor: actor.name }));

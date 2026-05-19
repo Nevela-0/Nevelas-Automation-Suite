@@ -7,7 +7,7 @@ import { applyNasDefenseBypass } from './nasBypass.js';
 import { applyLegacyPriorityTypes } from './priorityTypes.js';
 import { applyManualVulnerability, buildNumericInstances, sumInstanceValues } from './instances.js';
 import { normalizeTargets } from '../utils/targeting.js';
-import { getActorGrantedFortification } from '../defenses/grantedDefenses.js';
+import { actorHasGrantedCriticalImmunity, getActorGrantedFortification } from '../defenses/grantedDefenses.js';
 import { isWoundsVigorActive, isWoundsVigorAutomationEnabled, isWvNoWoundsActor } from '../utils/woundsVigor.js';
 import { getCasterLevelEquivalentFromFormula, getDiceCountFromFormula, getDiceCountFromRoll } from '../utils/formulaUtils.js';
 import { applyReactiveEffectsForHit, resolveSourceActorFromOptions } from './reactiveTriggers.js';
@@ -177,7 +177,7 @@ function isPrecisionDamageInstance(instance = {}) {
     return damageTypeIdsFromInstance(instance).some(damageTypeIsPrecision);
 }
 
-function fortificationDamageReport(instances = []) {
+function fortificationDamageReport(instances = [], { includeCritical = true, includePrecision = true } = {}) {
     const entries = [];
     let total = 0;
     let criticalAmount = 0;
@@ -188,7 +188,7 @@ function fortificationDamageReport(instances = []) {
         if (amount <= 0) continue;
         const critical = isCriticalExtraDamageInstance(instance);
         const precision = isPrecisionDamageInstance(instance);
-        if (!critical && !precision) continue;
+        if ((!includeCritical || !critical) && (!includePrecision || !precision)) continue;
         entries.push({ instance, amount, critical, precision });
         total += amount;
         if (critical) criticalAmount += amount;
@@ -196,6 +196,11 @@ function fortificationDamageReport(instances = []) {
     }
 
     return { entries, total, criticalAmount, precisionAmount };
+}
+
+function removeReportedDamageInstances(instances = [], report = {}) {
+    const removed = new Set((report.entries ?? []).map((entry) => entry.instance));
+    return instances.filter((instance) => !removed.has(instance));
 }
 
 function fortificationTierChatLabel(tier = {}) {
@@ -208,7 +213,6 @@ function inlineRollHtml(roll, fallbackTotal = null) {
         const anchor = roll?.toAnchor?.();
         if (anchor?.outerHTML) return anchor.outerHTML;
     } catch (_err) {
-        // Fall through to a plain total if inline roll rendering is unavailable.
     }
     const total = Math.max(1, Math.floor(Number(fallbackTotal ?? roll?.total) || 0));
     return escHtml(total);
@@ -263,18 +267,101 @@ function postFortificationChatSummary({
     });
 }
 
+function postCriticalImmunityChatSummary({
+    actor,
+    otherActor,
+    negatedDamage = 0
+} = {}) {
+    const amount = Math.max(0, Math.floor(Number(negatedDamage) || 0));
+    if (amount <= 0) return;
+    const title = game.i18n.format("NAS.reactive.chatSummary.criticalImmunityTitle", {
+        actor: escHtml(actorChatName(actor))
+    });
+    const subtitle = game.i18n.format("NAS.reactive.chatSummary.criticalImmunitySubtitle", {
+        other: escHtml(actorChatName(otherActor))
+    });
+    const line = game.i18n.format("NAS.reactive.chatSummary.lineCriticalImmunity", { amount });
+
+    const content = [
+        `<div class="nas-reactive-chat-summary" data-nas-reactive-summary>`,
+        `<div class="nas-reactive-chat-header"><strong>${title}</strong></div>`,
+        `<div class="nas-reactive-chat-subtitle">${subtitle}</div>`,
+        `<ul class="nas-reactive-chat-lines"><li>${line}</li></ul>`,
+        `</div>`
+    ].join("");
+
+    ChatMessage.create({
+        ...chatMessageStyle("OTHER"),
+        user: game.user?.id,
+        speaker: ChatMessage.getSpeaker({ actor: actor ?? null }),
+        content
+    });
+}
+
 async function applyFortificationForTarget({ actor, instances = [], options = {}, sourceActor = null } = {}) {
     const currentValue = Math.max(0, Math.floor(Math.abs(Number(options?.value) || sumInstanceValues(instances) || 0)));
     if (!actor || currentValue <= 0 || options?._nasFortificationApplied || options?.isHealing === true) {
         return { checked: false, instances, value: currentValue, options };
     }
 
+    let workingInstances = instances;
+    let workingValue = currentValue;
+    let workingOptions = { ...options };
+    let criticalImmunityChecked = false;
+    let criticalImmunityChanged = false;
+    let criticalImmunityDamage = 0;
+
+    if (actorHasGrantedCriticalImmunity(actor)) {
+        const criticalReport = fortificationDamageReport(workingInstances, { includeCritical: true, includePrecision: false });
+        if (criticalReport.total > 0) {
+            criticalImmunityChecked = true;
+            criticalImmunityChanged = true;
+            criticalImmunityDamage = criticalReport.total;
+            postCriticalImmunityChatSummary({
+                actor,
+                otherActor: sourceActor,
+                negatedDamage: criticalReport.total
+            });
+            workingInstances = removeReportedDamageInstances(workingInstances, criticalReport);
+            workingValue = Math.max(0, Math.floor(sumInstanceValues(workingInstances)));
+            workingOptions = {
+                ...workingOptions,
+                instances: workingInstances,
+                value: workingValue,
+                isCritical: false,
+                critMult: 0,
+                _nasCriticalImmunityApplied: true,
+                _nasCriticalImmunityNegatedDamage: criticalReport.total
+            };
+        }
+    }
+
     const tier = getActorGrantedFortification(actor);
     const chance = Math.max(0, Math.floor(Number(tier?.chance) || 0));
-    if (chance <= 0) return { checked: false, instances, value: currentValue, options };
+    if (chance <= 0) {
+        return {
+            checked: criticalImmunityChecked,
+            success: criticalImmunityChanged,
+            changed: criticalImmunityChanged,
+            instances: workingInstances,
+            value: workingValue,
+            options: workingOptions,
+            negatedDamage: criticalImmunityDamage
+        };
+    }
 
-    const report = fortificationDamageReport(instances);
-    if (report.total <= 0) return { checked: false, instances, value: currentValue, options };
+    const report = fortificationDamageReport(workingInstances);
+    if (report.total <= 0) {
+        return {
+            checked: criticalImmunityChecked,
+            success: criticalImmunityChanged,
+            changed: criticalImmunityChanged,
+            instances: workingInstances,
+            value: workingValue,
+            options: workingOptions,
+            negatedDamage: criticalImmunityDamage
+        };
+    }
 
     let rollTotal = null;
     let roll = null;
@@ -298,27 +385,26 @@ async function applyFortificationForTarget({ actor, instances = [], options = {}
     if (!success) {
         return {
             checked: true,
-            success: false,
-            changed: false,
-            instances,
-            value: currentValue,
+            success: criticalImmunityChanged,
+            changed: criticalImmunityChanged,
+            instances: workingInstances,
+            value: workingValue,
             options: {
-                ...options,
+                ...workingOptions,
                 _nasFortificationApplied: true
             },
-            negatedDamage: 0
+            negatedDamage: criticalImmunityDamage
         };
     }
 
-    const removed = new Set(report.entries.map((entry) => entry.instance));
-    const remainingInstances = instances.filter((instance) => !removed.has(instance));
+    const remainingInstances = removeReportedDamageInstances(workingInstances, report);
     const nextValue = Math.max(0, Math.floor(sumInstanceValues(remainingInstances)));
     const nextOptions = {
-        ...options,
+        ...workingOptions,
         instances: remainingInstances,
         value: nextValue,
         _nasFortificationApplied: true,
-        _nasFortificationNegatedDamage: report.total,
+        _nasFortificationNegatedDamage: report.total + criticalImmunityDamage,
         _nasFortificationNegatedPrecisionDamage: report.precisionAmount
     };
     if (report.criticalAmount > 0) {
@@ -334,7 +420,7 @@ async function applyFortificationForTarget({ actor, instances = [], options = {}
         instances: remainingInstances,
         value: nextValue,
         options: nextOptions,
-        negatedDamage: report.total
+        negatedDamage: report.total + criticalImmunityDamage
     };
 }
 
@@ -1024,7 +1110,6 @@ export async function applyNasHeadlessDamage(value = 0, options = {}) {
             applyLegacyPriorityTypes(app, targetOpts, targetOpts.instances, false);
             applyNasDefenseBypass(app, targetOpts, { isHealing: false });
 
-            // Mirror ApplyDamage._onApply value construction
             let appliedValue = Math.max(0, app.value);
             if (app.isHealing) appliedValue = -appliedValue;
             appliedValue += app.bonus || 0;
@@ -1131,7 +1216,6 @@ export async function applyNasHeadlessDamage(value = 0, options = {}) {
                 });
             }
 
-            // Mirror ActorPF.applyDamage ratio/reduction math to get the final applied damage value.
             let finalDamage = Math.floor(Math.max(0, appliedValue) * (applyDamageOpts?.ratio ?? 1));
             finalDamage -= Math.min(finalDamage, applyDamageOpts?.reduction ?? 0);
             finalDamage = Math.floor(finalDamage) + (absorptionChanged ? convertedNonlethal + convertedTypedApplied : 0);
@@ -1147,8 +1231,6 @@ export async function applyNasHeadlessDamage(value = 0, options = {}) {
                 });
             }
 
-            // Massive Damage optional rule (PF1 CRB p.189)
-            // Trigger only if damage was actually applied successfully.
             if (result && game.settings.get(MODULE.ID, "massiveDamage")) {
                 const token =
                     actor?.token?.object ??
