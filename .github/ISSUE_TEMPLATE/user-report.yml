@@ -1,0 +1,99 @@
+name: User report
+description: Report a bug or request an enhancement for Nevela's Automation Suite.
+title: "[Report]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. Clear reproduction details make it much easier to confirm what is happening and get it fixed.
+
+  - type: dropdown
+    id: report-type
+    attributes:
+      label: Report type
+      description: Is this a bug report or an enhancement request?
+      options:
+        - Bug report
+        - Enhancement request
+        - Unsure
+    validations:
+      required: true
+
+  - type: input
+    id: foundry-version
+    attributes:
+      label: Foundry core version
+      description: Include the full Foundry version shown in Setup or Configure Settings.
+      placeholder: "Example: 12.331"
+    validations:
+      required: true
+
+  - type: input
+    id: pf1e-version
+    attributes:
+      label: PF1E system version
+      description: Include the Pathfinder 1e system version installed in Foundry.
+      placeholder: "Example: 11.7"
+    validations:
+      required: true
+
+  - type: input
+    id: nas-version
+    attributes:
+      label: Nevela's Automation Suite version
+      description: Include the module version shown in Manage Modules or the module manifest.
+      placeholder: "Example: 1.2.3"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: feature-area
+    attributes:
+      label: Related feature area
+      description: Pick the closest area. If more than one applies, mention the rest in the description.
+      options:
+        - Buffs
+        - Spellbook
+        - Spellcasting
+        - Metamagic
+        - Conditions
+        - Combat
+        - Damage
+        - Defenses
+        - On struck
+        - Temp HP
+        - Lighting / vision
+        - UI / settings
+        - Compatibility
+        - Packs / content
+        - Release / install
+        - Other / unsure
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: Briefly describe the issue or request.
+      placeholder: Describe what happened or what you would like the module to support.
+    validations:
+      required: true
+
+  - type: textarea
+    id: current-behavior
+    attributes:
+      label: Current behavior
+      description: For bugs, what happens now? For enhancements, what limitation are you running into?
+      placeholder: Describe the current behavior, missing support, or confusing workflow.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected or desired behavior
+      description: What did you expect to happen instead?
+      placeholder: Describe the correct result or the workflow you want to enable.
+    validations:
+      required: true
