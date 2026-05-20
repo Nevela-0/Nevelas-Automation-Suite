@@ -76,7 +76,7 @@ body:
     attributes:
       label: Summary
       description: Briefly describe the issue or request.
-      placeholder: Describe what happened or what you would like the module to support.
+      placeholder: Tell us what happened or what you would like the module to support.
     validations:
       required: true
 
@@ -97,3 +97,102 @@ body:
       placeholder: Describe the correct result or the workflow you want to enable.
     validations:
       required: true
+
+  - type: textarea
+    id: reproduction-steps
+    attributes:
+      label: Steps to reproduce
+      description: Required for bugs when possible. For enhancements, describe the workflow or use case.
+      placeholder: |
+        1. Create or open ...
+        2. Configure ...
+        3. Click or roll ...
+        4. See ...
+    validations:
+      required: false
+
+  - type: textarea
+    id: minimal-setup
+    attributes:
+      label: Minimal setup needed to reproduce
+      description: List the actor, item, buff, spell, settings, targets, or combat state needed to recreate this.
+      placeholder: |
+        Actor:
+        Item/spell/buff:
+        Module settings:
+        Target or combat setup:
+    validations:
+      required: false
+
+  - type: textarea
+    id: active-modules
+    attributes:
+      label: Other active modules
+      description: List other active modules if they may affect this behavior. If you tested with only NAS active, say so.
+      placeholder: |
+        - Module name and version
+        - Module name and version
+    validations:
+      required: false
+
+  - type: dropdown
+    id: client
+    attributes:
+      label: Foundry client
+      description: Where did you see this happen?
+      options:
+        - Foundry desktop app
+        - Chrome
+        - Firefox
+        - Edge
+        - Other browser
+        - Server-side / no client involved
+        - Unsure
+    validations:
+      required: false
+
+  - type: textarea
+    id: console-errors
+    attributes:
+      label: Console errors
+      description: Paste relevant browser console or Foundry server errors, if any.
+      render: text
+      placeholder: Paste errors here, or write "No console errors seen."
+    validations:
+      required: false
+
+  - type: textarea
+    id: screenshots-logs
+    attributes:
+      label: Screenshots, logs, or exports
+      description: Attach screenshots, short videos, logs, actor/item exports, or other files that help explain the report.
+      placeholder: Drag files here or paste links.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Impact
+      description: How much does this affect play or module use?
+      options:
+        - Blocks a game or major workflow
+        - Breaks a feature but has a workaround
+        - Minor issue or confusing behavior
+        - Nice-to-have improvement
+        - Unsure
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      description: Please confirm what you can before submitting.
+      options:
+        - label: I checked whether this issue has already been reported.
+          required: true
+        - label: I tested with the latest NAS version available to me.
+          required: true
+        - label: For a bug report, I included reproduction steps or explained why I cannot reproduce it consistently.
+          required: false
