@@ -76,7 +76,7 @@ body:
     attributes:
       label: Summary
       description: Briefly describe the issue or request.
-      placeholder: Tell us what happened or what you would like the module to support.
+      placeholder: Describe what happened or what you would like the module to support.
     validations:
       required: true
 
