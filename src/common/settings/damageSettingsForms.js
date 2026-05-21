@@ -131,7 +131,6 @@ function getActionSetting(item, actionId, settingPath, defaultValue = null) {
     const actionSettings = itemActionSettings.actions?.find(a => a.id === actionId);
     
     if (!actionSettings) {
-        console.debug('[getActionSetting] No actionSettings found for', actionId, '| path:', settingPath, '| returning default/inherited');
         return {
             value: defaultValue,
             isInherited: true
@@ -147,7 +146,6 @@ function getActionSetting(item, actionId, settingPath, defaultValue = null) {
         const attack = actionSettings.attacks?.find(a => a.key === attackKey);
         
         if (!attack) {
-            console.debug('[getActionSetting] No attack found for', attackKey, '| path:', settingPath, '| returning default/inherited');
             return {
                 value: defaultValue,
                 isInherited: true
@@ -162,7 +160,6 @@ function getActionSetting(item, actionId, settingPath, defaultValue = null) {
                 const propParts = propertyPath.split('.');
                 for (let i = 0; i < propParts.length; i++) {
                     if (!current || typeof current !== 'object') {
-                        console.debug('[getActionSetting] Attack explicit non-inherited, propertyPath fail', propertyPath, '| returning default');
                         return {
                             value: defaultValue,
                             isInherited: false
@@ -170,13 +167,11 @@ function getActionSetting(item, actionId, settingPath, defaultValue = null) {
                     }
                     current = current[propParts[i]];
                 }
-                console.debug('[getActionSetting] Attack explicit non-inherited, propertyPath', propertyPath, '| value:', current, '| returning not inherited');
                 return {
                     value: current !== undefined ? current : defaultValue,
                     isInherited: false
                 };
             } else {
-                console.debug('[getActionSetting] Attack explicit non-inherited, whole category', category, '| value:', attackCategoryObj);
                 return {
                     value: attackCategoryObj,
                     isInherited: false
@@ -235,7 +230,6 @@ function getActionSetting(item, actionId, settingPath, defaultValue = null) {
                     globalValue = globalSettings[category];
                 }
             }
-            console.debug('[getActionSetting] Attack inherits from action/global | path:', settingPath, '| value:', globalValue);
             return {
                 value: globalValue,
                 isInherited: true
@@ -246,7 +240,6 @@ function getActionSetting(item, actionId, settingPath, defaultValue = null) {
             const propParts = propertyPath.split('.');
             for (let i = 0; i < propParts.length; i++) {
                 if (!current || typeof current !== 'object') {
-                    console.debug('[getActionSetting] Attack action-level, propertyPath fail', propertyPath, '| returning default');
                     return {
                         value: defaultValue,
                         isInherited: false
@@ -268,7 +261,6 @@ function getActionSetting(item, actionId, settingPath, defaultValue = null) {
                 } else if (actionCategoryObj && typeof actionCategoryObj[propertyPath] !== 'undefined') {
                     actionValue = actionCategoryObj[propertyPath];
                 }
-                console.debug('[getActionSetting] Attack-level,', propertyPath, 'inherits from action | actionValue:', actionValue);
                 return {
                     value: actionValue,
                     isInherited: true
@@ -276,7 +268,6 @@ function getActionSetting(item, actionId, settingPath, defaultValue = null) {
             }
             if (category === 'hardness' && (propertyPath === 'bypass' || propertyPath === 'ignore')) {
                 if (current && typeof current === 'object' && 'inherit' in current) {
-                    console.debug('[getActionSetting] Attack action-level, special hardness', propertyPath, '| enabled:', current.enabled, '| inherit:', current.inherit);
                     if (propertyPath === 'bypass') {
                         return {
                             value: current.enabled !== undefined ? current.enabled : defaultValue,
@@ -299,20 +290,17 @@ function getActionSetting(item, actionId, settingPath, defaultValue = null) {
                     parent = parent[propParts[i]];
                 }
                 if (parent && typeof parent === 'object' && 'inherit' in parent) {
-                    console.debug('[getActionSetting] Attack-level, special hardness', propertyPath, '| value:', current, '| inherit:', parent.inherit);
                     return {
                         value: current !== undefined ? current : defaultValue,
                         isInherited: !!parent.inherit
                     };
                 }
             }
-            console.debug('[getActionSetting] Attack action-level, propertyPath', propertyPath, '| value:', current);
             return {
                 value: current !== undefined ? current : defaultValue,
                 isInherited: false
             };
         } else {
-            console.debug('[getActionSetting] Attack action-level, whole category', category, '| value:', actionCategoryObj);
             return {
                 value: actionCategoryObj,
                 isInherited: true 
@@ -342,7 +330,6 @@ function getActionSetting(item, actionId, settingPath, defaultValue = null) {
                     globalValue = globalSettings[category];
                 }
             }
-            console.debug('[getActionSetting] Action-level inherits from global | path:', settingPath, '| value:', globalValue);
             return {
                 value: globalValue,
                 isInherited: true
@@ -353,7 +340,6 @@ function getActionSetting(item, actionId, settingPath, defaultValue = null) {
             const propParts = propertyPath.split('.');
             for (let i = 0; i < propParts.length; i++) {
                 if (!current || typeof current !== 'object') {
-                    console.debug('[getActionSetting] Action-level, propertyPath fail', propertyPath, '| returning default');
                     return {
                         value: defaultValue,
                         isInherited: false
@@ -373,7 +359,6 @@ function getActionSetting(item, actionId, settingPath, defaultValue = null) {
                 if (globalSettings[category] && typeof globalSettings[category].bypass === 'boolean') {
                     globalValue = globalSettings[category].bypass;
                 }
-                console.debug('[getActionSetting] Action-level, bypass inherits from global | globalValue:', globalValue);
                 return {
                     value: globalValue,
                     isInherited: true
@@ -387,27 +372,23 @@ function getActionSetting(item, actionId, settingPath, defaultValue = null) {
                     parent = parent[propParts[i]];
                 }
                 if (parent && typeof parent === 'object' && 'inherit' in parent) {
-                    console.debug('[getActionSetting] Action-level, special hardness', propertyPath, '| value:', current, '| inherit:', parent.inherit);
                     return {
                         value: current !== undefined ? current : defaultValue,
                         isInherited: !!parent.inherit
                     };
                 }
             }
-            console.debug('[getActionSetting] Action-level, propertyPath', propertyPath, '| value:', current);
             return {
                 value: current !== undefined ? current : defaultValue,
                 isInherited: false
             };
         } else {
-            console.debug('[getActionSetting] Action-level, whole category', category, '| value:', actionCategoryObj);
             return {
                 value: actionCategoryObj,
                 isInherited: false
             };
         }
     }
-    console.debug('[getActionSetting] Invalid path format | path:', settingPath, '| returning default/inherited');
     return {
         value: defaultValue,
         isInherited: true

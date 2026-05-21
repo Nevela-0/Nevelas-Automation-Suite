@@ -19,6 +19,146 @@ import { getNasTemporaryHpTotal, hpBarDataWithNasTemporaryHp } from "./temporary
 const REACTIVE_FLAG_KEY = "itemReactiveEffects";
 const GRANTED_DEFENSE_FLAG = "grantedDefenses";
 
+function addNormalizedType(set, value) {
+  const normalized = normalizePriorityType(value);
+  if (normalized) set.add(normalized);
+}
+
+function collectNestedTypeValues(value, set) {
+  if (value == null || value === "") return;
+  if (Array.isArray(value)) {
+    for (const entry of value) collectNestedTypeValues(entry, set);
+    return;
+  }
+  if (value instanceof Set) {
+    for (const entry of value) collectNestedTypeValues(entry, set);
+    return;
+  }
+  if (typeof value === "object") {
+    for (const key of ["id", "slug", "name", "value"]) {
+      const entry = value?.[key];
+      if (entry != null && typeof entry !== "object") addNormalizedType(set, entry);
+    }
+    for (const key of ["base", "normal", "addon", "addons", "material", "materials", "types", "bypass", "bypasses"]) {
+      collectNestedTypeValues(value?.[key], set);
+    }
+    return;
+  }
+  addNormalizedType(set, value);
+}
+
+function materialTypesFromItem(item) {
+  const types = new Set();
+  collectNestedTypeValues(item?.system?.material, types);
+  collectNestedTypeValues(item?.system?.materials, types);
+  collectNestedTypeValues(item?.material, types);
+  collectNestedTypeValues(item?.materials, types);
+  return [...types];
+}
+
+function sourceMaterialTypes(sourceOptions = {}, applyDamageOptions = {}) {
+  const types = new Set();
+  for (const options of [sourceOptions, applyDamageOptions]) {
+    const action = options?.action;
+    const item = options?.item ?? action?.item ?? options?.message?.itemSource;
+    for (const source of [item, action?.item, options?.ammo, action?.ammo, options?.message?.ammoItem]) {
+      for (const type of materialTypesFromItem(source)) types.add(type);
+    }
+    collectNestedTypeValues(action?.material, types);
+    collectNestedTypeValues(action?.materials, types);
+    collectNestedTypeValues(options?.material, types);
+    collectNestedTypeValues(options?.materials, types);
+  }
+  return [...types];
+}
+
+function explicitBypassTypesFromOptions(...optionSets) {
+  const types = new Set();
+  for (const options of optionSets) {
+    for (const key of ["bypass", "bypasses", "bypassTypes", "drBypassTypes", "damageReductionBypassTypes"]) {
+      collectNestedTypeValues(options?.[key], types);
+    }
+    for (const instance of options?.instances ?? []) {
+      collectNestedTypeValues(instance?.material, types);
+      collectNestedTypeValues(instance?.materials, types);
+      collectNestedTypeValues(instance?.bypass, types);
+      collectNestedTypeValues(instance?.bypasses, types);
+      collectNestedTypeValues(instance?.bypassTypes, types);
+      collectNestedTypeValues(instance?.drBypassTypes, types);
+    }
+  }
+  return [...types];
+}
+
+function buildAbsorptionAttackBypassTypes({
+  incomingDamageTypes = [],
+  priorityTypes = [],
+  materialTypes = [],
+  explicitBypassTypes = []
+} = {}) {
+  return Array.from(new Set([
+    ...incomingDamageTypes,
+    ...priorityTypes,
+    ...materialTypes,
+    ...explicitBypassTypes
+  ].map((type) => normalizePriorityType(type)).filter(Boolean)));
+}
+
+function absorptionBypassContext(rule, sourceOptions = {}, applyDamageOptions = {}) {
+  const reductionBypassTypes = (rule?.reductionBypassTypes ?? []).map((type) => normalizePriorityType(type)).filter(Boolean);
+  const incomingDamageTypes = damageTypesFromOptions(sourceOptions, applyDamageOptions);
+  const instances = sourceOptions?.instances?.length ? sourceOptions.instances : applyDamageOptions?.instances ?? [];
+  const priorityTypes = getPriorityTypesForOptions(sourceOptions, instances).map((type) => normalizePriorityType(type)).filter(Boolean);
+  const materialTypes = sourceMaterialTypes(sourceOptions, applyDamageOptions);
+  const explicitBypassTypes = explicitBypassTypesFromOptions(sourceOptions, applyDamageOptions);
+  const attackTypes = new Set(buildAbsorptionAttackBypassTypes({
+    incomingDamageTypes,
+    priorityTypes,
+    materialTypes,
+    explicitBypassTypes
+  }));
+  if (rule?.defenseKind === "er") {
+    const resistedTypes = new Set(reductionBypassTypes);
+    return {
+      defenseKind: "er",
+      reductionBypassTypes,
+      incomingDamageTypes,
+      priorityTypes,
+      materialTypes,
+      explicitBypassTypes,
+      attackTypes: [...attackTypes],
+      bypassed: resistedTypes.size > 0 && !incomingDamageTypes.some((type) => resistedTypes.has(type)),
+      reason: resistedTypes.size ? "energy-type-check" : "no-er-bypass-types"
+    };
+  }
+  if (rule?.defenseKind !== "dr" || !reductionBypassTypes.length) {
+    return {
+      defenseKind: rule?.defenseKind ?? "",
+      reductionBypassTypes,
+      incomingDamageTypes,
+      priorityTypes,
+      materialTypes,
+      explicitBypassTypes,
+      attackTypes: [...attackTypes],
+      bypassed: false,
+      reason: "not-dr-or-no-bypass-types"
+    };
+  }
+  const bypassed = attackTypes.has("all")
+    || (reductionBypassTypes.includes("-") ? attackTypes.has("-") : reductionBypassTypes.some((type) => attackTypes.has(type)));
+  return {
+    defenseKind: "dr",
+    reductionBypassTypes,
+    incomingDamageTypes,
+    priorityTypes,
+    materialTypes,
+    explicitBypassTypes,
+    attackTypes: [...attackTypes],
+    bypassed,
+    reason: bypassed ? "attack-type-matched-dr-bypass" : "no-attack-type-matched-dr-bypass"
+  };
+}
+
 function normalizeBypassTypes(value) {
   const raw = Array.isArray(value) ? value : String(value ?? "").split(/[,;\s]+/);
   return Array.from(new Set(raw.map((type) => normalizePriorityType(type)).filter(Boolean)));
@@ -385,17 +525,7 @@ function damageKindMatchesAbsorptionRule(rule, isNonlethal) {
 }
 
 function absorptionRuleBypassed(rule, sourceOptions = {}, applyDamageOptions = {}) {
-  if (rule.defenseKind === "er") {
-    const resistedTypes = new Set(rule.reductionBypassTypes.map((type) => normalizePriorityType(type)).filter(Boolean));
-    if (!resistedTypes.size) return false;
-    return !damageTypesFromOptions(sourceOptions, applyDamageOptions).some((type) => resistedTypes.has(type));
-  }
-  if (rule.defenseKind !== "dr" || !rule.reductionBypassTypes.length) return false;
-  const instances = sourceOptions?.instances ?? applyDamageOptions?.instances ?? [];
-  const attackTypes = new Set(getPriorityTypesForOptions(sourceOptions, instances).map((type) => normalizePriorityType(type)));
-  if (attackTypes.has("all")) return true;
-  if (rule.reductionBypassTypes.includes("-")) return attackTypes.has("-");
-  return rule.reductionBypassTypes.some((type) => attackTypes.has(type));
+  return absorptionBypassContext(rule, sourceOptions, applyDamageOptions).bypassed;
 }
 
 function traitDrEntriesFromSource(actor) {

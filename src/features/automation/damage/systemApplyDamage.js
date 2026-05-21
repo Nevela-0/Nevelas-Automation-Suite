@@ -3,7 +3,7 @@ import { chatMessageStyle } from '../../../common/foundryCompat.js';
 import { checkMassiveDamage } from '../../../integration/moduleSockets.js';
 import { abilityDeltaCalculation } from './ability.js';
 import { buildAbilityDmgEntries, splitAbilityInstances } from './abilityTags.js';
-import { applyNasDefenseBypass } from './nasBypass.js';
+import { applyNasDefenseBypass, getNasDefenseBypassSettings } from './nasBypass.js';
 import { applyLegacyPriorityTypes } from './priorityTypes.js';
 import { applyManualVulnerability, buildNumericInstances, sumInstanceValues } from './instances.js';
 import { normalizeTargets } from '../utils/targeting.js';
@@ -822,6 +822,71 @@ function hasInvalidControlledTargets(options = {}) {
     return controlled.some((tokenDocument) => !cardTargetKeys.has(tokenDocumentKey(tokenDocument)));
 }
 
+function actorMatchesTokenDocument(actor, tokenDocument) {
+    if (!actor || !tokenDocument) return false;
+    const actorKeys = new Set([actor.uuid, actor.id].filter(Boolean).map(String));
+    const tokenActor = tokenDocument.actor ?? null;
+    const tokenKeys = [
+        tokenActor?.uuid,
+        tokenActor?.id,
+        tokenDocument.actorId,
+        tokenDocument.uuid
+    ].filter(Boolean).map(String);
+    return tokenKeys.some((key) => actorKeys.has(key));
+}
+
+function actorIsChatCardTarget(actor, message) {
+    const cardTargets = messageTargetTokenDocuments(message);
+    if (!cardTargets.length) return false;
+    return cardTargets.some((tokenDocument) => actorMatchesTokenDocument(actor, tokenDocument));
+}
+
+function numericActorHardness(actor) {
+    const raw = actor?.system?.traits?.hardness;
+    const candidates = raw && typeof raw === "object"
+        ? [raw.effective, raw.value, raw.total, raw.max]
+        : [raw];
+    for (const candidate of candidates) {
+        const value = Math.max(0, Math.floor(Number(candidate) || 0));
+        if (value > 0) return value;
+    }
+    return 0;
+}
+
+function finalDamageBeforeReduction(value = 0, options = {}) {
+    const amount = Math.max(0, Math.floor(Number(value) || 0));
+    const ratio = Number.isFinite(Number(options?.ratio)) ? Number(options.ratio) : 1;
+    return Math.max(0, Math.floor(amount * ratio));
+}
+
+function getMismatchedChatTargetHardnessFallback(actor, value = 0, options = {}) {
+    const amount = finalDamageBeforeReduction(value, options);
+    const cardTargets = messageTargetTokenDocuments(options?.message);
+    const existingReduction = Number(options?.reduction);
+    const hasExistingReduction = Number.isFinite(existingReduction) && existingReduction > 0;
+    const hasClickContext = options?.interactive === true || options?.element != null || options?.event != null;
+    const isHealing = value < 0 || options?.isHealing === true;
+
+    if (!actor || isHealing || amount <= 0) return null;
+    if (options?._nasMismatchedTargetHardnessApplied) return null;
+    if (options?.asWounds === true || options?.asNonlethal === true) return null;
+    if (!cardTargets.length || actorIsChatCardTarget(actor, options.message)) return null;
+    if (!hasClickContext || hasExistingReduction) return null;
+
+    const hardness = numericActorHardness(actor);
+    const nas = getNasDefenseBypassSettings(options) ?? { hardnessBypass: false, hardnessIgnore: 0 };
+    const ignored = Math.max(0, Math.floor(Number(nas.hardnessIgnore) || 0));
+    const effectiveHardness = nas.hardnessBypass ? 0 : Math.max(0, hardness - ignored);
+    const reduction = Math.min(amount, effectiveHardness);
+    if (reduction <= 0) return null;
+
+    return {
+        ...options,
+        reduction,
+        _nasMismatchedTargetHardnessApplied: true
+    };
+}
+
 function buildChatApplyDamageData(message, eventLike) {
     const button = eventLike?.currentTarget ?? eventLike?.target;
     if (button?.dataset?.action !== "applyDamage") return null;
@@ -896,9 +961,7 @@ export async function applyNasHeadlessDamage(value = 0, options = {}) {
 
     if (!pf1?.applications?.ApplyDamage) return { handled: false };
 
-    if (hasInvalidControlledTargets(options)) {
-        return { handled: false };
-    }
+    if (hasInvalidControlledTargets(options)) return { handled: false };
 
     const targets = normalizeTargets(options);
     if (!targets.length) return { handled: true, result: false };
@@ -1334,6 +1397,7 @@ export function registerSystemApplyDamage() {
                     }
                 }
             }
+            options = getMismatchedChatTargetHardnessFallback(this, value, options) ?? options;
             if (
                 actorHasAbsorptionData(this)
                 && !options?._nasAbsorptionApplied

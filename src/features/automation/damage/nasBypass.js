@@ -150,6 +150,10 @@ function normalizeNasSettingsFromOptions(options) {
     };
 }
 
+export function getNasDefenseBypassSettings(options = {}) {
+    return normalizeNasSettingsFromOptions(options);
+}
+
 function getResistanceTypeIds(entry) {
     const ids = new Set();
     if (entry?.typeIds) {
