@@ -28,6 +28,686 @@ const SAVE_HANDLING_MODES = new Set(["ignore", "failed", "successful"]);
 const SAVE_ALLY_BYPASS_MODES = new Set(["setting", "enabled", "disabled"]);
 const REAL_SAVE_TYPES = new Set(["fort", "ref", "will"]);
 const PROCESSING_SAVE_GATED_MESSAGES = new Set();
+const REACTIVE_FLAG_KEY = "itemReactiveEffects";
+const NON_CONSECUTIVE_DURATION_FLAG_KEY = "nonConsecutiveDurations";
+const ACTION_BUFF_AUTOMATION_FLAG_KEY = "buffAutomationByAction";
+const LEGACY_BUFF_AUTOMATION_WARNINGS = new Set();
+
+export const NON_CONSECUTIVE_DURATION_OPTION = "_nasNonConsecutiveDuration";
+const NON_CONSECUTIVE_SUPPORTED_UNITS = new Set([
+  "second",
+  "seconds",
+  "sec",
+  "round",
+  "rounds",
+  "turn",
+  "turns",
+  "minute",
+  "minutes",
+  "hour",
+  "hours",
+  "day",
+  "days",
+  "week",
+  "weeks",
+  "month",
+  "months",
+  "year",
+  "years"
+]);
+
+function getNonConsecutiveModuleFlags(item) {
+  return item?.getFlag?.(MODULE.ID, REACTIVE_FLAG_KEY) ?? item?.flags?.[MODULE.ID]?.[REACTIVE_FLAG_KEY] ?? {};
+}
+
+function getNonConsecutiveRoot(item) {
+  const raw = getNonConsecutiveModuleFlags(item)?.[NON_CONSECUTIVE_DURATION_FLAG_KEY];
+  return raw && typeof raw === "object" ? foundry.utils.deepClone(raw) : {};
+}
+
+function normalizeNonConsecutiveActionId(value) {
+  return String(value ?? "").trim();
+}
+
+function normalizeNonConsecutiveUnits(value) {
+  const units = String(value ?? "").trim();
+  return NON_CONSECUTIVE_SUPPORTED_UNITS.has(units) ? units : "";
+}
+
+function nonConsecutiveActionIdFromAction(action) {
+  return normalizeNonConsecutiveActionId(action?.action?.id ?? action?.id ?? action?._id ?? action?.action?._id);
+}
+
+function nonConsecutiveActionIdFromSheetAction(action) {
+  return normalizeNonConsecutiveActionId(action?.id ?? action?._id ?? action?.action?.id ?? action?.action?._id);
+}
+
+function getNonConsecutiveActionState(root, actionId) {
+  const actions = root?.actions && typeof root.actions === "object" ? root.actions : {};
+  const state = actions[actionId];
+  return state && typeof state === "object" ? state : null;
+}
+
+function isNonConsecutiveState(state) {
+  return state?.consecutive === false;
+}
+
+function nonConsecutiveRoundTime() {
+  const value = Number(CONFIG?.time?.roundTime ?? 6);
+  return Number.isFinite(value) && value > 0 ? value : 6;
+}
+
+function nonConsecutiveUnitSeconds(units) {
+  switch (normalizeNonConsecutiveUnits(units).toLowerCase()) {
+    case "second":
+    case "seconds":
+    case "sec":
+      return 1;
+    case "round":
+    case "rounds":
+    case "turn":
+    case "turns":
+      return nonConsecutiveRoundTime();
+    case "minute":
+    case "minutes":
+      return 60;
+    case "hour":
+    case "hours":
+      return 3600;
+    case "day":
+    case "days":
+      return 86400;
+    case "week":
+    case "weeks":
+      return 604800;
+    case "month":
+    case "months":
+      return 2592000;
+    case "year":
+    case "years":
+      return 31536000;
+    default:
+      return 0;
+  }
+}
+
+function nonConsecutiveNumericDurationValue(units, value) {
+  const normalizedUnits = normalizeNonConsecutiveUnits(units);
+  if (!normalizedUnits) return 0;
+  if (normalizedUnits === "turn" || normalizedUnits === "turns") return 1;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function nonConsecutiveTimeNow() {
+  const now = Number(game?.time?.worldTime ?? 0);
+  return Number.isFinite(now) ? now : 0;
+}
+
+function nonConsecutiveActorName(actor) {
+  return String(actor?.name ?? game.i18n.localize("NAS.common.unknownActor") ?? "actor");
+}
+
+function localizeNonConsecutiveBuff(path, data = null) {
+  const key = `NAS.buffs.${path}`;
+  return data ? game.i18n.format(key, data) : game.i18n.localize(key);
+}
+
+function normalizeNonConsecutiveDurationForOption(duration = {}) {
+  const units = normalizeNonConsecutiveUnits(duration?.units ?? duration?.sourceUnits);
+  const capacity = nonConsecutiveNumericDurationValue(units, duration?.value);
+  return {
+    units,
+    capacity,
+    unitSeconds: nonConsecutiveUnitSeconds(units)
+  };
+}
+
+function nonConsecutiveStateMatchesDuration(state, duration) {
+  if (!state) return false;
+  return (
+    normalizeNonConsecutiveUnits(state.units) === duration.units
+    && Number(state.capacity) === duration.capacity
+    && Number(state.unitSeconds) === duration.unitSeconds
+  );
+}
+
+function currentNonConsecutiveRemaining(state, duration) {
+  if (!nonConsecutiveStateMatchesDuration(state, duration)) return duration.capacity;
+  const remaining = Number(state.remaining);
+  if (!Number.isFinite(remaining)) return duration.capacity;
+  return Math.max(0, Math.min(duration.capacity, remaining));
+}
+
+function nonConsecutiveOptionDuration(option) {
+  const units = normalizeNonConsecutiveUnits(option?.units);
+  const value = nonConsecutiveNumericDurationValue(units, option?.remaining);
+  if (!units || value <= 0) return null;
+  return {
+    units,
+    value: String(value)
+  };
+}
+
+function serializeNonConsecutiveOption(option) {
+  if (!option || typeof option !== "object" || option.enabled !== true) return null;
+  return {
+    enabled: true,
+    sourceItemUuid: String(option.sourceItemUuid ?? ""),
+    sourceItemName: String(option.sourceItemName ?? ""),
+    actionId: normalizeNonConsecutiveActionId(option.actionId),
+    actionName: String(option.actionName ?? ""),
+    sessionId: String(option.sessionId ?? createNasId()),
+    units: normalizeNonConsecutiveUnits(option.units),
+    capacity: Number(option.capacity) || 0,
+    remaining: Number(option.remaining) || 0,
+    unitSeconds: Number(option.unitSeconds) || 0,
+    startedAtWorldTime: Number(option.startedAtWorldTime) || nonConsecutiveTimeNow()
+  };
+}
+
+function normalizeNonConsecutiveOption(options = {}) {
+  const raw = options?.[NON_CONSECUTIVE_DURATION_OPTION] ?? options;
+  const serialized = serializeNonConsecutiveOption(raw);
+  if (!serialized?.sourceItemUuid || !serialized.actionId || !serialized.units) return null;
+  if (serialized.capacity <= 0 || serialized.remaining <= 0 || serialized.unitSeconds <= 0) return null;
+  return serialized;
+}
+
+async function updateNonConsecutiveSourceRoot(sourceItem, mutator) {
+  if (!sourceItem?.update) return null;
+  const root = getNonConsecutiveRoot(sourceItem);
+  root.actions = root.actions && typeof root.actions === "object" ? root.actions : {};
+  mutator(root);
+  await sourceItem.update({ [`flags.${MODULE.ID}.${REACTIVE_FLAG_KEY}.${NON_CONSECUTIVE_DURATION_FLAG_KEY}`]: root });
+  return root;
+}
+
+function normalizeNonConsecutiveSession(session = {}) {
+  const activeBuffs = session.activeBuffs && typeof session.activeBuffs === "object" ? session.activeBuffs : {};
+  return {
+    id: String(session.id ?? ""),
+    startedAtWorldTime: Number(session.startedAtWorldTime) || nonConsecutiveTimeNow(),
+    unitSeconds: Number(session.unitSeconds) || nonConsecutiveRoundTime(),
+    activeBuffs: { ...activeBuffs }
+  };
+}
+
+async function nonConsecutiveSourceItemFromOption(option) {
+  if (!option?.sourceItemUuid || typeof fromUuid !== "function") return null;
+  try {
+    return await fromUuid(option.sourceItemUuid);
+  } catch (_error) {
+    return null;
+  }
+}
+
+async function nonConsecutiveSourceItemFromFlag(flag) {
+  if (!flag?.sourceItemUuid || typeof fromUuid !== "function") return null;
+  try {
+    return await fromUuid(flag.sourceItemUuid);
+  } catch (_error) {
+    return null;
+  }
+}
+
+function nonConsecutiveTrackingFlag(item) {
+  const raw = item?.flags?.[MODULE.ID]?.[REACTIVE_FLAG_KEY]?.[NON_CONSECUTIVE_DURATION_FLAG_KEY];
+  return raw?.appliedBuff && typeof raw.appliedBuff === "object" ? raw.appliedBuff : null;
+}
+
+function nonConsecutiveTrackingFlagPath(path = "") {
+  return `flags.${MODULE.ID}.${REACTIVE_FLAG_KEY}.${NON_CONSECUTIVE_DURATION_FLAG_KEY}.appliedBuff${path ? `.${path}` : ""}`;
+}
+
+function nonConsecutiveActionFlagPath(actionId, path = "") {
+  return `flags.${MODULE.ID}.${REACTIVE_FLAG_KEY}.${NON_CONSECUTIVE_DURATION_FLAG_KEY}.actions.${actionId}${path ? `.${path}` : ""}`;
+}
+
+function updateChangedPath(changed, path) {
+  if (!changed || typeof changed !== "object") return false;
+  return Object.prototype.hasOwnProperty.call(changed, path)
+    || foundry.utils.hasProperty(changed, path);
+}
+
+function nonConsecutiveActiveBuffKey(item) {
+  return String(item?.uuid ?? item?.id ?? "").trim().replaceAll(".", "%2E");
+}
+
+function nonConsecutiveActiveBuffMeta(item) {
+  return {
+    actorUuid: item?.actor?.uuid ?? "",
+    actorName: nonConsecutiveActorName(item?.actor),
+    buffUuid: item?.uuid ?? "",
+    buffId: item?.id ?? "",
+    buffName: item?.name ?? ""
+  };
+}
+
+export function actionCanUseNonConsecutiveDuration(action) {
+  const units = normalizeNonConsecutiveUnits(action?.duration?.units);
+  if (!units) return false;
+  if (units === "turn" || units === "turns") return true;
+  return String(action?.duration?.value ?? "").trim().length > 0;
+}
+
+export function getActionConsecutiveState(item, action) {
+  const actionId = nonConsecutiveActionIdFromSheetAction(action);
+  if (!item || !actionId) return { actionId, consecutive: true, enabled: false };
+  const state = getNonConsecutiveActionState(getNonConsecutiveRoot(item), actionId);
+  return {
+    actionId,
+    consecutive: !isNonConsecutiveState(state),
+    enabled: isNonConsecutiveState(state),
+    state
+  };
+}
+
+export async function setActionConsecutiveState(item, action, consecutive) {
+  const actionId = nonConsecutiveActionIdFromSheetAction(action);
+  if (!item?.update || !actionId) return;
+  if (consecutive !== false) {
+    await item.update({ [nonConsecutiveActionFlagPath(`-=${actionId}`)]: null });
+    return;
+  }
+  await updateNonConsecutiveSourceRoot(item, (root) => {
+    root.actions[actionId] = {
+      ...(root.actions[actionId] ?? {}),
+      consecutive: false
+    };
+  });
+}
+
+export function getActionNonConsecutiveDurationState(item, action) {
+  const state = getActionConsecutiveState(item, action);
+  return {
+    ...state,
+    nonConsecutive: state.enabled === true,
+    enabled: state.enabled === true
+  };
+}
+
+export async function setActionNonConsecutiveDurationState(item, action, enabled) {
+  await setActionConsecutiveState(item, action, enabled === true ? false : true);
+}
+
+function actionBuffAutomationFlagPath(actionId, path = "") {
+  return `flags.${MODULE.ID}.${REACTIVE_FLAG_KEY}.${ACTION_BUFF_AUTOMATION_FLAG_KEY}.${actionId}${path ? `.${path}` : ""}`;
+}
+
+function getActionBuffAutomationRoot(item) {
+  const raw = getNonConsecutiveModuleFlags(item)?.[ACTION_BUFF_AUTOMATION_FLAG_KEY];
+  return raw && typeof raw === "object" ? foundry.utils.deepClone(raw) : {};
+}
+
+function normalizeActionBuffAutomationConfig(raw = null) {
+  if (!raw || typeof raw !== "object") return null;
+  const hasEnabled = Object.prototype.hasOwnProperty.call(raw, "enabled");
+  const buffUuid = String(raw.buffUuid ?? raw.selectedBuffUuid ?? "").trim();
+  if (!hasEnabled && !buffUuid) return null;
+  return {
+    enabled: raw.enabled === true,
+    buffUuid
+  };
+}
+
+function actionBuffAutomationLegacyState(item) {
+  const itemType = item?.type;
+  const itemSubType = item?.subType;
+  const hasBuffFlag = item?.hasItemBooleanFlag?.("buff") === true;
+  const hasNoBuffFlag = item?.hasItemBooleanFlag?.("nobuff") === true;
+
+  if (itemType === "spell" || itemType === "consumable") {
+    if (hasNoBuffFlag) return { enabled: false, reason: "nobuff", warning: "nobuff" };
+    return { enabled: true, reason: "native", warning: hasBuffFlag ? "buff" : "" };
+  }
+  if (itemType === "feat" && itemSubType === "classFeat") {
+    return hasBuffFlag
+      ? { enabled: true, reason: "buff", warning: "buff" }
+      : { enabled: false, reason: "", warning: "" };
+  }
+  return hasBuffFlag
+    ? { enabled: true, reason: "buff", warning: "buff" }
+    : { enabled: false, reason: "", warning: "" };
+}
+
+function actionBuffAutomationConfigForAction(item, action, { runtime = false } = {}) {
+  const root = getActionBuffAutomationRoot(item);
+  const actionIds = runtime ? getActionIdCandidates(action) : [nonConsecutiveActionIdFromSheetAction(action)];
+  for (const actionId of actionIds) {
+    if (!actionId || !Object.prototype.hasOwnProperty.call(root, actionId)) continue;
+    return {
+      actionId,
+      config: normalizeActionBuffAutomationConfig(root[actionId])
+    };
+  }
+  return {
+    actionId: actionIds.find(Boolean) ?? "",
+    config: null
+  };
+}
+
+export function getActionBuffAutomationState(item, action) {
+  const { actionId, config } = actionBuffAutomationConfigForAction(item, action);
+  const legacy = actionBuffAutomationLegacyState(item);
+  return {
+    actionId,
+    configured: config != null,
+    enabled: config ? config.enabled === true : legacy.enabled === true,
+    selectedBuffUuid: config?.buffUuid ?? "",
+    legacyReason: legacy.reason,
+    legacyFlagWarning: legacy.warning,
+    legacyWarning: config ? "" : legacy.warning
+  };
+}
+
+export async function setActionBuffAutomationState(item, action, state = {}) {
+  const actionId = nonConsecutiveActionIdFromSheetAction(action);
+  if (!item?.update || !actionId) {
+    return;
+  }
+  const enabled = state.enabled === true;
+  const buffUuid = String(state.selectedBuffUuid ?? state.buffUuid ?? "").trim();
+  const legacy = actionBuffAutomationLegacyState(item);
+  const rootBefore = getActionBuffAutomationRoot(item);
+  const current = normalizeActionBuffAutomationConfig(rootBefore?.[actionId]);
+
+  if (!enabled && !buffUuid && current == null && legacy.enabled !== true) {
+    return;
+  }
+  const updatePayload = {
+    [actionBuffAutomationFlagPath(actionId, "enabled")]: enabled,
+    [actionBuffAutomationFlagPath(actionId, buffUuid ? "buffUuid" : "-=buffUuid")]: buffUuid || null
+  };
+  await item.update(updatePayload);
+}
+
+function getRuntimeActionBuffAutomationState(action) {
+  const item = action?.item;
+  const { actionId, config } = actionBuffAutomationConfigForAction(item, action, { runtime: true });
+  const legacy = actionBuffAutomationLegacyState(item);
+  return {
+    actionId,
+    configured: config != null,
+    enabled: config ? config.enabled === true : legacy.enabled === true,
+    selectedBuffUuid: config?.buffUuid ?? "",
+    legacyReason: legacy.reason,
+    legacyFlagWarning: legacy.warning,
+    legacyWarning: config ? "" : legacy.warning
+  };
+}
+
+export function shouldHandleBuffAutomation(action) {
+  if (!game.settings.get(MODULE.ID, "automaticBuffs")) return false;
+  const state = getRuntimeActionBuffAutomationState(action);
+  if (state.legacyFlagWarning) {
+    warnLegacyBuffAutomationFlag(action?.item, state.legacyFlagWarning);
+  }
+  return state.configured
+    ? state.enabled === true
+    : state.enabled === true || state.legacyReason === "nobuff";
+}
+
+function warnLegacyBuffAutomationFlag(item, flag) {
+  const normalizedFlag = String(flag ?? "").trim();
+  if (!item || !normalizedFlag) return;
+  const key = `${normalizedFlag}:${item.uuid ?? item.id ?? item.name ?? ""}`;
+  if (LEGACY_BUFF_AUTOMATION_WARNINGS.has(key)) return;
+  LEGACY_BUFF_AUTOMATION_WARNINGS.add(key);
+  const messageKey = normalizedFlag === "nobuff"
+    ? "legacyNoBuffBooleanDeprecated"
+    : "legacyBuffBooleanDeprecated";
+  ui.notifications?.warn?.(localizeNonConsecutiveBuff(messageKey, { item: item.name ?? "" }));
+}
+
+function canonicalBuffUuid(uuid) {
+  const value = String(uuid ?? "").trim();
+  if (!value.startsWith("Compendium.") || value.includes(".Item.")) return value;
+  const parts = value.split(".");
+  if (parts.length < 4) return value;
+  const id = parts.at(-1);
+  const pack = parts.slice(1, -1).join(".");
+  return pack && id ? `Compendium.${pack}.Item.${id}` : value;
+}
+
+function packIdFromBuffDocument(document) {
+  const pack = String(document?.pack ?? document?.compendium?.collection ?? "").trim();
+  if (pack) return pack;
+  const uuid = String(document?.uuid ?? "");
+  if (!uuid.startsWith("Compendium.")) return null;
+  const parts = uuid.split(".");
+  const itemIndex = parts.findIndex((part) => part === "Item");
+  return itemIndex > 1 ? parts.slice(1, itemIndex).join(".") : null;
+}
+
+async function resolveActionBuffAutomationBuff(state) {
+  const uuid = canonicalBuffUuid(state?.selectedBuffUuid);
+  if (!uuid || typeof fromUuid !== "function") return null;
+  try {
+    const document = await fromUuid(uuid);
+    if (document?.type !== "buff") return null;
+    return {
+      name: document.name,
+      id: document.id,
+      pack: packIdFromBuffDocument(document),
+      document
+    };
+  } catch (_error) {
+    return null;
+  }
+}
+
+function serializeNonConsecutiveDurationOptions(options = {}) {
+  const option = normalizeNonConsecutiveOption(options);
+  return option ? { [NON_CONSECUTIVE_DURATION_OPTION]: option } : {};
+}
+
+function nonConsecutiveDurationForOptions(options = {}, fallbackDuration = null) {
+  const option = normalizeNonConsecutiveOption(options);
+  return nonConsecutiveOptionDuration(option) ?? fallbackDuration;
+}
+
+function hasNonConsecutiveDurationOption(options = {}) {
+  return Boolean(normalizeNonConsecutiveOption(options));
+}
+
+async function getOrCreateNonConsecutiveDurationApplication(action, duration = {}) {
+  action.shared ??= {};
+  if (action.shared._nasNonConsecutiveDurationApplication) {
+    return action.shared._nasNonConsecutiveDurationApplication;
+  }
+
+  const item = action?.item;
+  const actionId = nonConsecutiveActionIdFromAction(action);
+  if (!item || !actionId) return null;
+
+  const root = getNonConsecutiveRoot(item);
+  const state = getNonConsecutiveActionState(root, actionId);
+  if (!isNonConsecutiveState(state)) return null;
+
+  const normalizedDuration = normalizeNonConsecutiveDurationForOption(duration);
+  if (!normalizedDuration.units || normalizedDuration.capacity <= 0 || normalizedDuration.unitSeconds <= 0) return null;
+
+  const remaining = currentNonConsecutiveRemaining(state, normalizedDuration);
+  if (remaining <= 0) {
+    ui.notifications?.warn?.(localizeNonConsecutiveBuff("nonConsecutiveDurationExhausted", {
+      item: item.name ?? "",
+      action: action?.action?.name ?? action?.name ?? ""
+    }));
+    action.shared._nasNonConsecutiveDurationApplication = { blocked: true };
+    return action.shared._nasNonConsecutiveDurationApplication;
+  }
+
+  const option = {
+    enabled: true,
+    sourceItemUuid: item.uuid ?? "",
+    sourceItemName: item.name ?? "",
+    actionId,
+    actionName: action?.action?.name ?? action?.name ?? "",
+    sessionId: createNasId(),
+    units: normalizedDuration.units,
+    capacity: normalizedDuration.capacity,
+    remaining,
+    unitSeconds: normalizedDuration.unitSeconds,
+    startedAtWorldTime: nonConsecutiveTimeNow()
+  };
+  action.shared._nasNonConsecutiveDurationApplication = {
+    blocked: false,
+    duration: nonConsecutiveOptionDuration(option) ?? duration,
+    option: serializeNonConsecutiveOption(option)
+  };
+  return action.shared._nasNonConsecutiveDurationApplication;
+}
+
+async function markNonConsecutiveBuffActive(buffItem, options = {}) {
+  const option = normalizeNonConsecutiveOption(options);
+  if (!buffItem || !option) return false;
+  const sourceItem = await nonConsecutiveSourceItemFromOption(option);
+  if (!sourceItem) return false;
+
+  const buffKey = nonConsecutiveActiveBuffKey(buffItem);
+  if (!buffKey) return false;
+  const now = nonConsecutiveTimeNow();
+
+  await updateNonConsecutiveSourceRoot(sourceItem, (root) => {
+    const current = root.actions[option.actionId] ?? {};
+    const next = nonConsecutiveStateMatchesDuration(current, option)
+      ? { ...current }
+      : {
+        consecutive: false,
+        remaining: option.capacity,
+        capacity: option.capacity,
+        units: option.units,
+        unitSeconds: option.unitSeconds,
+        sessions: {}
+      };
+
+    next.consecutive = false;
+    next.remaining = Number.isFinite(Number(next.remaining)) ? Math.max(0, Number(next.remaining)) : option.capacity;
+    next.capacity = option.capacity;
+    next.units = option.units;
+    next.unitSeconds = option.unitSeconds;
+    next.sessions = next.sessions && typeof next.sessions === "object" ? next.sessions : {};
+    const session = normalizeNonConsecutiveSession(next.sessions[option.sessionId]);
+    session.id = option.sessionId;
+    session.startedAtWorldTime = option.startedAtWorldTime || now;
+    session.unitSeconds = option.unitSeconds;
+    session.activeBuffs[buffKey] = nonConsecutiveActiveBuffMeta(buffItem);
+    next.sessions[option.sessionId] = session;
+    root.actions[option.actionId] = next;
+  });
+
+  await buffItem.update({
+    [nonConsecutiveTrackingFlagPath()]: {
+      sourceItemUuid: option.sourceItemUuid,
+      sourceItemName: option.sourceItemName,
+      actionId: option.actionId,
+      actionName: option.actionName,
+      sessionId: option.sessionId,
+      startedAtWorldTime: option.startedAtWorldTime || now,
+      units: option.units,
+      capacity: option.capacity,
+      remainingAtActivation: option.remaining,
+      unitSeconds: option.unitSeconds
+    }
+  });
+  return true;
+}
+
+async function finalizeTrackedNonConsecutiveBuff(item, context = {}) {
+  const flag = nonConsecutiveTrackingFlag(item);
+  if (!flag) return false;
+
+  const sourceItem = await nonConsecutiveSourceItemFromFlag(flag);
+  if (!sourceItem) return false;
+
+  const actionId = normalizeNonConsecutiveActionId(flag.actionId);
+  const sessionId = String(flag.sessionId ?? "");
+  const buffKey = nonConsecutiveActiveBuffKey(item);
+  if (!actionId || !sessionId || !buffKey) return false;
+
+  const now = nonConsecutiveTimeNow();
+  const contextStart = Number(context?.pf1?.startTime);
+  const startedAt = Number.isFinite(contextStart)
+    ? contextStart
+    : (Number(flag.startedAtWorldTime) || now);
+  const unit = Number(flag.unitSeconds) > 0 ? Number(flag.unitSeconds) : nonConsecutiveUnitSeconds(flag.units);
+  const elapsed = Math.max(0, now - startedAt);
+  const consumed = Math.max(1, Math.ceil(elapsed / Math.max(1, unit)));
+  const state = getNonConsecutiveActionState(getNonConsecutiveRoot(sourceItem), actionId);
+  const rawSession = state?.sessions?.[sessionId];
+  if (!rawSession) return false;
+
+  const session = normalizeNonConsecutiveSession(rawSession);
+  if (!session.activeBuffs[buffKey]) return false;
+
+  const otherActiveBuffKeys = Object.keys(session.activeBuffs).filter((key) => key !== buffKey);
+  const update = {
+    [nonConsecutiveActionFlagPath(actionId, `sessions.${sessionId}.activeBuffs.-=${buffKey}`)]: null
+  };
+  if (otherActiveBuffKeys.length === 0) {
+    const remaining = Number.isFinite(Number(state.remaining)) ? Number(state.remaining) : Number(state.capacity);
+    update[nonConsecutiveActionFlagPath(actionId, "remaining")] = Math.max(0, remaining - consumed);
+    update[nonConsecutiveActionFlagPath(actionId, "lastSpent")] = consumed;
+    update[nonConsecutiveActionFlagPath(actionId, "lastSpentAtWorldTime")] = now;
+    update[nonConsecutiveActionFlagPath(actionId, `sessions.-=${sessionId}`)] = null;
+  }
+  await sourceItem.update(update);
+
+  if (item?.update && item?.parent) {
+    await item.update({ [`flags.${MODULE.ID}.${REACTIVE_FLAG_KEY}.${NON_CONSECUTIVE_DURATION_FLAG_KEY}.-=appliedBuff`]: null });
+  }
+  return true;
+}
+
+function resetRestNonConsecutiveItemUpdate(itemUpdates, item) {
+  const root = getNonConsecutiveRoot(item);
+  const actions = root.actions && typeof root.actions === "object" ? root.actions : {};
+  let changed = false;
+  for (const [actionId, state] of Object.entries(actions)) {
+    if (!isNonConsecutiveState(state)) continue;
+    const capacity = Number(state.capacity);
+    if (!Number.isFinite(capacity) || capacity <= 0) continue;
+
+    let update = itemUpdates.find((entry) => String(entry?._id ?? "") === String(item.id));
+    if (!update) {
+      update = { _id: item.id };
+      itemUpdates.push(update);
+    }
+    foundry.utils.setProperty(update, nonConsecutiveActionFlagPath(actionId, "remaining"), capacity);
+    foundry.utils.setProperty(update, nonConsecutiveActionFlagPath(actionId, "lastResetAtWorldTime"), nonConsecutiveTimeNow());
+    for (const sessionId of Object.keys(state.sessions ?? {})) {
+      foundry.utils.setProperty(update, nonConsecutiveActionFlagPath(actionId, `sessions.-=${sessionId}`), null);
+    }
+    changed = true;
+  }
+  return changed;
+}
+
+function resetActorNonConsecutiveDurationsOnRest(actor, options, _updateData, itemUpdates) {
+  if (options?.restoreDailyUses !== true) return;
+  if (!Array.isArray(itemUpdates)) return;
+  for (const item of actor?.items ?? []) {
+    resetRestNonConsecutiveItemUpdate(itemUpdates, item);
+  }
+}
+
+export function registerNonConsecutiveDurationHooks() {
+  Hooks.on("updateItem", (item, changed, options) => {
+    if (item?.type !== "buff") return;
+    if (!updateChangedPath(changed, "system.active")) return;
+    if (item.system?.active !== false) return;
+    void finalizeTrackedNonConsecutiveBuff(item, options);
+  });
+
+  Hooks.on("deleteItem", (item, options) => {
+    if (item?.type !== "buff") return;
+    if (item.system?.active !== true) return;
+    void finalizeTrackedNonConsecutiveBuff(item, options);
+  });
+
+  Hooks.on("pf1PreActorRest", resetActorNonConsecutiveDurationsOnRest);
+}
 
 function normalizeBuffSaveHandlingMode(value) {
   const mode = String(value ?? "ignore");
@@ -584,7 +1264,9 @@ function queuePendingBuffApplication(action, buff, targets, duration, casterLeve
     options: {
       activate: options.activate !== false,
       silent: options.silent === true,
-      [KNOWN_BUFF_AUTOMATION_OPTION]: serializeKnownBuffAutomation(options)
+      [KNOWN_BUFF_AUTOMATION_OPTION]: serializeKnownBuffAutomation(options),
+      ...serializeAppliedBuffOverrideOptions(options),
+      ...serializeNonConsecutiveDurationOptions(options)
     },
     manualSelection: options.manualSelection === true,
     resolvedManualSelection: options.resolvedManualSelection === true,
@@ -606,8 +1288,20 @@ async function applyOrQueueBuffToTargets(action, buff, targets, duration, caster
     action.shared.reject = true;
     return;
   }
-  if (queuePendingBuffApplication(action, buff, targets, duration, casterLevel, { ...mergedOptions, buffSaveGate })) return;
-  await applyBuffToTargets(buff, targets, duration, casterLevel, mergedOptions);
+  const nonConsecutive = await getOrCreateNonConsecutiveDurationApplication(action, duration);
+  if (nonConsecutive?.blocked) {
+    action.shared ??= {};
+    action.shared.reject = true;
+    return;
+  }
+
+  const effectiveDuration = nonConsecutive?.duration ?? duration;
+  const durationOptions = nonConsecutive?.option
+    ? { [NON_CONSECUTIVE_DURATION_OPTION]: nonConsecutive.option }
+    : {};
+  const effectiveOptions = { ...mergedOptions, ...durationOptions };
+  if (queuePendingBuffApplication(action, buff, targets, effectiveDuration, casterLevel, { ...effectiveOptions, buffSaveGate })) return;
+  await applyBuffToTargets(buff, targets, effectiveDuration, casterLevel, effectiveOptions);
 }
 
 export function attachPendingBuffAutomationToChatData(actionUse) {
@@ -621,13 +1315,89 @@ export function attachPendingBuffAutomationToChatData(actionUse) {
   actionUse.shared.chatData.flags[MODULE.ID][PENDING_BUFF_AUTOMATION_KEY] = foundry.utils.deepClone(pending);
   }
 
+  async function applySelectedBuffForAction({
+    action,
+    selectedBuff,
+    isSelfTargeting,
+    isCommunal,
+    durationUnits,
+    durationValue,
+    communalIncrement,
+    communalTotalDuration,
+    communalDurationUnit,
+    communalPromptForManual,
+    isAreaOfEffect,
+    casterLevel,
+    buffSaveGate
+  }) {
+    const knownBuffAutomation = await promptKnownBuffAutomationForAction(action);
+    if (knownBuffAutomation === null && action.shared?.reject !== true) {
+      action.shared.reject = true;
+      return;
+    }
+  
+    const targetContext = await gatherTargetsForApplication({
+      action,
+      isSelfTargeting,
+      isCommunal,
+      durationUnits,
+      durationValue,
+      communalIncrement,
+      communalTotalDuration,
+      communalDurationUnit,
+      communalPromptForManual,
+      isAreaOfEffect,
+      buffSaveGate
+    });
+    if (targetContext.rejected) {
+      notifyBuffTargetingRejection(action, targetContext.reason);
+      return;
+    }
+  
+    applyMaskFocusPerTargetDurationAdjustments(action, targetContext, durationUnits);
+    applyNaniteBloodlineArcanaPerTargetDurationAdjustments(action, targetContext, durationUnits);
+  
+    const { filteredTargets, perTargetDurations } = targetContext;
+    const manualResultOptions = manualSelectionResultOptions(filteredTargets);
+  
+    console.log(`${MODULE.ID} | Applying buff to ${filteredTargets.length} target(s)`);
+    if (perTargetDurations && perTargetDurations.length > 0) {
+      if (targetContext.manualSelection === true && buffSaveGate?.deferred) {
+        const targetDurations = new Map(perTargetDurations.map((entry) => [
+          targetAppliedKey(entry.target),
+          { units: entry.duration.units, value: String(entry.duration.value) }
+        ]));
+        await applyOrQueueBuffToTargets(action, selectedBuff, perTargetDurations.map((entry) => entry.target), null, casterLevel, {
+          [KNOWN_BUFF_AUTOMATION_OPTION]: knownBuffAutomation,
+          buffSaveGate,
+          manualSelection: true,
+          targetDurations,
+          ...manualResultOptions
+        });
+        return;
+      }
+      for (const entry of perTargetDurations) {
+        await applyOrQueueBuffToTargets(action, selectedBuff, [entry.target], {
+          units: entry.duration.units,
+          value: String(entry.duration.value)
+        }, casterLevel, { [KNOWN_BUFF_AUTOMATION_OPTION]: knownBuffAutomation, buffSaveGate, manualSelection: targetContext.manualSelection === true, ...manualResultOptions });
+      }
+    } else {
+      await applyOrQueueBuffToTargets(action, selectedBuff, filteredTargets, {
+        units: durationUnits,
+        value: String(durationValue)
+      }, casterLevel, { [KNOWN_BUFF_AUTOMATION_OPTION]: knownBuffAutomation, buffSaveGate, manualSelection: targetContext.manualSelection === true, ...manualResultOptions });
+    }
+  }
+
 export async function handleBuffAutomation(action) {
-  if (action.item.type === "feat" && action.item.subType === "classFeat") {
-    const isBuff = action.item.hasItemBooleanFlag('buff');
-    if (!isBuff) return;
-  } else if (action.item.type === "spell" || action.item.type === "consumable") {
-    const isNoBuff = action.item.hasItemBooleanFlag('nobuff');
-    if (isNoBuff) return;
+  const item = action?.item;
+  const automationState = getRuntimeActionBuffAutomationState(action);
+  if (!automationState.configured && automationState.legacyWarning) {
+    warnLegacyBuffAutomationFlag(item, automationState.legacyWarning);
+  }
+  if (!automationState.enabled) {
+    return;
   }
 
   let searchName = action.item.name;
@@ -745,6 +1515,32 @@ export async function handleBuffAutomation(action) {
   const templateSize = Number(action.action?.measureTemplate?.size || 0);
   const isAreaOfEffect = !!areaString || (measureTemplateEnabled && templateSize > 5);
       
+  const configuredBuff = await resolveActionBuffAutomationBuff(automationState);
+  if (automationState.selectedBuffUuid) {
+    if (!configuredBuff) {
+      ui.notifications?.warn?.(localizeNonConsecutiveBuff("actionBuffAutomationSelectedMissing", {
+        item: item?.name ?? ""
+      }));
+      return;
+    }
+    await applySelectedBuffForAction({
+      action,
+      selectedBuff: configuredBuff,
+      isSelfTargeting,
+      isCommunal,
+      durationUnits,
+      durationValue,
+      communalIncrement,
+      communalTotalDuration,
+      communalDurationUnit,
+      communalPromptForManual,
+      isAreaOfEffect,
+      casterLevel,
+      buffSaveGate
+    });
+    return;
+  }
+      
   const matchingBuffs = await findMatchingBuffs(searchName);
   
   if (matchingBuffs.length > 0) {
@@ -846,14 +1642,9 @@ export async function handleBuffAutomation(action) {
     }
     
     if (selectedBuff) {
-      const knownBuffAutomation = await promptKnownBuffAutomationForAction(action);
-      if (knownBuffAutomation === null && action.shared?.reject !== true) {
-        action.shared.reject = true;
-        return;
-      }
-  
-      const targetContext = await gatherTargetsForApplication({
+      await applySelectedBuffForAction({
         action,
+        selectedBuff,
         isSelfTargeting,
         isCommunal,
         durationUnits,
@@ -863,47 +1654,9 @@ export async function handleBuffAutomation(action) {
         communalDurationUnit,
         communalPromptForManual,
         isAreaOfEffect,
+        casterLevel,
         buffSaveGate
       });
-      if (targetContext.rejected) {
-        notifyBuffTargetingRejection(action, targetContext.reason);
-        return;
-      }
-
-      applyMaskFocusPerTargetDurationAdjustments(action, targetContext, durationUnits);
-      applyNaniteBloodlineArcanaPerTargetDurationAdjustments(action, targetContext, durationUnits);
-
-      const { filteredTargets, perTargetDurations } = targetContext;
-      const manualResultOptions = manualSelectionResultOptions(filteredTargets);
-
-      if (perTargetDurations && perTargetDurations.length > 0) {
-        if (targetContext.manualSelection === true && buffSaveGate?.deferred) {
-          const targetDurations = new Map(perTargetDurations.map((entry) => [
-            targetAppliedKey(entry.target),
-            { units: entry.duration.units, value: String(entry.duration.value) }
-          ]));
-          await applyOrQueueBuffToTargets(action, selectedBuff, perTargetDurations.map((entry) => entry.target), null, casterLevel, {
-            [KNOWN_BUFF_AUTOMATION_OPTION]: knownBuffAutomation,
-            buffSaveGate,
-            manualSelection: true,
-            targetDurations,
-            ...manualResultOptions
-          });
-          return;
-        }
-        for (const entry of perTargetDurations) {
-          await applyOrQueueBuffToTargets(action, selectedBuff, [entry.target], {
-            units: entry.duration.units,
-            value: String(entry.duration.value)
-          }, casterLevel, { [KNOWN_BUFF_AUTOMATION_OPTION]: knownBuffAutomation, buffSaveGate, manualSelection: targetContext.manualSelection === true, ...manualResultOptions });
-        }
-        return;
-      } else {
-        await applyOrQueueBuffToTargets(action, selectedBuff, filteredTargets, {
-          units: durationUnits,
-          value: String(durationValue)
-        }, casterLevel, { [KNOWN_BUFF_AUTOMATION_OPTION]: knownBuffAutomation, buffSaveGate, manualSelection: targetContext.manualSelection === true, ...manualResultOptions });
-      }
     }
   }
 }
@@ -939,6 +1692,15 @@ function categorizeBuffMatches(spellName, buffs, action = null) {
   return result;
 }
 
+function isIntentionalPartialBuffMatch(buffName, normalizedName) {
+  const candidate = String(buffName ?? "").trim().toLowerCase();
+  if (!candidate || !normalizedName || candidate === normalizedName) return false;
+  if (!candidate.startsWith(normalizedName)) return false;
+
+  const suffix = candidate.slice(normalizedName.length).trimStart();
+  return suffix.startsWith("(") || suffix.startsWith(",");
+}
+
 export async function findMatchingBuffs(name) {
   const normalizedName = name.toLowerCase();
   let exactMatches = [];
@@ -960,7 +1722,7 @@ export async function findMatchingBuffs(name) {
 
       const exactEntries = index.filter(i => i.name.toLowerCase() === normalizedName);
       const partialEntries = index.filter(i =>
-        i.name.toLowerCase().includes(normalizedName) &&
+        isIntentionalPartialBuffMatch(i.name, normalizedName) &&
         !exactEntries.some(em => em._id === i._id)
       );
 
@@ -998,7 +1760,7 @@ export async function findMatchingBuffs(name) {
         document: item
       }));
       worldPartialMatches = worldBuffs.filter(item =>
-        item.name.toLowerCase().includes(normalizedName) &&
+        isIntentionalPartialBuffMatch(item.name, normalizedName) &&
         !worldExactMatches.some(em => em.id === item.id)
       ).map(item => ({
         name: item.name,
@@ -3270,7 +4032,9 @@ export async function applyBuffToTargets(buff, targets, duration, casterLevel, o
       {
         activate,
         silent,
-        [KNOWN_BUFF_AUTOMATION_OPTION]: options[KNOWN_BUFF_AUTOMATION_OPTION] ?? null
+        [KNOWN_BUFF_AUTOMATION_OPTION]: options[KNOWN_BUFF_AUTOMATION_OPTION] ?? null,
+        ...serializeAppliedBuffOverrideOptions(options),
+        ...serializeNonConsecutiveDurationOptions(options)
       }
     );
   }
@@ -3283,7 +4047,8 @@ export async function applyBuffToTargets(buff, targets, duration, casterLevel, o
 
   if (await shouldBlockAppliedBuffForLockout(null, buff, options)) return;
 
-  const normalizedDuration = normalizeDurationForBuff(duration);
+  const effectiveDuration = nonConsecutiveDurationForOptions(options, duration);
+  const normalizedDuration = normalizeDurationForBuff(effectiveDuration);
   const durationUpdate = {
     "system.duration.units": normalizedDuration.units,
     "system.duration.value": String(normalizedDuration.value ?? "")
@@ -3327,6 +4092,10 @@ export async function applyBuffToTargets(buff, targets, duration, casterLevel, o
         }
         
         const isActive = existingBuff.isActive;
+        if (isActive && activate && hasNonConsecutiveDurationOption(options)) {
+          continue;
+        }
+
         if (isActive && !activate) {
           await existingBuff.update({
             ...durationUpdate,
@@ -3348,6 +4117,7 @@ export async function applyBuffToTargets(buff, targets, duration, casterLevel, o
         await syncBuffEffectDuration(existingBuff, normalizedDuration);
         await configureKnownBuffAutomation(existingBuff, { ...options, casterLevel });
         await applyAppliedBuffOverrideToItem(existingBuff, options);
+        if (activate) await markNonConsecutiveBuffActive(existingBuff, options);
         
         if (!silent) ui.notifications.info(game.i18n.format('NAS.buffs.UpdatedExisting', { name: buffName, actor: actor.name }));
       } else {
@@ -3368,7 +4138,7 @@ export async function applyBuffToTargets(buff, targets, duration, casterLevel, o
           buffData.name = buffName;
         }
         
-        if (duration) {
+        if (effectiveDuration) {
           buffData.system = buffData.system || {};
           buffData.system.duration = buffData.system.duration || {};
           buffData.system.duration.units = normalizedDuration.units;
@@ -3395,6 +4165,7 @@ export async function applyBuffToTargets(buff, targets, duration, casterLevel, o
           await syncBuffEffectDuration(newBuff, normalizedDuration);
           await configureKnownBuffAutomation(newBuff, { ...options, casterLevel });
           await applyAppliedBuffOverrideToItem(newBuff, options);
+          await markNonConsecutiveBuffActive(newBuff, options);
         } else if (newItems && newItems.length > 0) {
           await configureKnownBuffAutomation(newItems[0], { ...options, casterLevel });
           await applyAppliedBuffOverrideToItem(newItems[0], options);

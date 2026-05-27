@@ -154,13 +154,36 @@ function normalizeTemporaryHpCapMode(value) {
   return ["none", "sourceMaxHp", "sourceNormalMaxHp", "targetHpPlusCon"].includes(mode) ? mode : "none";
 }
 
+function normalizeReactiveApplicationDuration(raw = {}) {
+  const duration = raw && typeof raw === "object" ? raw : {};
+  const timePeriods = globalThis.CONFIG?.PF1?.timePeriods ?? {};
+  const units = String(duration.units ?? "");
+  return {
+    enabled: duration.enabled === true || duration.value != null || duration.units != null || duration.end != null,
+    value: String(duration.value ?? ""),
+    units: !units || timePeriods[units] ? units : "",
+    end: String(duration.end ?? "")
+  };
+}
+
+function normalizeReactiveApplicationOptions(raw = {}, kind = "condition") {
+  const options = raw && typeof raw === "object" ? raw : {};
+  return {
+    duration: normalizeReactiveApplicationDuration(options.duration),
+    levelFormula: kind === "buff" ? String(options.levelFormula ?? options.level ?? "") : "",
+    refreshExisting: options.refreshExisting === true
+  };
+}
+
 function normalizeEffect(effect = {}) {
   const damageTypes = normalizeDamageTypes(effect);
   const temporaryHpDuration = effect?.temporaryHpDuration && typeof effect.temporaryHpDuration === "object"
     ? foundry.utils.deepClone(effect.temporaryHpDuration)
     : null;
+  const type = String(effect?.type ?? "");
+  const applicationKind = type.includes("Buff") ? "buff" : "condition";
   return {
-    type: String(effect?.type ?? ""),
+    type,
     mode: String(effect?.mode ?? "formula"),
     value: Number(effect?.value) || 0,
     formula: String(effect?.formula ?? ""),
@@ -173,6 +196,7 @@ function normalizeEffect(effect = {}) {
     temporaryHpStackingMode: normalizeTemporaryHpStackingMode(effect?.temporaryHpStackingMode),
     temporaryHpCompatibilityMode: normalizeTemporaryHpCompatibilityMode(effect?.temporaryHpCompatibilityMode),
     temporaryHpCapMode: normalizeTemporaryHpCapMode(effect?.temporaryHpCapMode),
+    application: normalizeReactiveApplicationOptions(effect?.application, applicationKind),
     message: effect?.message !== false
   };
 }
@@ -194,10 +218,15 @@ function normalizeSaveConfig(raw = {}) {
   const type = String(raw?.type ?? raw?.saveType ?? "").toLowerCase();
   const normalizeOutcome = (value) => {
     const effectKind = String(value?.effectKind ?? "");
+    if (!["applyBuff", "applyCondition"].includes(effectKind)) {
+      return { effectKind: "none", buffUuid: String(value?.buffUuid ?? ""), conditionId: String(value?.conditionId ?? "") };
+    }
+    const kind = effectKind === "applyBuff" ? "buff" : "condition";
     return {
-      effectKind: ["applyBuff", "applyCondition"].includes(effectKind) ? effectKind : "none",
+      effectKind,
       buffUuid: String(value?.buffUuid ?? ""),
-      conditionId: String(value?.conditionId ?? "")
+      conditionId: String(value?.conditionId ?? ""),
+      application: normalizeReactiveApplicationOptions(value?.application, kind)
     };
   };
   return {
@@ -410,6 +439,41 @@ function getOnStruckConfigs(targetActor) {
   return out;
 }
 
+function cloneOnStruckConfigForSnapshot(entry) {
+  return {
+    sourceItem: entry.sourceItem,
+    effects: foundry.utils.deepClone(entry.effects ?? []),
+    rules: foundry.utils.deepClone(entry.rules ?? []),
+    pool: foundry.utils.deepClone(entry.pool ?? {})
+  };
+}
+
+function onStruckConfigKey(entry) {
+  const item = entry?.sourceItem;
+  return String(item?.uuid ?? item?.id ?? "");
+}
+
+function mergeOnStruckConfigs(activeConfigs = [], snapshotConfigs = []) {
+  const merged = [];
+  const seen = new Set();
+  for (const entry of activeConfigs) {
+    const key = onStruckConfigKey(entry);
+    if (key) seen.add(key);
+    merged.push(entry);
+  }
+  for (const entry of snapshotConfigs) {
+    const key = onStruckConfigKey(entry);
+    if (key && seen.has(key)) continue;
+    if (key) seen.add(key);
+    merged.push(entry);
+  }
+  return merged;
+}
+
+export function snapshotOnStruckConfigsForTrigger(targetActor) {
+  return getOnStruckConfigs(targetActor).map(cloneOnStruckConfigForSnapshot);
+}
+
 function resolveActionType(options = {}) {
   return String(
     options?.action?.actionType
@@ -505,12 +569,14 @@ function creatureMatchesOnStruckRule(rule, sourceActor) {
   return true;
 }
 
-function buildRollData({ sourceActor, targetActor, finalDamage = 0, excessHealing = 0, finalHealing = 0 }) {
+function buildRollData({ sourceActor, targetActor, ownerItem = null, finalDamage = 0, excessHealing = 0, finalHealing = 0 }) {
   const sourceRollData = sourceActor?.getRollData?.() ?? {};
   const targetRollData = targetActor?.getRollData?.() ?? {};
+  const ownerItemRollData = ownerItem?.getRollData?.() ?? {};
   return {
     ...targetRollData,
     ...sourceRollData,
+    item: ownerItemRollData,
     nas: {
       finalDamage: Number(finalDamage) || 0,
       excessHealing: Number(excessHealing) || 0,
@@ -589,6 +655,46 @@ async function evaluateNumberFormula(formula, context, fallback = 0) {
   } catch (_err) {
     return fallback;
   }
+}
+
+function secondsPerDurationUnit(units) {
+  const unit = String(units ?? "");
+  if (unit === "turn" || unit === "round") return Number(CONFIG?.time?.roundTime) || 6;
+  if (unit === "minute") return 60;
+  if (unit === "hour") return 60 * 60;
+  if (unit === "day") return 24 * 60 * 60;
+  return null;
+}
+
+async function resolveReactiveApplication(effect, metadata = {}) {
+  const type = String(effect?.type ?? "");
+  const kind = type.includes("Buff") ? "buff" : "condition";
+  const raw = normalizeReactiveApplicationOptions(effect?.application, kind);
+  const out = { refreshExisting: raw.refreshExisting === true };
+  const rollData = metadata.rollData ?? {};
+
+  if (kind === "buff") {
+    const levelFormula = raw.levelFormula.trim();
+    if (levelFormula) out.level = await evaluateNumberFormula(levelFormula, { rollData }, 0);
+    const duration = raw.duration;
+    if (duration.enabled || duration.value.trim() || duration.units || duration.end.trim()) {
+      out.duration = {
+        enabled: duration.enabled,
+        value: duration.value,
+        units: duration.units,
+        end: duration.end
+      };
+    }
+    return out;
+  }
+
+  const duration = raw.duration;
+  if (duration.enabled && duration.value.trim() && duration.units) {
+    const count = await evaluateNumberFormula(duration.value, { rollData }, 0);
+    const secondsPerUnit = secondsPerDurationUnit(duration.units);
+    if (secondsPerUnit != null && count > 0) out.durationSeconds = Math.max(0, Math.floor(count * secondsPerUnit));
+  }
+  return out;
 }
 
 function buildDamageInstances(amount, effect) {
@@ -679,7 +785,7 @@ async function applyToActor(actor, effect, magnitude, metadata = {}) {
   if (!actor) return undefined;
   if (effect?.type === "applyConditionAttacker" || effect?.type === "applyConditionTarget") {
     if (!effect.conditionId) return;
-    await toggleReactiveCondition(actor, effect.conditionId, true);
+    await toggleReactiveCondition(actor, effect.conditionId, true, await resolveReactiveApplication(effect, metadata));
     return;
   }
   if (effect?.type === "removeConditionAttacker" || effect?.type === "removeConditionTarget") {
@@ -689,7 +795,7 @@ async function applyToActor(actor, effect, magnitude, metadata = {}) {
   }
   if (effect?.type === "applyBuffAttacker" || effect?.type === "applyBuffTarget") {
     if (!effect.buffUuid) return;
-    await toggleReactiveBuff(actor, effect.buffUuid, true);
+    await toggleReactiveBuff(actor, effect.buffUuid, true, await resolveReactiveApplication(effect, metadata));
     return;
   }
   if (effect?.type === "removeBuffAttacker" || effect?.type === "removeBuffTarget") {
@@ -748,12 +854,12 @@ async function applySaveOutcomeEffect(actor, outcomeEffect, metadata = {}) {
   if (kind === "applyBuff") {
     const buffUuid = String(outcomeEffect?.buffUuid ?? "").trim();
     if (!buffUuid) return undefined;
-    return applyToActor(actor, { type: "applyBuffAttacker", buffUuid, message: true }, 1, metadata);
+    return applyToActor(actor, { type: "applyBuffAttacker", buffUuid, application: outcomeEffect?.application, message: true }, 1, metadata);
   }
   if (kind === "applyCondition") {
     const conditionId = String(outcomeEffect?.conditionId ?? "").trim();
     if (!conditionId) return undefined;
-    return applyToActor(actor, { type: "applyConditionAttacker", conditionId, message: true }, 1, metadata);
+    return applyToActor(actor, { type: "applyConditionAttacker", conditionId, application: outcomeEffect?.application, message: true }, 1, metadata);
   }
   return undefined;
 }
@@ -883,7 +989,7 @@ async function applyOnStruckDamageRules({ sourceActor, targetActor, entry, final
   const rules = entry?.rules ?? [];
   if (!rules.length) return [];
   const lineHtmls = [];
-  const rollData = buildRollData({ sourceActor, targetActor, finalDamage });
+  const rollData = buildRollData({ sourceActor, targetActor, ownerItem: triggerMeta.ownerItem, finalDamage });
   const pool = entry.pool ?? {};
 
   for (const rule of rules) {
@@ -900,7 +1006,10 @@ async function applyOnStruckDamageRules({ sourceActor, targetActor, entry, final
       const outcomeEffect = save.effects?.[saveResult.outcome];
       await applySaveOutcomeEffect(sourceActor, outcomeEffect, {
         source: triggerMeta.sourceTag,
-        attackerUuid: sourceActor?.uuid ?? null
+        attackerUuid: sourceActor?.uuid ?? null,
+        sourceActor,
+        targetActor,
+        rollData
       });
       if (rule.message !== false) {
         const outcomeLine = buildSaveOutcomeEffectLine(outcomeEffect, sourceActor);
@@ -947,7 +1056,7 @@ async function applyEffects({ sourceActor, targetActor, effects, finalDamage, fi
   const { kind, ownerActor, otherActor, ownerItem, sourceTag } = triggerMeta;
   const ownerItemPlain = displayNameForOwnerItem(ownerItem, kind);
   const lineHtmls = [];
-  const rollData = buildRollData({ sourceActor, targetActor, finalDamage, finalHealing, excessHealing });
+  const rollData = buildRollData({ sourceActor, targetActor, ownerItem, finalDamage, finalHealing, excessHealing });
 
   for (const effect of effects) {
     const isToggleEffect = TOGGLE_EFFECT_TYPES.has(effect?.type);
@@ -962,6 +1071,7 @@ async function applyEffects({ sourceActor, targetActor, effects, finalDamage, fi
       ownerItemName: ownerItemPlain,
       sourceActor,
       targetActor,
+      rollData,
       targetPreHp: triggerMeta?.targetPreHp
     });
     const lineMagnitude = (effType === "healAttacker" || effType === "damageAttacker" || effType === "grantTemporaryHp") && Number.isFinite(actualApplied) ? actualApplied : magnitude;
@@ -1039,7 +1149,11 @@ export async function applyReactiveEffectsForHit({
 
   if (options?._nasReactiveHealing === true) return;
 
-  const onStruckConfigs = getOnStruckConfigs(targetActor);
+  const activeOnStruckConfigs = getOnStruckConfigs(targetActor);
+  const snapshotOnStruckConfigs = Array.isArray(options?._nasOnStruckPreTempHpConfigs)
+    ? options._nasOnStruckPreTempHpConfigs
+    : [];
+  const onStruckConfigs = mergeOnStruckConfigs(activeOnStruckConfigs, snapshotOnStruckConfigs);
   for (const entry of onStruckConfigs) {
     await applyEffects({
       sourceActor,

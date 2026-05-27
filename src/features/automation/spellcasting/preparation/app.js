@@ -44,8 +44,6 @@ import { getSpellbookAnimationMode, isSpellbookPreparationFullModeEnabled } from
 const TEMPLATE_PATH = `modules/${MODULE.ID}/src/templates/spellbook-preparation-form.html`;
 const SPELL_LEVEL_COUNT = 10;
 const SPELLS_PER_PAGE = 10;
-const VARIANT_PAGE_WEIGHT = 2;
-const INSCRIPTION_PAGE_WEIGHT = 3;
 
 function localize(key, fallback = key) {
   const fullKey = `NAS.spellbookPreparation.${key}`;
@@ -160,27 +158,6 @@ function getLevelBookmarkLabel(level) {
   return "?";
 }
 
-function getSpellPageWeight(spell) {
-  let weight = spell.isVariant ? VARIANT_PAGE_WEIGHT : 1;
-  if (spell.inscriptionOpen) weight += INSCRIPTION_PAGE_WEIGHT;
-  return Math.max(1, weight);
-}
-
-function groupConsecutiveKnownSpells(spells) {
-  const groups = [];
-
-  for (const spell of spells) {
-    const lastGroup = groups.at(-1);
-    if (lastGroup?.[0]?.knownSpellId && lastGroup[0].knownSpellId === spell.knownSpellId) {
-      lastGroup.push(spell);
-    } else {
-      groups.push([spell]);
-    }
-  }
-
-  return groups;
-}
-
 function addLevelPage(pages, level, spells) {
   pages.push({
     ...level,
@@ -201,35 +178,11 @@ function numberLevelPages(pages) {
 
 function buildLevelPages(level) {
   const pages = [];
-  let currentSpells = [];
-  let currentWeight = 0;
 
-  const flushPage = () => {
-    if (!currentSpells.length) return;
-    addLevelPage(pages, level, currentSpells);
-    currentSpells = [];
-    currentWeight = 0;
-  };
-
-  for (const group of groupConsecutiveKnownSpells(level.spells)) {
-    const groupWeight = group.reduce((total, spell) => total + getSpellPageWeight(spell), 0);
-
-    if (groupWeight <= SPELLS_PER_PAGE) {
-      if (currentSpells.length && currentWeight + groupWeight > SPELLS_PER_PAGE) flushPage();
-      currentSpells.push(...group);
-      currentWeight += groupWeight;
-      continue;
-    }
-
-    for (const spell of group) {
-      const spellWeight = getSpellPageWeight(spell);
-      if (currentSpells.length && currentWeight + spellWeight > SPELLS_PER_PAGE) flushPage();
-      currentSpells.push(spell);
-      currentWeight += spellWeight;
-    }
+  for (let index = 0; index < level.spells.length; index += SPELLS_PER_PAGE) {
+    addLevelPage(pages, level, level.spells.slice(index, index + SPELLS_PER_PAGE));
   }
 
-  flushPage();
   if (!pages.length) addLevelPage(pages, level, []);
 
   return numberLevelPages(pages);
@@ -270,10 +223,13 @@ function buildPreparedEntryState(actor, bookId, knownSpell, preparedEntry, mode,
   const slotUnavailable = isVariant && !missing && !atWill && slotAvailability.unavailable === true;
   const slotAvailabilityReasonKey = slotUnavailable ? getSlotAvailabilityReasonKey(slotAvailability) : "";
   const name = liveItem?.name || source?.name || knownSpell.name || localize("labels.unknownSpell", "Unknown spell");
+  const canConfigureMetamagic = !missing && !atWill;
+  const inscriptionOpen = canConfigureMetamagic && options.openEntryId === preparedEntry.id;
+  const shouldBuildMetamagicChoices = canConfigureMetamagic && inscriptionOpen;
   const preparedEntryForDisplay = isVariant
     ? { ...preparedEntry, metamagic: normalizedMetamagic, preparedSlotLevel }
     : preparedEntry;
-  const metamagicChoices = isVariant && !missing && !atWill
+  const metamagicChoices = shouldBuildMetamagicChoices
     ? getPreparedMetamagicChoices(actor, source, preparedEntryForDisplay).map((choice) => ({
       ...choice,
       disabledReason: choice.disabledReasonKey
@@ -288,7 +244,6 @@ function buildPreparedEntryState(actor, bookId, knownSpell, preparedEntry, mode,
     }))
     : [];
   const metamagicSummary = getMetamagicSummary(normalizedMetamagic);
-  const canConfigureMetamagic = isVariant && !missing && !atWill;
 
   return {
     id: preparedEntry.id,
@@ -303,7 +258,7 @@ function buildPreparedEntryState(actor, bookId, knownSpell, preparedEntry, mode,
     suffixMode: preparedEntry.suffixMode ?? "auto",
     isBase: !isVariant,
     isVariant,
-    canAddVariant: !isVariant && !missing && !atWill,
+    isMetamagicDraft: !isVariant,
     canEditSuffix: isVariant && !missing && !atWill,
     canRemoveVariant: isVariant,
     canConfigureMetamagic,
@@ -321,11 +276,14 @@ function buildPreparedEntryState(actor, bookId, knownSpell, preparedEntry, mode,
     originalLevelLabel: getSpellLevelLabel(originalSpellLevel),
     preparedSlotLevelLabel: getSpellLevelLabel(preparedSlotLevel),
     isSlotLevelModified: preparedSlotLevel !== originalSpellLevel,
-    metamagicChoices,
-    hasMetamagicChoices: metamagicChoices.length > 0,
+    metamagicChoices: shouldBuildMetamagicChoices ? metamagicChoices : [],
+    hasMetamagicChoices: shouldBuildMetamagicChoices && metamagicChoices.length > 0,
     metamagicSummary,
     hasMetamagic: metamagicSummary.length > 0,
-    inscriptionOpen: canConfigureMetamagic && options.openEntryId === preparedEntry.id,
+    inscriptionOpen,
+    inscriptionLabel: isVariant
+      ? (preparedEntry.suffix || localize("labels.metamagicCopyDefault", "Metamagic copy"))
+      : localize("labels.newMetamagicCopy", "New metamagic copy"),
     sort: Number(preparedEntry.sort ?? 0),
     searchText: `${name} ${preparedEntry.suffix ?? ""} ${metamagicSummary} ${getSpellLevelLabel(level)} ${missing ? localize("labels.missingSource", "Missing source") : ""}`.toLocaleLowerCase(),
     useCountInput: !missing && !atWill && mode !== "hybrid",
@@ -494,13 +452,6 @@ function warnSpellbookPreparation(message, data = {}) {
   console.warn(`[NAS SpellbookPreparation] ${message}`, data);
 }
 
-function errorSpellbookPreparation(message, error, data = {}) {
-  console.error(`[NAS SpellbookPreparation] ${message}`, {
-    ...data,
-    error
-  });
-}
-
 export class SpellbookPreparationApp extends FormApplication {
   static get defaultOptions() {
     return foundry.utils.mergeObject(super.defaultOptions, {
@@ -543,6 +494,9 @@ export class SpellbookPreparationApp extends FormApplication {
     this.bookId = normalizedBookId;
     this.spreadIndex = 0;
     this.inscriptionEntryId = null;
+    this._inscriptionOverlay = null;
+    this._onInscriptionOutsidePointerDown = null;
+    this._onInscriptionKeyDown = null;
     this._liveRefreshTimeout = null;
     this._onLiveItemCreated = (item, options) => this._onLiveItemDocumentChanged(item, options);
     this._onLiveItemUpdated = (item, changes, options) => this._onLiveItemDocumentChanged(item, options);
@@ -553,6 +507,7 @@ export class SpellbookPreparationApp extends FormApplication {
   }
 
   async close(options = {}) {
+    this._removeInscriptionOverlay();
     Hooks.off("createItem", this._onLiveItemCreated);
     Hooks.off("updateItem", this._onLiveItemUpdated);
     Hooks.off("deleteItem", this._onLiveItemDeleted);
@@ -609,9 +564,8 @@ export class SpellbookPreparationApp extends FormApplication {
         importCurrent: localize("actions.importCurrent", "Import current spellbook"),
         importMissing: localize("actions.importMissing", "Import missing spells"),
         importMissingSummary: formatLocalized("labels.importMissingSummary", { count: state.importableSpellCount }, `${state.importableSpellCount} current spells are not in the NAS spellbook.`),
-        addVariant: localize("actions.addVariant", "Add prepared variant"),
         autoSuffix: localize("actions.autoSuffix", "Auto-title"),
-        configureMetamagic: localize("actions.configureMetamagic", "Inscribe metamagic"),
+        configureMetamagic: localize("actions.configureMetamagic", "Inscribe metamagic copy"),
         decreaseCount: localize("labels.decreaseCount", "Decrease prepared count"),
         increaseCount: localize("labels.increaseCount", "Increase prepared count"),
         missingSource: localize("labels.missingSource", "Missing source"),
@@ -624,7 +578,7 @@ export class SpellbookPreparationApp extends FormApplication {
         prevPage: localize("tooltips.previousPage", "Previous spell levels"),
         reachSteps: localize("labels.reachSteps", "Reach steps"),
         removeKnown: localize("actions.removeKnown", "Remove from known spells"),
-        removeVariant: localize("actions.removeVariant", "Remove prepared variant"),
+        removeVariant: localize("actions.removeVariant", "Remove metamagic copy"),
         search: localize("labels.search", "Search"),
         nextPage: localize("tooltips.nextPage", "Next spell levels"),
         selected: localize("labels.selected", "Prepared"),
@@ -639,8 +593,10 @@ export class SpellbookPreparationApp extends FormApplication {
         slotUnavailableLowAbility: localize("labels.slotUnavailableLowAbility", "Unavailable: low casting ability score"),
         slotUnknown: localize("labels.slotUnknown", "Slot availability unknown"),
         unavailableCap: localize("labels.unavailableCap", "Unavailable"),
+        metamagicCopyDefault: localize("labels.metamagicCopyDefault", "Metamagic copy"),
+        newMetamagicCopy: localize("labels.newMetamagicCopy", "New metamagic copy"),
         variantSource: localize("labels.variantSource", "from"),
-        variantSuffix: localize("labels.variantSuffix", "Variant suffix"),
+        variantSuffix: localize("labels.variantSuffix", "Copy title"),
         domainSlots: localize("labels.domainSlots", "Domain"),
         overLimit: localize("labels.overLimit", "Over limit")
       }
@@ -668,12 +624,6 @@ export class SpellbookPreparationApp extends FormApplication {
       button.addEventListener("click", (event) => {
         event.preventDefault();
         void this._onRemoveKnownSpell(event);
-      });
-    }
-    for (const button of root.querySelectorAll(".nas-prep-add-variant")) {
-      button.addEventListener("click", (event) => {
-        event.preventDefault();
-        void this._onAddPreparedVariant(event);
       });
     }
     for (const button of root.querySelectorAll(".nas-prep-remove-variant")) {
@@ -736,8 +686,172 @@ export class SpellbookPreparationApp extends FormApplication {
       });
     }
 
+    this._removeInscriptionOverlay();
     this._syncVisibleSpread(root);
+    this._positionInscriptionOverlay(root);
     this._refreshValidation(root);
+  }
+
+  _positionInscriptionOverlay(root) {
+    const overlay = root.querySelector(".nas-prep-inscription-row");
+    if (!overlay) return;
+
+    const sourcePage = overlay.closest(".nas-prep-page");
+    const sourceSpread = overlay.closest(".nas-prep-spread");
+    const button = root.querySelector(".nas-prep-configure-metamagic-active");
+    if (!sourcePage || !button) return;
+
+    const side = sourcePage?.classList.contains("nas-prep-page-right") ? "right" : "left";
+    overlay.classList.add("nas-prep-inscription-overlay", `nas-prep-inscription-overlay-${side}`);
+    overlay.dataset.spreadIndex = sourceSpread?.dataset?.spreadIndex ?? "";
+    root.ownerDocument.body.appendChild(overlay);
+    this._inscriptionOverlay = overlay;
+
+    overlay.style.top = "-9999px";
+    overlay.style.left = "-9999px";
+    overlay.style.right = "auto";
+    overlay.style.bottom = "auto";
+    overlay.style.visibility = "hidden";
+
+    const pageRect = sourcePage.getBoundingClientRect();
+    const buttonRect = button.getBoundingClientRect();
+    const viewportWidth = root.ownerDocument.defaultView?.innerWidth ?? globalThis.innerWidth ?? 0;
+    const viewportHeight = root.ownerDocument.defaultView?.innerHeight ?? globalThis.innerHeight ?? 0;
+    const viewportPadding = 8;
+    const pageInset = 8;
+    const maxPopoutWidth = Math.max(160, viewportWidth - (viewportPadding * 2));
+    const popoutWidth = this._getInscriptionOverlayWidth(overlay, maxPopoutWidth);
+    overlay.style.width = `${Math.round(popoutWidth)}px`;
+    overlay.style.maxHeight = `${Math.max(160, Math.min(320, viewportHeight - (viewportPadding * 2)))}px`;
+
+    const overlayRect = overlay.getBoundingClientRect();
+    const overlayHeight = overlayRect.height;
+    const leftAnchor = side === "right"
+      ? pageRect.right - popoutWidth - pageInset
+      : pageRect.left + pageInset;
+    const left = Math.max(
+      viewportPadding,
+      Math.min(leftAnchor, viewportWidth - popoutWidth - viewportPadding)
+    );
+    const belowTop = buttonRect.bottom + 6;
+    const aboveTop = buttonRect.top - overlayHeight - 6;
+    const desiredTop = belowTop + overlayHeight <= viewportHeight - viewportPadding ? belowTop : aboveTop;
+    const maxTop = Math.max(viewportPadding, viewportHeight - overlayHeight - viewportPadding);
+    const top = Math.max(viewportPadding, Math.min(desiredTop, maxTop));
+    overlay.style.left = `${Math.round(left)}px`;
+    overlay.style.top = `${Math.round(top)}px`;
+    overlay.style.visibility = "";
+
+    this._attachInscriptionOverlayDismissHandlers(root);
+    this._syncInscriptionOverlayVisibility(root);
+  }
+
+  _getInscriptionOverlayWidth(overlay, maxPopoutWidth) {
+    const minPopoutWidth = 260;
+    const grid = overlay.querySelector(".nas-prep-metamagic-seals");
+    const inscription = overlay.querySelector(".nas-prep-inscription");
+    const header = overlay.querySelector(".nas-prep-inscription-header");
+    const view = overlay.ownerDocument?.defaultView ?? globalThis;
+    const parsePixels = (value) => {
+      const number = Number.parseFloat(value);
+      return Number.isFinite(number) ? number : 0;
+    };
+    const getHorizontalBox = (element) => {
+      const style = view.getComputedStyle?.(element);
+      if (!style) return 0;
+      return parsePixels(style.paddingLeft)
+        + parsePixels(style.paddingRight)
+        + parsePixels(style.borderLeftWidth)
+        + parsePixels(style.borderRightWidth);
+    };
+    const getColumnGap = (element) => {
+      const style = view.getComputedStyle?.(element);
+      if (!style) return 0;
+      return parsePixels(style.columnGap) || parsePixels(style.gap);
+    };
+    const measureSealWidth = (seal) => {
+      const style = view.getComputedStyle?.(seal);
+      const gap = style ? (parsePixels(style.columnGap) || parsePixels(style.gap)) : 0;
+      const childWidths = Array.from(seal.children ?? [])
+        .map((child) => Math.ceil(Math.max(child.scrollWidth ?? 0, child.getBoundingClientRect?.().width ?? 0)))
+        .filter((width) => width > 0);
+      const contentWidth = childWidths.reduce((total, width) => total + width, 0)
+        + Math.max(0, childWidths.length - 1) * gap;
+      return Math.ceil(Math.max(seal.scrollWidth ?? 0, contentWidth) + getHorizontalBox(seal) + 6);
+    };
+
+    const sealWidths = Array.from(overlay.querySelectorAll(".nas-prep-metamagic-seal, .nas-prep-metamagic-seal-shell"))
+      .map((seal) => measureSealWidth(seal));
+    const widestSeal = Math.max(96, ...sealWidths);
+    const gridGap = grid ? getColumnGap(grid) : 6;
+    const chromeWidth = inscription ? getHorizontalBox(inscription) : 18;
+    const headerWidth = header ? Math.ceil((header.scrollWidth ?? 0) + chromeWidth) : 0;
+    const maxWidth = Math.max(160, maxPopoutWidth);
+
+    for (const columnCount of [3, 2, 1]) {
+      const desiredWidth = Math.max(
+        minPopoutWidth,
+        headerWidth,
+        chromeWidth + (widestSeal * columnCount) + (gridGap * Math.max(0, columnCount - 1))
+      );
+      if (desiredWidth <= maxWidth || columnCount === 1) {
+        overlay.style.setProperty("--nas-prep-inscription-columns", `${columnCount}`);
+        overlay.style.setProperty("--nas-prep-inscription-seal-min", `${Math.ceil(widestSeal)}px`);
+        return Math.min(desiredWidth, maxWidth);
+      }
+    }
+
+    overlay.style.setProperty("--nas-prep-inscription-columns", "1");
+    overlay.style.setProperty("--nas-prep-inscription-seal-min", `${Math.ceil(widestSeal)}px`);
+    return Math.min(minPopoutWidth, maxWidth);
+  }
+
+  _syncInscriptionOverlayVisibility(root) {
+    const overlay = this._inscriptionOverlay;
+    if (!overlay) return;
+    const shell = root.querySelector(".nas-prep-book-shell");
+    const searching = shell?.classList.contains("nas-prep-searching") === true;
+    overlay.classList.toggle(
+      "nas-prep-inscription-overlay-hidden",
+      searching || Number(overlay.dataset.spreadIndex) !== this.spreadIndex
+    );
+  }
+
+  _attachInscriptionOverlayDismissHandlers(root) {
+    this._detachInscriptionOverlayDismissHandlers();
+    const doc = root.ownerDocument;
+    this._onInscriptionOutsidePointerDown = (event) => {
+      const target = event.target;
+      if (this._inscriptionOverlay?.contains(target)) return;
+      if (target?.closest?.(".nas-prep-configure-metamagic")) return;
+      this.inscriptionEntryId = null;
+      void this.render(false);
+    };
+    this._onInscriptionKeyDown = (event) => {
+      if (event.key !== "Escape") return;
+      this.inscriptionEntryId = null;
+      void this.render(false);
+    };
+    doc.addEventListener("pointerdown", this._onInscriptionOutsidePointerDown);
+    doc.addEventListener("keydown", this._onInscriptionKeyDown);
+  }
+
+  _detachInscriptionOverlayDismissHandlers() {
+    const doc = globalThis.document;
+    if (this._onInscriptionOutsidePointerDown) {
+      doc?.removeEventListener?.("pointerdown", this._onInscriptionOutsidePointerDown);
+      this._onInscriptionOutsidePointerDown = null;
+    }
+    if (this._onInscriptionKeyDown) {
+      doc?.removeEventListener?.("keydown", this._onInscriptionKeyDown);
+      this._onInscriptionKeyDown = null;
+    }
+  }
+
+  _removeInscriptionOverlay() {
+    this._detachInscriptionOverlayDismissHandlers();
+    this._inscriptionOverlay?.remove?.();
+    this._inscriptionOverlay = null;
   }
 
   _canModifySpellbook() {
@@ -812,42 +926,6 @@ export class SpellbookPreparationApp extends FormApplication {
     }
   }
 
-  async _onAddPreparedVariant(event) {
-    if (!this._canModifySpellbook()) return;
-
-    const knownSpellId = event.currentTarget?.dataset?.knownSpellId;
-    const knownSpells = getKnownSpells(this.actor, this.bookId);
-
-    const knownSpell = knownSpells
-      .find((entry) => normalizeId(entry.id) === normalizeId(knownSpellId));
-    if (!knownSpell) {
-      warnSpellbookPreparation("Add variant could not find known spell.", {
-        actorId: this.actor?.id,
-        bookId: this.bookId,
-        knownSpellId,
-        knownSpellIds: knownSpells.map((entry) => entry.id)
-      });
-      return;
-    }
-
-    try {
-      const entry = await addPreparedSpellVariant(this.actor, this.bookId, knownSpell, {
-        suffix: localize("labels.variantDefault", "Variant")
-      });
-
-      if (entry?.id) this.inscriptionEntryId = entry.id;
-      await this.render(false);
-    } catch (error) {
-      errorSpellbookPreparation("Add variant failed.", error, {
-        actorId: this.actor?.id,
-        bookId: this.bookId,
-        knownSpellId,
-        knownSpellName: knownSpell.name
-      });
-      ui.notifications.error("NAS SpellbookPreparation: failed to add prepared variant. Check the console for details.");
-    }
-  }
-
   async _onRemovePreparedVariant(event) {
     if (!this._canModifySpellbook()) return;
 
@@ -870,10 +948,14 @@ export class SpellbookPreparationApp extends FormApplication {
     for (const knownSpell of getKnownSpells(this.actor, this.bookId)) {
       const preparedEntry = getPreparedEntriesForKnownSpell(this.actor, this.bookId, knownSpell)
         .find((entry) => entry.id === normalizedEntryId);
-      if (!preparedEntry || preparedEntry.variant !== "custom") continue;
+      if (!preparedEntry) continue;
 
-      const sourceItem = getActorItem(this.actor, knownSpell.sourceItemId) ?? knownSpell.itemData ?? knownSpell;
-      return { knownSpell, preparedEntry, sourceItem };
+      const liveSourceItem = getActorItem(this.actor, knownSpell.sourceItemId);
+      const sourceItem = liveSourceItem ?? knownSpell.itemData ?? knownSpell;
+      if (preparedEntry.variant === "custom") return { knownSpell, preparedEntry, sourceItem, isDraft: false };
+      if (!liveSourceItem) return null;
+      if (sourceItem?.system?.atWill === true) return null;
+      return { knownSpell, preparedEntry, sourceItem, isDraft: true };
     }
 
     return null;
@@ -896,7 +978,7 @@ export class SpellbookPreparationApp extends FormApplication {
     if (!context || !key) return;
 
     const update = togglePreparedEntryMetamagic(this.actor, context.sourceItem, context.preparedEntry, key, {
-      fallbackSuffix: localize("labels.variantDefault", "Variant")
+      fallbackSuffix: localize("labels.metamagicCopyDefault", "Metamagic copy")
     });
     if (!update) {
       warnSpellbookPreparation("Toggle metamagic seal produced no update.", {
@@ -907,6 +989,32 @@ export class SpellbookPreparationApp extends FormApplication {
         preparedEntry: context.preparedEntry
       });
       ui.notifications.warn(localize("warnings.metamagicUnavailable", "This metamagic inscription is not available for this spell."));
+      return;
+    }
+
+    if (context.isDraft) {
+      const entry = await addPreparedSpellVariant(this.actor, this.bookId, context.knownSpell, {
+        suffix: localize("labels.metamagicCopyDefault", "Metamagic copy")
+      });
+      const updated = entry?.id
+        ? await updatePreparedSpellVariant(this.actor, this.bookId, entry.id, update)
+        : null;
+      if (!updated) {
+        if (entry?.id) await removePreparedSpellVariant(this.actor, this.bookId, entry.id);
+        ui.notifications.error("NAS SpellbookPreparation: failed to create metamagic copy. Check the console for details.");
+        return;
+      }
+      this.inscriptionEntryId = updated.id;
+      await this.render(false);
+      return;
+    }
+
+    if (Array.isArray(update.metamagic) && update.metamagic.length === 0) {
+      await deletePreparedSpellItemForEntry(this.actor, this.bookId, entryId);
+      await removePreparedSpellVariant(this.actor, this.bookId, entryId);
+      this.inscriptionEntryId = null;
+      if (this.actor.sheet?.rendered) this.actor.sheet.render(false);
+      await this.render(false);
       return;
     }
 
@@ -923,9 +1031,10 @@ export class SpellbookPreparationApp extends FormApplication {
     const key = input?.dataset?.metamagicKey;
     const context = this._getPreparedEntryContext(entryId);
     if (!context || !key) return;
+    if (context.isDraft) return;
 
     const update = updatePreparedEntryMetamagicOption(this.actor, context.sourceItem, context.preparedEntry, key, input.value, {
-      fallbackSuffix: localize("labels.variantDefault", "Variant")
+      fallbackSuffix: localize("labels.metamagicCopyDefault", "Metamagic copy")
     });
     if (!update) {
       warnSpellbookPreparation("Metamagic option change produced no update.", {
@@ -951,9 +1060,10 @@ export class SpellbookPreparationApp extends FormApplication {
     const entryId = event.currentTarget?.dataset?.entryId;
     const context = this._getPreparedEntryContext(entryId);
     if (!context) return;
+    if (context.isDraft) return;
 
     await updatePreparedSpellVariant(this.actor, this.bookId, entryId, buildAutoSuffixUpdate(context.preparedEntry, context.sourceItem, {
-      fallbackSuffix: localize("labels.variantDefault", "Variant")
+      fallbackSuffix: localize("labels.metamagicCopyDefault", "Metamagic copy")
     }));
     this.inscriptionEntryId = entryId;
     await this.render(false);
@@ -1053,6 +1163,7 @@ export class SpellbookPreparationApp extends FormApplication {
       spread.classList.toggle("nas-prep-spread-active", isActive);
     }
 
+    this._syncInscriptionOverlayVisibility(root);
     this._updatePageControls(root);
     this._updateBookmarks(root);
   }

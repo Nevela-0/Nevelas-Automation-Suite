@@ -7,14 +7,13 @@
       "title": "Prepare {book}",
       "actions": {
         "apply": "Apply",
-        "addVariant": "Add prepared variant",
         "autoSuffix": "Auto-title",
-        "configureMetamagic": "Inscribe metamagic",
+        "configureMetamagic": "Inscribe metamagic copy",
         "importCurrent": "Import current spellbook",
         "importMissing": "Import missing spells",
         "prepare": "Prepare",
         "removeKnown": "Remove from known spells",
-        "removeVariant": "Remove prepared variant",
+        "removeVariant": "Remove metamagic copy",
         "startEmpty": "Start empty"
       },
       "labels": {
@@ -57,10 +56,11 @@
           "slotUnknown": "Slot availability unknown",
           "unavailableCap": "Unavailable",
           "unknownCap": "?",
+        "metamagicCopyDefault": "Metamagic copy",
+        "newMetamagicCopy": "New metamagic copy",
         "unknownSpell": "Unknown spell",
-        "variantDefault": "Variant",
         "variantSource": "from",
-        "variantSuffix": "Variant suffix"
+        "variantSuffix": "Copy title"
       },
       "tooltips": {
         "nextPage": "Next spell levels",
@@ -68,7 +68,7 @@
         "preparePending": "Prepare this spellbook for the new day",
         "preparedSlotRelocated": "Prepared as {prepared}; original spell level {original}",
         "previousPage": "Previous spell levels",
-        "untrackedKnownSpell": "This spell is not in the NAS known spellbook yet. Use Prepare to import it before managing preparation or variants."
+        "untrackedKnownSpell": "This spell is not in the NAS known spellbook yet. Use Prepare to import it before managing preparation or metamagic copies."
       },
       "warnings": {
         "ineligible": "This spellbook cannot be prepared.",
@@ -1115,6 +1115,19 @@
       "TargetCapHint": "Max targets allowed: {cap}",
       "TargetCapHintRemaining": "Max targets: {cap} | Remaining: {remaining}",
       "TargetCapExceeded": "You can only select {cap} target(s) for this spell.",
+      "nonConsecutiveDurationNonConsecutive": "Non-consecutive",
+      "nonConsecutiveDurationTooltip": "When checked, this action spends its duration across separate activations instead of one consecutive duration.",
+      "nonConsecutiveDurationUnsupported": "Non-consecutive tracking requires a finite action duration.",
+      "nonConsecutiveDurationExhausted": "{item}: {action} has no remaining non-consecutive duration.",
+      "actionBuffAutomationEnabled": "Buff",
+      "actionBuffAutomationTooltip": "Let this action use NAS automatic buff automation.",
+      "actionBuffAutomationBuff": "Buff",
+      "actionBuffAutomationLookup": "Automatic lookup",
+      "actionBuffAutomationLookupHint": "Leave empty to use the item name for automatic lookup.",
+      "actionBuffAutomationChooseBuff": "Choose buff",
+      "actionBuffAutomationSelectedMissing": "{item}'s configured automatic buff could not be found.",
+      "legacyBuffBooleanDeprecated": "{item} uses the legacy buff boolean flag. Configure automatic buff application on the action sheet instead; the boolean flag will be removed in a future version.",
+      "legacyNoBuffBooleanDeprecated": "{item} uses the legacy nobuff boolean flag. Disable automatic buff application on the action sheet instead; the boolean flag will be removed in a future version.",
       "TotalAvailableDuration": "Total available duration: <b>{total} {unit}</b>",
       "UnassignedDuration": "Unassigned duration: <b><span id=\"unassigned\">{remaining}</span> {unit}</b>",
       "UpdatedExisting": "Updated existing {name} on {actor}",
@@ -1407,6 +1420,13 @@
       "buffChoice": "Choose buff",
       "conditionToToggle": "Condition",
       "conditionChoice": "Choose condition",
+      "applicationOptions": "Application options",
+      "applicationBuffLevel": "Buff level",
+      "applicationDuration": "Set duration",
+      "applicationDurationValue": "Duration formula",
+      "applicationDurationUnits": "Duration units",
+      "applicationDurationEnd": "End timing",
+      "applicationRefreshExisting": "Refresh if already active",
       "worldLabel": "World",
       "postMessage": "Post chat message",
       "meleeOnly": "Melee attacks only",

@@ -396,7 +396,7 @@ export function buildMetamagicOptionsFromSelections(selections = []) {
   return options;
 }
 
-export function buildMetamagicAutoSuffix(selections = [], fallback = "Variant") {
+export function buildMetamagicAutoSuffix(selections = [], fallback = "Metamagic copy") {
   const suffix = (Array.isArray(selections) ? selections : [])
     .map((selection) => normalizeId(selection?.prefix || selection?.name))
     .filter(Boolean)
@@ -538,7 +538,7 @@ export function getMetamagicSummary(selections = []) {
     .join(", ");
 }
 
-export function togglePreparedEntryMetamagic(actor, sourceItem, preparedEntry, key, { fallbackSuffix = "Variant" } = {}) {
+export function togglePreparedEntryMetamagic(actor, sourceItem, preparedEntry, key, { fallbackSuffix = "Metamagic copy" } = {}) {
   const definition = getMetamagicDefinitionForKey(key);
   if (!definition) return null;
 
@@ -570,7 +570,7 @@ export function togglePreparedEntryMetamagic(actor, sourceItem, preparedEntry, k
   return update;
 }
 
-export function updatePreparedEntryMetamagicOption(actor, sourceItem, preparedEntry, key, optionValue, { fallbackSuffix = "Variant" } = {}) {
+export function updatePreparedEntryMetamagicOption(actor, sourceItem, preparedEntry, key, optionValue, { fallbackSuffix = "Metamagic copy" } = {}) {
   const definition = getMetamagicDefinitionForKey(key);
   if (!definition) return null;
 
@@ -605,7 +605,7 @@ export function updatePreparedEntryMetamagicOption(actor, sourceItem, preparedEn
   return buildPreparedMetamagicUpdate(preparedEntry, originalLevel, normalizedSelections, fallbackSuffix);
 }
 
-export function buildAutoSuffixUpdate(preparedEntry, sourceItem, { fallbackSuffix = "Variant" } = {}) {
+export function buildAutoSuffixUpdate(preparedEntry, sourceItem, { fallbackSuffix = "Metamagic copy" } = {}) {
   const originalLevel = getSpellLevel({ level: preparedEntry?.originalSpellLevel }, getSpellLevel(sourceItem, 0));
   const selections = normalizeMetamagicSelections(preparedEntry?.metamagic, { originalLevel, sourceItem });
   return {

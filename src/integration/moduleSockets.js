@@ -213,13 +213,94 @@ async function resolveBuffDocumentByUuid(buffUuid) {
     }
 }
 
-async function setReactiveBuffState(actorUuid, buffUuid, enabled) {
+function normalizeReactiveApplicationOptions(options = {}) {
+    const raw = options && typeof options === "object" ? options : {};
+    const duration = raw.duration && typeof raw.duration === "object" ? raw.duration : {};
+    const out = {
+        refreshExisting: raw.refreshExisting === true
+    };
+    if (Object.prototype.hasOwnProperty.call(raw, "level") && Number.isFinite(Number(raw.level))) {
+        out.level = Math.max(0, Math.floor(Number(raw.level)));
+    }
+    if (duration.enabled === true || duration.value != null || duration.units != null || duration.end != null) {
+        out.duration = {
+            enabled: duration.enabled === true,
+            value: String(duration.value ?? ""),
+            units: String(duration.units ?? ""),
+            end: String(duration.end ?? "")
+        };
+    }
+    if (Object.prototype.hasOwnProperty.call(raw, "durationSeconds") && Number.isFinite(Number(raw.durationSeconds))) {
+        out.durationSeconds = Math.max(0, Math.floor(Number(raw.durationSeconds)));
+    }
+    return out;
+}
+
+function reactiveBuffUpdates(application = {}) {
+    const options = normalizeReactiveApplicationOptions(application);
+    const updates = {};
+    if (Object.prototype.hasOwnProperty.call(options, "level")) updates["system.level"] = options.level;
+    const duration = options.duration;
+    if (duration) {
+        if (duration.value.trim() || duration.units || duration.end) {
+            updates["system.duration.value"] = duration.value;
+            updates["system.duration.units"] = duration.units;
+            updates["system.duration.end"] = duration.end;
+        }
+    }
+    return updates;
+}
+
+function applyBuffUpdatesToData(buffData, updates = {}) {
+    for (const [path, value] of Object.entries(updates)) {
+        foundry.utils.setProperty(buffData, path, value);
+    }
+}
+
+function findConditionEffect(actor, conditionId) {
+    const id = String(conditionId ?? "");
+    return actor?.effects?.find?.((effect) => effect?.active && effect?.statuses?.has?.(id)) ?? null;
+}
+
+function reactiveConditionUpdates(application = {}) {
+    const options = normalizeReactiveApplicationOptions(application);
+    if (!Number.isFinite(Number(options.durationSeconds)) || Number(options.durationSeconds) <= 0) return {};
+    return { "duration.seconds": Math.max(0, Math.floor(Number(options.durationSeconds))) };
+}
+
+async function setReactiveConditionState(actor, conditionId, enabled, application = {}) {
+    if (!actor || !conditionId) return false;
+    const id = String(conditionId);
+    if (enabled !== true) {
+        await actor.setCondition?.(id, false);
+        return true;
+    }
+
+    const options = normalizeReactiveApplicationOptions(application);
+    const existing = findConditionEffect(actor, id);
+    if (existing) {
+        if (!options.refreshExisting) return true;
+        const updates = reactiveConditionUpdates(options);
+        if (Object.keys(updates).length) await existing.update(updates);
+        return true;
+    }
+
+    const updates = reactiveConditionUpdates(options);
+    await actor.setCondition?.(id, Object.keys(updates).length ? updates : true);
+    return true;
+}
+
+async function setReactiveBuffState(actorUuid, buffUuid, enabled, application = {}) {
     const actor = await resolveActorByUuid(actorUuid);
     if (!actor) return false;
 
+    const options = normalizeReactiveApplicationOptions(application);
     const existingBuff = findActorBuffBySource(actor, buffUuid);
     if (existingBuff) {
-        await existingBuff.update({ "system.active": enabled === true });
+        if (enabled === true && existingBuff.system?.active === true && !options.refreshExisting) return true;
+        const updates = { "system.active": enabled === true };
+        if (enabled === true) Object.assign(updates, reactiveBuffUpdates(options));
+        await existingBuff.update(updates);
         return true;
     }
 
@@ -242,6 +323,7 @@ async function setReactiveBuffState(actorUuid, buffUuid, enabled) {
     buffData.flags[MODULE.ID].sourceId = buffUuid;
     buffData.system = buffData.system || {};
     buffData.system.active = true;
+    applyBuffUpdatesToData(buffData, reactiveBuffUpdates(options));
 
     await actor.createEmbeddedDocuments("Item", [buffData]);
     return true;
@@ -261,26 +343,26 @@ export async function applyReactiveDamageToActor(actor, value, options = {}) {
     return applyPlayerDamageWithAutomation(actor, amount, options);
 }
 
-export async function toggleReactiveCondition(actor, conditionId, enabled) {
+export async function toggleReactiveCondition(actor, conditionId, enabled, application = {}) {
     if (!actor || !conditionId) return;
     const canModify = game.user?.isGM || actor?.isOwner;
     if (!canModify) {
         if (!socket) return;
-        await socket.executeAsGM("toggleReactiveConditionSocket", actor.uuid, String(conditionId), enabled === true);
+        await socket.executeAsGM("toggleReactiveConditionSocket", actor.uuid, String(conditionId), enabled === true, application ?? {});
         return;
     }
-    await actor.setCondition?.(String(conditionId), enabled === true);
+    await setReactiveConditionState(actor, String(conditionId), enabled === true, application ?? {});
 }
 
-export async function toggleReactiveBuff(actor, buffUuid, enabled) {
+export async function toggleReactiveBuff(actor, buffUuid, enabled, application = {}) {
     if (!actor || !buffUuid) return;
     const canModify = game.user?.isGM || actor?.isOwner;
     if (!canModify) {
         if (!socket) return;
-        await socket.executeAsGM("toggleReactiveBuffSocket", actor.uuid, String(buffUuid), enabled === true);
+        await socket.executeAsGM("toggleReactiveBuffSocket", actor.uuid, String(buffUuid), enabled === true, application ?? {});
         return;
     }
-    await setReactiveBuffState(actor.uuid, String(buffUuid), enabled === true);
+    await setReactiveBuffState(actor.uuid, String(buffUuid), enabled === true, application ?? {});
 }
 
 async function rollMassiveDamageSave(actorId, damageAmount, threshold) {
@@ -313,12 +395,12 @@ async function rollMassiveDamageSave(actorId, damageAmount, threshold) {
         ? formatSockets("chat.fortitudeSuccess", { name: actor.name, total })
         : formatSockets("chat.fortitudeFailure", { name: actor.name, total });
     
-        ChatMessage.create({
-            ...chatMessageStyle("OTHER"),
-            user: game.user.id,
-            speaker: ChatMessage.getSpeaker({actor}),
-            content: content
-        });
+    ChatMessage.create({
+        ...chatMessageStyle("OTHER"),
+        user: game.user.id,
+        speaker: ChatMessage.getSpeaker({actor}),
+        content: content
+    });
     
     return { 
         name: actor.name, 
@@ -882,15 +964,14 @@ async function applyReactiveDamageToActorSocket(actorUuid, value, options = {}) 
     return true;
 }
 
-async function toggleReactiveConditionSocket(actorUuid, conditionId, enabled) {
+async function toggleReactiveConditionSocket(actorUuid, conditionId, enabled, application = {}) {
     const actor = await resolveActorByUuid(actorUuid);
     if (!actor || !conditionId) return false;
-    await actor.setCondition?.(String(conditionId), enabled === true);
-    return true;
+    return setReactiveConditionState(actor, String(conditionId), enabled === true, application ?? {});
 }
 
-async function toggleReactiveBuffSocket(actorUuid, buffUuid, enabled) {
-    return setReactiveBuffState(actorUuid, buffUuid, enabled === true);
+async function toggleReactiveBuffSocket(actorUuid, buffUuid, enabled, application = {}) {
+    return setReactiveBuffState(actorUuid, buffUuid, enabled === true, application ?? {});
 }
 
 async function grantNasTemporaryHpSocket(actorUuid, data = {}) {

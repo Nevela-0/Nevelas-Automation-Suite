@@ -12,6 +12,13 @@ import {
   normalizeAbsorptionPresetId
 } from "../buffs/damageAbsorptionPresets.js";
 import { normalizeAppliedBuffOverrides } from "../buffs/appliedBuffOverrides.js";
+import {
+  actionCanUseNonConsecutiveDuration,
+  getActionBuffAutomationState,
+  getActionNonConsecutiveDurationState,
+  setActionBuffAutomationState,
+  setActionNonConsecutiveDurationState
+} from "../buffs/buffs.js";
 
 const REACTIVE_FLAG_KEY = "itemReactiveEffects";
 
@@ -52,6 +59,7 @@ function disableReactiveSheetControlsForLockedCompendium(item, root) {
     ".nas-granted-defenses",
     ".nas-temporary-hp",
     ".nas-buff-save-gate",
+    ".nas-action-buff-automation",
     ".nas-applied-buff-overrides"
   ].join(", ");
   for (const section of root.querySelectorAll(selector)) {
@@ -286,6 +294,68 @@ function normalizeLifestealTemporaryHpDuration(raw = {}) {
   };
 }
 
+function normalizeReactiveApplicationDuration(raw = {}) {
+  const duration = raw && typeof raw === "object" ? raw : {};
+  const timePeriods = globalThis.CONFIG?.PF1?.timePeriods ?? {};
+  const units = String(duration.units ?? "");
+  return {
+    enabled: duration.enabled === true || duration.value != null || duration.units != null || duration.end != null,
+    value: String(duration.value ?? ""),
+    units: !units || timePeriods[units] ? units : "",
+    end: String(duration.end ?? "")
+  };
+}
+
+function normalizeReactiveApplicationOptions(raw = {}, kind = "condition") {
+  const options = raw && typeof raw === "object" ? raw : {};
+  return {
+    duration: normalizeReactiveApplicationDuration(options.duration),
+    levelFormula: kind === "buff" ? String(options.levelFormula ?? options.level ?? "") : "",
+    refreshExisting: options.refreshExisting === true
+  };
+}
+
+function reactiveApplicationOptionsConfigured(options = {}, kind = "condition") {
+  const normalized = normalizeReactiveApplicationOptions(options, kind);
+  const duration = normalized.duration;
+  return Boolean(
+    normalized.refreshExisting
+    || (kind === "buff" && normalized.levelFormula.trim())
+    || duration.enabled
+    || duration.value.trim()
+    || duration.units
+    || duration.end.trim()
+  );
+}
+
+function reactiveApplicationOptionsPayload(options = {}, kind = "condition") {
+  const normalized = normalizeReactiveApplicationOptions(options, kind);
+  if (!reactiveApplicationOptionsConfigured(normalized, kind)) return null;
+  const out = {};
+  if (normalized.refreshExisting) out.refreshExisting = true;
+  if (kind === "buff" && normalized.levelFormula.trim()) out.levelFormula = normalized.levelFormula.trim();
+  const duration = normalized.duration;
+  if (duration.enabled || duration.value.trim() || duration.units || duration.end.trim()) {
+    out.duration = {
+      enabled: duration.enabled,
+      value: duration.value,
+      units: duration.units
+    };
+    if (kind === "buff" && duration.end.trim()) out.duration.end = duration.end.trim();
+  }
+  return out;
+}
+
+function normalizeReactiveEntryOptions(entryOptions = {}, selectedIds = [], kind = "condition") {
+  const source = entryOptions && typeof entryOptions === "object" ? entryOptions : {};
+  const out = {};
+  for (const id of selectedIds) {
+    const options = normalizeReactiveApplicationOptions(source[id], kind);
+    if (reactiveApplicationOptionsConfigured(options, kind)) out[id] = options;
+  }
+  return out;
+}
+
 function lifestealTemporaryHpDurationPayload(duration = {}) {
   const normalized = normalizeLifestealTemporaryHpDuration(duration);
   if (!normalized.enabled) return null;
@@ -301,7 +371,7 @@ function localizeMaybe(value) {
   return game.i18n.has(text) ? game.i18n.localize(text) : text;
 }
 
-function timePeriodOptionsHtml(selected) {
+function timePeriodOptionsHtml(selected, { blankLabel = null } = {}) {
   const timePeriods = globalThis.CONFIG?.PF1?.timePeriods ?? {};
   const entries = Object.entries(timePeriods).length
     ? Object.entries(timePeriods)
@@ -311,12 +381,31 @@ function timePeriodOptionsHtml(selected) {
         ["hour", game.i18n.localize("PF1.TimePeriods.hour.Label")],
         ["day", game.i18n.localize("PF1.TimePeriods.day.Label")]
       ];
-  return entries.map(([id, rawLabel]) => {
+  const options = blankLabel != null
+    ? [`<option value="" ${!selected ? "selected" : ""}>${escapeHtmlForSheet(blankLabel)}</option>`]
+    : [];
+  options.push(...entries.map(([id, rawLabel]) => {
     const label = typeof rawLabel === "object"
       ? localizeMaybe(rawLabel.label ?? rawLabel.Label ?? rawLabel.name ?? rawLabel.Name ?? id)
       : localizeMaybe(rawLabel);
     return `<option value="${escapeHtmlForSheet(id)}" ${id === selected ? "selected" : ""}>${escapeHtmlForSheet(label)}</option>`;
-  }).join("");
+  }));
+  return options.join("");
+}
+
+function durationEndOptionsHtml(selected) {
+  const events = globalThis.CONFIG?.PF1?.durationEndEvents ?? {};
+  const defaultLabel = game.i18n.has("PF1.Default") ? game.i18n.localize("PF1.Default") : "Default";
+  const options = [`<option value="" ${!selected ? "selected" : ""}>${escapeHtmlForSheet(defaultLabel)}</option>`];
+  options.push(...Object.entries(events)
+    .filter(([id]) => String(id ?? ""))
+    .map(([id, rawLabel]) => {
+      const label = typeof rawLabel === "object"
+        ? localizeMaybe(rawLabel.label ?? rawLabel.Label ?? rawLabel.name ?? rawLabel.Name ?? id)
+        : localizeMaybe(rawLabel);
+      return `<option value="${escapeHtmlForSheet(id)}" ${id === selected ? "selected" : ""}>${escapeHtmlForSheet(label)}</option>`;
+    }));
+  return options.join("");
 }
 
 function excludeNasChangeFromParentForm(event) {
@@ -582,23 +671,40 @@ function normalizeRowAction(action) {
   return "applySelf";
 }
 
-function normalizeReactiveRows(rows = []) {
+function rowActionApplies(action) {
+  const a = normalizeRowAction(action);
+  return a === "applySelf" || a === "applyTarget";
+}
+
+function normalizeReactiveRows(rows = [], kind = "condition") {
   if (!Array.isArray(rows)) return [];
   return rows
-    .map((row) => ({
-      id: String(row?.id ?? createNasId()),
-      action: normalizeRowAction(row?.action),
-      selectedIds: Array.isArray(row?.selectedIds) ? row.selectedIds.map((id) => String(id ?? "").trim()).filter(Boolean) : []
-    }))
+    .map((row) => {
+      const selectedIds = Array.isArray(row?.selectedIds) ? row.selectedIds.map((id) => String(id ?? "").trim()).filter(Boolean) : [];
+      const rawEntryOptions = row?.entryOptions ?? row?.applicationOptions ?? (
+        selectedIds.length === 1 && row?.application ? { [selectedIds[0]]: row.application } : {}
+      );
+      return {
+        id: String(row?.id ?? createNasId()),
+        action: normalizeRowAction(row?.action),
+        selectedIds,
+        entryOptions: normalizeReactiveEntryOptions(rawEntryOptions, selectedIds, kind)
+      };
+    })
     .filter((row) => row.selectedIds.length > 0);
 }
 
-function persistReactiveRows(rows) {
-  return normalizeReactiveRows(rows ?? []).map((r) => ({
-    id: r.id,
-    action: r.action,
-    selectedIds: [...r.selectedIds]
-  }));
+function persistReactiveRows(rows, kind = "condition") {
+  return normalizeReactiveRows(rows ?? [], kind).map((r) => {
+    const out = {
+      id: r.id,
+      action: r.action,
+      selectedIds: [...r.selectedIds]
+    };
+    const entryOptions = rowActionApplies(r.action) ? normalizeReactiveEntryOptions(r.entryOptions, r.selectedIds, kind) : {};
+    if (Object.keys(entryOptions).length) out.entryOptions = entryOptions;
+    return out;
+  });
 }
 
 function buffEffectToRowAction(effectType) {
@@ -619,7 +725,7 @@ function conditionEffectToRowAction(effectType) {
 
 function buffRowsFromPersistedOrEffects(raw, effects) {
   if (raw != null && typeof raw === "object" && Object.prototype.hasOwnProperty.call(raw, "buffRows")) {
-    return normalizeReactiveRows(raw.buffRows);
+    return normalizeReactiveRows(raw.buffRows, "buff");
   }
   return effects
     .filter((effect) =>
@@ -629,13 +735,18 @@ function buffRowsFromPersistedOrEffects(raw, effects) {
     .map((effect) => ({
       id: createNasId(),
       action: buffEffectToRowAction(effect?.type),
-      selectedIds: [String(effect?.buffUuid ?? "")]
+      selectedIds: [String(effect?.buffUuid ?? "")],
+      entryOptions: normalizeReactiveEntryOptions(
+        effect?.application ? { [String(effect?.buffUuid ?? "")]: effect.application } : {},
+        [String(effect?.buffUuid ?? "")],
+        "buff"
+      )
     }));
 }
 
 function conditionRowsFromPersistedOrEffects(raw, effects) {
   if (raw != null && typeof raw === "object" && Object.prototype.hasOwnProperty.call(raw, "conditionRows")) {
-    return normalizeReactiveRows(raw.conditionRows);
+    return normalizeReactiveRows(raw.conditionRows, "condition");
   }
   return effects
     .filter((effect) =>
@@ -646,15 +757,109 @@ function conditionRowsFromPersistedOrEffects(raw, effects) {
     .map((effect) => ({
       id: createNasId(),
       action: conditionEffectToRowAction(effect?.type),
-      selectedIds: [String(effect?.conditionId ?? "")]
+      selectedIds: [String(effect?.conditionId ?? "")],
+      entryOptions: normalizeReactiveEntryOptions(
+        effect?.application ? { [String(effect?.conditionId ?? "")]: effect.application } : {},
+        [String(effect?.conditionId ?? "")],
+        "condition"
+      )
     }));
+}
+
+function applicationKindForRowKey(rowKey) {
+  return rowKey === "buffRows" ? "buff" : "condition";
+}
+
+function reactiveApplicationOptionsFieldsHtml(options = {}, kind = "condition") {
+  const normalized = normalizeReactiveApplicationOptions(options, kind);
+  const duration = normalized.duration;
+  const durationDisplay = duration.enabled ? "" : "display:none;";
+  return `
+    <div class="form-group stacked" style="margin:0;">
+      <label class="checkbox">
+        <input type="checkbox" data-app-role="refreshExisting" ${normalized.refreshExisting ? "checked" : ""}>
+        ${localize("applicationRefreshExisting")}
+      </label>
+    </div>
+    ${kind === "buff" ? `
+      <div class="form-group" style="margin:0;">
+        <label>${localize("applicationBuffLevel")}</label>
+        <div class="form-fields">
+          <input class="formula roll" type="text" data-app-role="levelFormula" value="${escapeHtmlForSheet(normalized.levelFormula)}" placeholder="${game.i18n.localize("PF1.Formula")}">
+        </div>
+      </div>
+    ` : ""}
+    <div class="form-group stacked" style="margin:0;">
+      <label class="checkbox">
+        <input type="checkbox" data-app-role="durationEnabled" ${duration.enabled ? "checked" : ""}>
+        ${localize("applicationDuration")}
+      </label>
+    </div>
+    <div data-app-duration-fields style="${durationDisplay}">
+      <div class="form-group input-select" style="margin:0;">
+        <label>${game.i18n.localize("PF1.Duration")}</label>
+        <div class="form-fields">
+          <input class="formula roll" type="text" data-app-role="durationValue" value="${escapeHtmlForSheet(duration.value)}" placeholder="${game.i18n.localize("PF1.Formula")}">
+          <select data-app-role="durationUnits" style="flex:0 0 110px;width:110px;min-width:110px;max-width:110px;">${timePeriodOptionsHtml(duration.units, { blankLabel: "" })}</select>
+        </div>
+      </div>
+      ${kind === "buff" ? `
+        <div class="form-group" style="margin:0;">
+          <label>${localize("applicationDurationEnd")}</label>
+          <div class="form-fields">
+            <span aria-hidden="true" style="flex:1 1 auto;min-width:0;"></span>
+            <select data-app-role="durationEnd" style="flex:0 0 110px;width:110px;min-width:110px;max-width:110px;">${durationEndOptionsHtml(duration.end)}</select>
+          </div>
+        </div>
+      ` : ""}
+    </div>
+  `;
+}
+
+function readReactiveApplicationOptionsFromHost(host, kind = "condition") {
+  return normalizeReactiveApplicationOptions({
+    refreshExisting: host.querySelector('[data-app-role="refreshExisting"]')?.checked === true,
+    levelFormula: host.querySelector('[data-app-role="levelFormula"]')?.value ?? "",
+    duration: {
+      enabled: host.querySelector('[data-app-role="durationEnabled"]')?.checked === true,
+      value: host.querySelector('[data-app-role="durationValue"]')?.value ?? "",
+      units: host.querySelector('[data-app-role="durationUnits"]')?.value ?? "",
+      end: host.querySelector('[data-app-role="durationEnd"]')?.value ?? ""
+    }
+  }, kind);
+}
+
+function syncReactiveApplicationOptionsHost(host) {
+  const enabled = host.querySelector('[data-app-role="durationEnabled"]')?.checked === true;
+  const fields = host.querySelector("[data-app-duration-fields]");
+  if (fields) fields.style.display = enabled ? "" : "none";
+}
+
+function setReactiveApplicationOptions(target, options, kind = "condition") {
+  const payload = reactiveApplicationOptionsPayload(options, kind);
+  if (payload) target.application = normalizeReactiveApplicationOptions(payload, kind);
+  else delete target.application;
+}
+
+function bindReactiveApplicationOptionsHost(host, kind, onChange, applyOptions) {
+  if (!host) return;
+  syncReactiveApplicationOptionsHost(host);
+  host.querySelectorAll("input, select").forEach((control) => {
+    control.addEventListener("change", (event) => {
+      excludeNasChangeFromParentForm(event);
+      applyOptions(readReactiveApplicationOptionsFromHost(host, kind));
+      syncReactiveApplicationOptionsHost(host);
+      onChange();
+    });
+  });
 }
 
 function attachReactiveRowEditor(section, item, state, rowKey, optionList, pickerTitle, onChange, reactiveContext = "onHit") {
   const list = section.querySelector(`[data-nas-list="${rowKey}"]`);
   const addBtn = section.querySelector(`[data-nas-add="${rowKey}"]`);
   if (!list || !addBtn) return;
-  state[rowKey] = normalizeReactiveRows(state[rowKey]);
+  const entryKind = applicationKindForRowKey(rowKey);
+  state[rowKey] = normalizeReactiveRows(state[rowKey], entryKind);
   const isOnStruck = reactiveContext === "onStruck";
   const optApplySelf = isOnStruck ? localize("actionOnStruckApplySelf") : localize("actionApplySelf");
   const optRemoveSelf = isOnStruck ? localize("actionOnStruckRemoveSelf") : localize("actionRemoveSelf");
@@ -679,6 +884,7 @@ function attachReactiveRowEditor(section, item, state, rowKey, optionList, picke
       hasCustom: false,
       onCommit: (selectedIds) => {
         row.selectedIds = selectedIds;
+        row.entryOptions = normalizeReactiveEntryOptions(row.entryOptions, row.selectedIds, entryKind);
         render();
         onChange();
       },
@@ -703,10 +909,12 @@ function attachReactiveRowEditor(section, item, state, rowKey, optionList, picke
           </select>
           <a class="delete-row" data-role="remove" title="${localize("removeRow")}" style="flex:0 0 18px;text-align:center;"><i class="fas fa-trash"></i></a>
         </div>
+        <div data-role="entry-options" style="display:flex;flex-direction:column;gap:4px;margin:3px 0 6px;"></div>
       `;
       list.appendChild(rowEl);
 
       const tags = rowEl.querySelector('[data-role="tags"]');
+      const entryOptionsHost = rowEl.querySelector('[data-role="entry-options"]');
       const editBtn = rowEl.querySelector('[data-role="edit"]');
       const actionSelect = rowEl.querySelector('[data-role="action"]');
       const removeBtn = rowEl.querySelector('[data-role="remove"]');
@@ -722,6 +930,36 @@ function attachReactiveRowEditor(section, item, state, rowKey, optionList, picke
         tags.innerHTML = labels.map((label) => `<li class="tag">${escapeHtmlForSheet(label)}</li>`).join("");
       };
 
+      const renderEntryOptions = () => {
+        if (!rowActionApplies(row.action)) {
+          entryOptionsHost.style.display = "none";
+          entryOptionsHost.innerHTML = "";
+          return;
+        }
+        entryOptionsHost.style.display = "flex";
+        row.entryOptions = normalizeReactiveEntryOptions(row.entryOptions, row.selectedIds, entryKind);
+        entryOptionsHost.innerHTML = row.selectedIds.map((id) => {
+          const label = optionList.find((option) => option.id === id)?.label ?? id;
+          const options = normalizeReactiveApplicationOptions(row.entryOptions?.[id], entryKind);
+          return `
+            <div class="nas-reactive-entry-application" data-entry-id="${escapeHtmlForSheet(id)}" style="border-left:2px solid rgba(0,0,0,0.18);padding-left:6px;">
+              <div style="font-weight:600;font-size:var(--font-size-12,12px);margin:0 0 2px;">${escapeHtmlForSheet(label)}</div>
+              <div class="nas-reactive-application-options" style="display:block;width:100%;">
+                ${reactiveApplicationOptionsFieldsHtml(options, entryKind)}
+              </div>
+            </div>
+          `;
+        }).join("");
+        entryOptionsHost.querySelectorAll("[data-entry-id]").forEach((host) => {
+          const id = String(host.dataset.entryId ?? "");
+          bindReactiveApplicationOptionsHost(host, entryKind, onChange, (options) => {
+            row.entryOptions ??= {};
+            if (reactiveApplicationOptionsConfigured(options, entryKind)) row.entryOptions[id] = options;
+            else delete row.entryOptions[id];
+          });
+        });
+      };
+
       editBtn.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -731,6 +969,7 @@ function attachReactiveRowEditor(section, item, state, rowKey, optionList, picke
       actionSelect.addEventListener("change", (event) => {
         excludeNasChangeFromParentForm(event);
         row.action = normalizeRowAction(actionSelect.value);
+        renderEntryOptions();
         onChange();
       });
       removeBtn.addEventListener("click", () => {
@@ -740,6 +979,7 @@ function attachReactiveRowEditor(section, item, state, rowKey, optionList, picke
       });
 
       renderTags();
+      renderEntryOptions();
     }
   };
 
@@ -747,7 +987,8 @@ function attachReactiveRowEditor(section, item, state, rowKey, optionList, picke
     state[rowKey].push({
       id: createNasId(),
       action: "applySelf",
-      selectedIds: []
+      selectedIds: [],
+      entryOptions: {}
     });
     render();
     onChange();
@@ -779,10 +1020,16 @@ function normalizeOnStruckSave(raw = {}) {
   const type = String(raw?.type ?? raw?.saveType ?? "").toLowerCase();
   const normalizeOutcome = (value) => {
     const effectKind = String(value?.effectKind ?? "");
+    if (!["applyBuff", "applyCondition"].includes(effectKind)) {
+      return { effectKind: "none", buffUuid: String(value?.buffUuid ?? ""), conditionId: String(value?.conditionId ?? "") };
+    }
+    const kind = effectKind === "applyBuff" ? "buff" : "condition";
+    const application = reactiveApplicationOptionsPayload(value?.application, kind);
     return {
-      effectKind: ["applyBuff", "applyCondition"].includes(effectKind) ? effectKind : "none",
+      effectKind,
       buffUuid: String(value?.buffUuid ?? ""),
-      conditionId: String(value?.conditionId ?? "")
+      conditionId: String(value?.conditionId ?? ""),
+      ...(application ? { application } : {})
     };
   };
   return {
@@ -1438,7 +1685,9 @@ function renderOnStruckDamageRuleEditor(section, item, state, onChange, buffOpti
     { id: "construct", label: localizeSystem("PF1.CreatureTypes.construct") },
     { id: "nonliving", label: localize("onStruckCreatureNonliving") }
   ];
-  host.innerHTML = state.damageRules.map((rule, index) => `
+  host.innerHTML = state.damageRules.map((rule, index) => {
+    const save = normalizeOnStruckSave(rule.save);
+    return `
     <div class="nas-onstruck-rule" data-nas-onstruck-rule="${index}" style="margin:0 0 6px;">
       <div class="form-group">
         <label>${localize("mode")}</label>
@@ -1543,6 +1792,18 @@ function renderOnStruckDamageRuleEditor(section, item, state, onChange, buffOpti
               <a data-save-outcome-picker="${outcome}-buff" title="${localize("editSelection")}" style="flex:0 0 auto;opacity:0.9;"><i class="fa-solid fa-edit" inert></i></a>
             </div>
           </div>
+          <div class="form-group stacked" data-rule-row="save-${outcome}-condition-options">
+            <label>${localize("applicationOptions")}</label>
+            <div class="nas-reactive-application-options" data-save-application="${outcome}-condition" style="display:block;width:100%;">
+              ${reactiveApplicationOptionsFieldsHtml(save.effects?.[outcome]?.application, "condition")}
+            </div>
+          </div>
+          <div class="form-group stacked" data-rule-row="save-${outcome}-buff-options">
+            <label>${localize("applicationOptions")}</label>
+            <div class="nas-reactive-application-options" data-save-application="${outcome}-buff" style="display:block;width:100%;">
+              ${reactiveApplicationOptionsFieldsHtml(save.effects?.[outcome]?.application, "buff")}
+            </div>
+          </div>
         `).join("")}
         <div class="form-group stacked">
           <label class="checkbox">
@@ -1582,7 +1843,8 @@ function renderOnStruckDamageRuleEditor(section, item, state, onChange, buffOpti
         </div>
       </div>
     </div>
-  `).join("");
+  `;
+  }).join("");
 
   for (const [index, rule] of state.damageRules.entries()) {
     const row = host.querySelector(`[data-nas-onstruck-rule="${index}"]`);
@@ -1607,6 +1869,10 @@ function renderOnStruckDamageRuleEditor(section, item, state, onChange, buffOpti
     row.querySelector('[data-rule-row="save-failure-condition"]').style.display = rule.save?.enabled && save.effects.failure.effectKind === "applyCondition" ? "" : "none";
     row.querySelector('[data-rule-row="save-success-buff"]').style.display = rule.save?.enabled && save.effects.success.effectKind === "applyBuff" ? "" : "none";
     row.querySelector('[data-rule-row="save-failure-buff"]').style.display = rule.save?.enabled && save.effects.failure.effectKind === "applyBuff" ? "" : "none";
+    row.querySelector('[data-rule-row="save-success-condition-options"]').style.display = rule.save?.enabled && save.effects.success.effectKind === "applyCondition" ? "" : "none";
+    row.querySelector('[data-rule-row="save-failure-condition-options"]').style.display = rule.save?.enabled && save.effects.failure.effectKind === "applyCondition" ? "" : "none";
+    row.querySelector('[data-rule-row="save-success-buff-options"]').style.display = rule.save?.enabled && save.effects.success.effectKind === "applyBuff" ? "" : "none";
+    row.querySelector('[data-rule-row="save-failure-buff-options"]').style.display = rule.save?.enabled && save.effects.failure.effectKind === "applyBuff" ? "" : "none";
     row.querySelector('[data-rule-row="pool"]').style.display = rule.spendPool ? "" : "none";
   }
 
@@ -1663,6 +1929,21 @@ function renderOnStruckDamageRuleEditor(section, item, state, onChange, buffOpti
           renderOnStruckDamageRuleEditor(section, item, state, onChange, buffOptions, conditionOptions);
         }
       });
+    });
+  });
+
+  host.querySelectorAll("[data-save-application]").forEach((appHost) => {
+    const row = appHost.closest("[data-nas-onstruck-rule]");
+    const index = Number(row?.dataset?.nasOnstruckRule);
+    const rule = state.damageRules[index];
+    if (!rule) return;
+    rule.save = normalizeOnStruckSave(rule.save);
+    const [outcome, type] = String(appHost.dataset.saveApplication ?? "").split("-");
+    const outcomeConfig = rule.save.effects?.[outcome];
+    if (!outcomeConfig) return;
+    const kind = type === "buff" ? "buff" : "condition";
+    bindReactiveApplicationOptionsHost(appHost, kind, onChange, (options) => {
+      setReactiveApplicationOptions(outcomeConfig, options, kind);
     });
   });
 
@@ -1790,7 +2071,10 @@ function toOnHitPayload(state) {
     for (const buffUuid of row?.selectedIds ?? []) {
       const uuid = String(buffUuid ?? "").trim();
       if (!uuid) continue;
-      effects.push({ type: effectType, buffUuid: uuid, message: state.message !== false });
+      const effect = { type: effectType, buffUuid: uuid, message: state.message !== false };
+      const application = effectType.startsWith("apply") ? reactiveApplicationOptionsPayload(row?.entryOptions?.[uuid], "buff") : null;
+      if (application) effect.application = application;
+      effects.push(effect);
     }
   }
   for (const row of state.conditionRows ?? []) {
@@ -1798,15 +2082,18 @@ function toOnHitPayload(state) {
     for (const conditionId of row?.selectedIds ?? []) {
       const id = String(conditionId ?? "").trim();
       if (!id) continue;
-      effects.push({ type: effectType, conditionId: id, message: state.message !== false });
+      const effect = { type: effectType, conditionId: id, message: state.message !== false };
+      const application = effectType.startsWith("apply") ? reactiveApplicationOptionsPayload(row?.entryOptions?.[id], "condition") : null;
+      if (application) effect.application = application;
+      effects.push(effect);
     }
   }
   const payload = {
     onHitFunction: String(state.onHitFunction ?? "none"),
     message: sectionMessage,
     effects,
-    buffRows: persistReactiveRows(state.buffRows),
-    conditionRows: persistReactiveRows(state.conditionRows)
+    buffRows: persistReactiveRows(state.buffRows, "buff"),
+    conditionRows: persistReactiveRows(state.conditionRows, "condition")
   };
   return payload;
 }
@@ -1846,7 +2133,10 @@ function toOnStruckPayload(state) {
     for (const buffUuid of row?.selectedIds ?? []) {
       const uuid = String(buffUuid ?? "").trim();
       if (!uuid) continue;
-      effects.push({ type: effectType, buffUuid: uuid, message: state.message !== false });
+      const effect = { type: effectType, buffUuid: uuid, message: state.message !== false };
+      const application = effectType.startsWith("apply") ? reactiveApplicationOptionsPayload(row?.entryOptions?.[uuid], "buff") : null;
+      if (application) effect.application = application;
+      effects.push(effect);
     }
   }
   for (const row of state.conditionRows ?? []) {
@@ -1854,7 +2144,10 @@ function toOnStruckPayload(state) {
     for (const conditionId of row?.selectedIds ?? []) {
       const id = String(conditionId ?? "").trim();
       if (!id) continue;
-      effects.push({ type: effectType, conditionId: id, message: state.message !== false });
+      const effect = { type: effectType, conditionId: id, message: state.message !== false };
+      const application = effectType.startsWith("apply") ? reactiveApplicationOptionsPayload(row?.entryOptions?.[id], "condition") : null;
+      if (application) effect.application = application;
+      effects.push(effect);
     }
   }
   return {
@@ -1887,8 +2180,8 @@ function toOnStruckPayload(state) {
       : [],
     pool: normalizeOnStruckPool(state.pool),
     effects,
-    buffRows: persistReactiveRows(state.buffRows),
-    conditionRows: persistReactiveRows(state.conditionRows)
+    buffRows: persistReactiveRows(state.buffRows, "buff"),
+    conditionRows: persistReactiveRows(state.conditionRows, "condition")
   };
 }
 
@@ -2306,8 +2599,8 @@ async function renderOnHitSection(sheet, root) {
       : flags.onHitByAction?.[action?.id];
   const fromFlag = normalizeOnHitConfig(rawOnHit ?? {});
   const state = deepClone(fromState ?? fromFlag);
-  state.buffRows = normalizeReactiveRows(state.buffRows);
-  state.conditionRows = normalizeReactiveRows(state.conditionRows);
+  state.buffRows = normalizeReactiveRows(state.buffRows, "buff");
+  state.conditionRows = normalizeReactiveRows(state.conditionRows, "condition");
   if (String(state.onHitFunction) === "vampiricTouch") state.onHitFunction = "grantTemporaryHp";
   if (!["none", "lifesteal", "grantTemporaryHp"].includes(String(state.onHitFunction))) {
     state.onHitFunction = fromFlag.onHitFunction;
@@ -2587,8 +2880,8 @@ async function renderOnStruckSection(sheet, root) {
   const fromAbsorptionFlag = normalizeAbsorptionConfig(flags.absorption);
   const state = deepClone(fromState ?? fromFlag);
   state.absorption = normalizeAbsorptionConfig(state.absorption ?? fromAbsorptionFlag);
-  state.buffRows = normalizeReactiveRows(state.buffRows);
-  state.conditionRows = normalizeReactiveRows(state.conditionRows);
+  state.buffRows = normalizeReactiveRows(state.buffRows, "buff");
+  state.conditionRows = normalizeReactiveRows(state.conditionRows, "condition");
   state.damageRules = (Array.isArray(state.damageRules) && state.damageRules.length ? state.damageRules : fromFlag.damageRules)
     .map((rule) => normalizeOnStruckDamageRule(rule));
   if (!state.damageRules.length) state.damageRules = [newOnStruckDamageRule(fromFlag)];
@@ -2603,11 +2896,12 @@ async function renderOnStruckSection(sheet, root) {
     Array.isArray(state.damageTypeIds) ? state.damageTypeIds : fromFlag.damageTypeIds
   );
   ReactiveUiState.set(sheet.appId, appKey, state);
+  const initialConfigured = isOnStruckConfigured(state);
 
   const section = document.createElement("div");
   section.classList.add("nas-onstruck-effects");
   section.innerHTML = `
-    ${reactiveSectionHeaderHtml(localize("onStruckHeader"), { expanded: isOnStruckConfigured(state) })}
+    ${reactiveSectionHeaderHtml(localize("onStruckHeader"), { expanded: initialConfigured })}
     <div data-nas-reactive-body>
     <div class="form-group nas-rx-function-row">
       <label class="nas-rx-function-label">${game.i18n.localize("NAS.reactive.labels.onStruck")}</label>
@@ -2794,6 +3088,7 @@ async function renderOnStruckSection(sheet, root) {
       const previousPool = normalizeOnStruckPool(previousOnStruck.pool ?? previousOnStruck.onStruckPool);
       const nextOnStruck = toOnStruckPayload(state);
       const nextPool = normalizeOnStruckPool(nextOnStruck.pool);
+      const nextOnStruckConfigured = isOnStruckConfigured(nextOnStruck);
       const resetOnStruckPool = nextPool.enabled && (
         !isOnStruckConfigured(previousOnStruck)
         || previousPool.enabled !== true
@@ -2802,14 +3097,16 @@ async function renderOnStruckSection(sheet, root) {
         || Number(previousPool.remaining) <= 0
         || previousPool.totalFormula !== nextPool.totalFormula
       );
-      flags.onStruck = {
-        ...nextOnStruck,
-        pool: {
-          ...nextPool,
-          remaining: resetOnStruckPool ? null : previousPool.remaining,
-          capacity: resetOnStruckPool ? null : previousPool.capacity
+      flags.onStruck = nextOnStruckConfigured
+        ? {
+          ...nextOnStruck,
+          pool: {
+            ...nextPool,
+            remaining: resetOnStruckPool ? null : previousPool.remaining,
+            capacity: resetOnStruckPool ? null : previousPool.capacity
+          }
         }
-      };
+        : null;
       const previous = normalizeAbsorptionConfig(flags.absorption);
       const nextAbsorption = state.onStruckFunction === "damageAbsorption"
         ? toAbsorptionPayload({
@@ -2924,7 +3221,7 @@ async function renderOnStruckSection(sheet, root) {
   renderAbsorptionRuleEditor(section, item, state, writeState);
   syncEnergyTypeSelect();
   bindReactiveSectionChrome(sheet.appId, appKey, section, {
-    initiallyExpanded: isOnStruckConfigured(state),
+    initiallyExpanded: initialConfigured,
     onClear: () => {
       const cleared = normalizeOnStruckConfig({});
       Object.assign(state, cleared, {
@@ -2934,8 +3231,8 @@ async function renderOnStruckSection(sheet, root) {
       });
       ReactiveUiState.set(sheet.appId, appKey, state);
       void saveReactiveFlagsNow(item, "onstruck", (flags) => {
-        flags.onStruck = toOnStruckPayload(state);
-        flags.absorption = toAbsorptionPayload(state.absorption);
+        flags.onStruck = null;
+        flags.absorption = null;
         return flags;
       }).then(() => sheet?.render?.(false));
     }
@@ -3759,10 +4056,160 @@ async function renderTemporaryHpSection(sheet, root) {
   updateRows();
 }
 
+function selectedOptionLabel(optionList, selectedId, fallback) {
+  const id = String(selectedId ?? "").trim();
+  if (!id) return fallback;
+  return optionList.find((option) => option.id === id)?.label ?? id;
+}
+
+async function renderActionBuffAutomationControl(sheet, root) {
+  if (!isItemActionSheetContext(sheet)) return;
+  if (!root?.querySelector || root.querySelector("[data-nas-action-buff-automation]")) return;
+
+  const item = sheet?.item;
+  const action = sheet?.action ?? itemActionsArray(item)[0] ?? sheet?.object ?? null;
+  const propertiesGroup = root.querySelector('input[name="nonlethal"]')?.closest(".form-group.stacked")
+    ?? root.querySelector('input[name="touch"]')?.closest(".form-group.stacked")
+    ?? root.querySelector('input[name="splash"]')?.closest(".form-group.stacked");
+  if (!item || !action || !propertiesGroup) {
+    return;
+  }
+
+  const locked = isItemInLockedCompendium(item);
+  const state = getActionBuffAutomationState(item, action);
+  const buffOptions = await getBuffOptions();
+  const title = locked ? "This item is in a locked compendium." : game.i18n.localize("NAS.buffs.actionBuffAutomationTooltip");
+
+  const checkboxLabel = document.createElement("label");
+  checkboxLabel.classList.add("checkbox", "nas-action-buff-automation");
+  checkboxLabel.dataset.nasActionBuffAutomation = "true";
+  checkboxLabel.title = title;
+  checkboxLabel.innerHTML = `
+    <input type="checkbox" data-nas-action-buff-enabled ${state.enabled ? "checked" : ""} ${locked ? "disabled" : ""}>
+    ${escapeHtmlForSheet(game.i18n.localize("NAS.buffs.actionBuffAutomationEnabled"))}
+  `;
+  propertiesGroup.append(checkboxLabel);
+
+  const pickerRow = document.createElement("div");
+  pickerRow.classList.add("form-group", "nas-action-buff-automation");
+  pickerRow.dataset.nasActionBuffAutomation = "true";
+  pickerRow.innerHTML = `
+    <label>${escapeHtmlForSheet(game.i18n.localize("NAS.buffs.actionBuffAutomationBuff"))}</label>
+    <div class="form-fields" style="display:flex;align-items:center;gap:6px;">
+      <ul class="traits-list tag-list" data-role="tags" style="flex:1;min-width:0;min-height:var(--form-field-height,26px);margin:0;"></ul>
+      <a data-role="edit" title="${escapeHtmlForSheet(localize("editSelection"))}" style="flex:0 0 auto;opacity:0.9;"><i class="fa-solid fa-edit" inert></i></a>
+      <a data-role="clear" title="${escapeHtmlForSheet(localize("clearSettings"))}" style="flex:0 0 auto;opacity:0.9;"><i class="fas fa-times" inert></i></a>
+    </div>
+    <p class="notes" style="flex:0 0 100%;margin:2px 0 0;">${escapeHtmlForSheet(game.i18n.localize("NAS.buffs.actionBuffAutomationLookupHint"))}</p>
+  `;
+  propertiesGroup.after(pickerRow);
+
+  const checkbox = checkboxLabel.querySelector("[data-nas-action-buff-enabled]");
+  const tags = pickerRow.querySelector('[data-role="tags"]');
+  const edit = pickerRow.querySelector('[data-role="edit"]');
+  const clear = pickerRow.querySelector('[data-role="clear"]');
+
+  const persist = () => {
+    void setActionBuffAutomationState(item, action, state);
+  };
+  const sync = () => {
+    pickerRow.style.display = state.enabled ? "" : "none";
+    if (tags) {
+      const label = selectedOptionLabel(
+        buffOptions,
+        state.selectedBuffUuid,
+        game.i18n.localize("NAS.buffs.actionBuffAutomationLookup")
+      );
+      const placeholder = !state.selectedBuffUuid ? " placeholder" : "";
+      tags.innerHTML = `<li class="tag${placeholder}" inert>${escapeHtmlForSheet(label)}</li>`;
+    }
+    if (clear) clear.style.display = state.selectedBuffUuid ? "" : "none";
+  };
+
+  checkbox?.addEventListener("change", (event) => {
+    excludeNasChangeFromParentForm(event);
+    state.enabled = checkbox.checked === true;
+    sync();
+    persist();
+  });
+
+  edit?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (locked) return;
+    const { choices, indexToId } = buildReactiveOptionChoices(buffOptions);
+    new ReactiveOptionSelector({
+      document: item,
+      title: game.i18n.localize("NAS.buffs.actionBuffAutomationChooseBuff"),
+      subject: `nasActionBuff-${state.actionId || createNasId()}`,
+      rowId: `actionBuff-${state.actionId || createNasId()}`,
+      choices,
+      indexToId,
+      initialSelectedIds: state.selectedBuffUuid ? [state.selectedBuffUuid] : [],
+      hasCustom: false,
+      onCommit: (selectedIds) => {
+        state.selectedBuffUuid = String(selectedIds?.[0] ?? "").trim();
+        state.enabled = true;
+        if (checkbox) checkbox.checked = true;
+        sync();
+        persist();
+      },
+    }).render(true);
+  });
+
+  clear?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    state.selectedBuffUuid = "";
+    sync();
+    persist();
+  });
+
+  sync();
+}
+
+function renderNonConsecutiveDurationControl(sheet, root) {
+  if (!root?.querySelector || root.querySelector("[data-nas-nonconsecutive-duration-wrapper]")) return;
+
+  const item = sheet?.item;
+  const action = sheet?.action ?? itemActionsArray(item)[0] ?? sheet?.object ?? null;
+  const host = root.querySelector('input[name="duration.concentration"]')?.closest(".form-fields")
+    ?? root.querySelector('input[name="duration.dismiss"]')?.closest(".form-fields");
+  if (!item || !action || !host) return;
+
+  const state = getActionNonConsecutiveDurationState(item, action);
+  const supported = actionCanUseNonConsecutiveDuration(action);
+  const locked = isItemInLockedCompendium(item);
+  const disabled = locked || !supported;
+  const title = locked
+    ? "This item is in a locked compendium."
+    : (supported
+      ? game.i18n.localize("NAS.buffs.nonConsecutiveDurationTooltip")
+      : game.i18n.localize("NAS.buffs.nonConsecutiveDurationUnsupported"));
+
+  const label = document.createElement("label");
+  label.classList.add("checkbox", "nas-nonconsecutive-duration-control");
+  label.dataset.nasNonconsecutiveDurationWrapper = "true";
+  label.title = title;
+  label.innerHTML = `
+    <input type="checkbox" data-nas-nonconsecutive-duration ${state.enabled ? "checked" : ""} ${disabled ? "disabled" : ""}>
+    ${escapeHtmlForSheet(game.i18n.localize("NAS.buffs.nonConsecutiveDurationNonConsecutive"))}
+  `;
+  host.append(label);
+
+  const input = label.querySelector("[data-nas-nonconsecutive-duration]");
+  input?.addEventListener("change", (event) => {
+    excludeNasChangeFromParentForm(event);
+    void setActionNonConsecutiveDurationState(item, action, input.checked === true);
+  });
+}
+
 function onRenderItemActionSheet(sheet, html) {
   const root = elementFromHtmlLike(sheet?.element) ?? elementFromHtmlLike(html);
   if (!root) return;
+  renderNonConsecutiveDurationControl(sheet, root);
   void (async () => {
+    await runReactiveSheetStage("actionBuffAutomation", sheet, root, () => renderActionBuffAutomationControl(sheet, root));
     await runReactiveSheetStage("buffSaveGate", sheet, root, () => renderBuffSaveGateSection(sheet, root));
     await runReactiveSheetStage("onHit", sheet, root, () => renderOnHitSection(sheet, root));
   })().finally(() => scheduleNasScrollRestoreRetry(sheet));

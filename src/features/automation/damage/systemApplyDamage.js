@@ -10,7 +10,7 @@ import { normalizeTargets } from '../utils/targeting.js';
 import { actorHasGrantedCriticalImmunity, getActorGrantedFortification } from '../defenses/grantedDefenses.js';
 import { isWoundsVigorActive, isWoundsVigorAutomationEnabled, isWvNoWoundsActor } from '../utils/woundsVigor.js';
 import { getCasterLevelEquivalentFromFormula, getDiceCountFromFormula, getDiceCountFromRoll } from '../utils/formulaUtils.js';
-import { applyReactiveEffectsForHit, resolveSourceActorFromOptions } from './reactiveTriggers.js';
+import { applyReactiveEffectsForHit, resolveSourceActorFromOptions, snapshotOnStruckConfigsForTrigger } from './reactiveTriggers.js';
 import { resolveMirrorImageForApplyDamage } from '../buffs/mirrorImage.js';
 import { applyDamageAbsorption, postDamageAbsorptionChatSummary } from '../buffs/damageAbsorption.js';
 import { spendNasTemporaryHp } from '../buffs/temporaryHpPools.js';
@@ -994,9 +994,12 @@ export async function applyNasHeadlessDamage(value = 0, options = {}) {
     const allInstances = buildNumericInstances(Math.abs(value), calcOpts);
     const { abilityInstances, hpInstances } = splitAbilityInstances(allInstances);
     calcOpts.instances = hpInstances;
+    const abilityDmg = abilityInstances.length && !isHealing
+        ? buildAbilityDmgEntries(abilityInstances, hasRatio ? ratio : 1, false)
+        : [];
+    const abilityDamageTargets = new Set();
 
     if (abilityInstances.length && !isHealing) {
-        const abilityDmg = buildAbilityDmgEntries(abilityInstances, hasRatio ? ratio : 1, false);
         for (const target of targets) {
             const traits = target.system.traits;
             const abilities = foundry.utils.deepClone(target.system.abilities);
@@ -1009,6 +1012,7 @@ export async function applyNasHeadlessDamage(value = 0, options = {}) {
             }
             recordDamageCombatTextContext(target, options);
             await target.update(updates);
+            if (target.uuid) abilityDamageTargets.add(target.uuid);
         }
     }
 
@@ -1017,6 +1021,8 @@ export async function applyNasHeadlessDamage(value = 0, options = {}) {
         calcOpts.value = -Math.abs(hpValue);
     } else if (hpValue > 0) {
         calcOpts.value = Math.abs(hpValue);
+    } else if (abilityInstances.length > 0) {
+        calcOpts.value = 0;
     } else {
         calcOpts.value = Math.abs(Number(value) || 0);
     }
@@ -1043,7 +1049,6 @@ export async function applyNasHeadlessDamage(value = 0, options = {}) {
             }
 
             const app = new pf1.applications.ApplyDamage(targetOpts);
-
             if (hasRatio) {
                 for (const target of app.targets) {
                     target.ratio = ratio;
@@ -1156,11 +1161,10 @@ export async function applyNasHeadlessDamage(value = 0, options = {}) {
             }
 
             if (Math.abs(Number(targetOpts.value) || 0) <= 0) {
-                return Boolean(fortification?.success);
+                return Boolean(fortification?.success || abilityDamageTargets.has(actor.uuid));
             }
 
             const app = new pf1.applications.ApplyDamage(targetOpts);
-
             if (hasRatio) {
                 for (const target of app.targets) {
                     target.ratio = ratio;
@@ -1194,9 +1198,6 @@ export async function applyNasHeadlessDamage(value = 0, options = {}) {
             let convertedTypedApplied = 0;
             let absorptionChanged = false;
             const rawFinalDamage = Math.floor(Math.max(0, Math.floor(Math.max(0, appliedValue) * (originalApplyDamageOpts?.ratio ?? 1))));
-            const incomingFinalDamage = Math.floor(
-                rawFinalDamage - Math.min(rawFinalDamage, originalApplyDamageOpts?.reduction ?? 0)
-            );
             const absorption = await applyDamageAbsorption({
                 actor,
                 value: rawFinalDamage,
@@ -1219,6 +1220,7 @@ export async function applyNasHeadlessDamage(value = 0, options = {}) {
                 await showAbsorptionCombatText(actor, absorption.damageReduction);
             }
 
+            const onStruckPreTempHpConfigs = snapshotOnStruckConfigsForTrigger(actor);
             recordDamageCombatTextContext(actor, targetOpts);
             let result = appliedValue > 0 ? await actor.applyDamage(appliedValue, applyDamageOpts) : false;
             if (convertedNonlethal > 0) {
@@ -1288,7 +1290,9 @@ export async function applyNasHeadlessDamage(value = 0, options = {}) {
                     sourceActor,
                     sourceItem,
                     targetActor: actor,
-                    options: targetOpts,
+                    options: onStruckPreTempHpConfigs.length
+                        ? { ...targetOpts, _nasOnStruckPreTempHpConfigs: onStruckPreTempHpConfigs }
+                        : targetOpts,
                     finalDamage,
                     targetPreHp
                 });
@@ -1364,8 +1368,6 @@ export function registerSystemApplyDamage() {
         MODULE.ID,
         "pf1.documents.actor.ActorPF.prototype.applyDamage",
         async function (wrapped, value = 0, options = {}) {
-            if (actorHasAbsorptionData(this)) {
-            }
             let nasWrappedCallCount = 0;
             const isHealing = (value < 0) || options?.isHealing === true;
             const applyNasTempHp = async (damageValue, damageOptions = {}) => applyDamageAfterNasTemporaryHp(wrapped, this, damageValue, damageOptions);

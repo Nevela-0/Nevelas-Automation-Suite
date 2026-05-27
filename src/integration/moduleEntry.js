@@ -70,6 +70,7 @@ import {
   resetDamageAbsorptionBuff
 } from '../features/automation/buffs/damageAbsorption.js';
 import { registerNasTemporaryHpPools } from '../features/automation/buffs/temporaryHpPools.js';
+import { registerNonConsecutiveDurationHooks } from '../features/automation/buffs/buffs.js';
 import { configureKnownBuffAutomation, hasKnownBuffAutomationSource } from '../features/automation/buffs/knownBuffAutomation.js';
 import { registerSaveGatedBuffAutomation } from '../features/automation/buffs/buffs.js';
 import { registerTokenEffectBadges } from '../features/automation/utils/tokenEffectBadges.js';
@@ -298,6 +299,7 @@ Hooks.once("init", () => {
   registerOnStruckTokenEffectBadgeProvider();
   registerDamageAbsorptionTokenEffectBadgeProvider();
   registerNasTemporaryHpPools();
+  registerNonConsecutiveDurationHooks();
   registerSaveGatedBuffAutomation();
   registerDamageAbsorptionHpBarOverlay();
   registerGrantedDefenseOverlay();

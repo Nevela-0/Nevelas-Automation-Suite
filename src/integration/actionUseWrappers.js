@@ -1,5 +1,9 @@
 import { MODULE } from '../common/module.js';
-import { attachPendingBuffAutomationToChatData, handleBuffAutomation } from '../features/automation/buffs/buffs.js';
+import {
+  attachPendingBuffAutomationToChatData,
+  handleBuffAutomation,
+  shouldHandleBuffAutomation
+} from '../features/automation/buffs/buffs.js';
 import { collectSpellActionData } from '../features/automation/utils/spellActionData.js';
 import { commitPersistentFeatureStatesFromOptions } from '../features/automation/utils/attackDialogControls.js';
 import { applyMetamagicSelections } from '../features/automation/metamagic/applyMetamagic.js';
@@ -44,14 +48,7 @@ function shouldHandleMetamagic(actionUse) {
 }
 
 function shouldHandleAutomaticBuffs(actionUse) {
-  const itemType = actionUse?.item?.type;
-  const itemSubType = actionUse?.item?.subType;
-  const useCustomLogic = (
-    itemType === "spell" ||
-    itemType === "consumable" ||
-    (itemType === "feat" && itemSubType === "classFeat")
-  );
-  return useCustomLogic && game.settings.get(MODULE.ID, "automaticBuffs");
+  return shouldHandleBuffAutomation(actionUse);
 }
 
 function buildRangeOverride(actionUse) {

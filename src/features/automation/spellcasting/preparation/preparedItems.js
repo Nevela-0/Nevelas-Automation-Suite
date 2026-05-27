@@ -17,6 +17,7 @@ export const SPELLBOOK_PREPARED_ITEMS_VERSION = 1;
 export const BASE_PREPARED_VARIANT = "base";
 export const CUSTOM_PREPARED_VARIANT = "custom";
 const BASE_PREPARED_ENTRY_PREFIX = "base:";
+const DEFAULT_CUSTOM_SUFFIX = "Metamagic copy";
 
 function normalizeId(value) {
   return (value ?? "").toString().trim();
@@ -96,8 +97,8 @@ function normalizeCustomPreparedEntry(entry) {
   const metamagic = normalizeMetamagicSelections(entry.metamagic, { originalLevel: originalSpellLevel });
   const preparedSlotLevel = calculatePreparedSlotLevel(originalSpellLevel, metamagic);
   const sort = Number(entry.sort);
-  const suffix = normalizeId(entry.suffix) || "Variant";
-  const suffixMode = entry.suffixMode === undefined && suffix !== "Variant"
+  const suffix = normalizeId(entry.suffix) || DEFAULT_CUSTOM_SUFFIX;
+  const suffixMode = entry.suffixMode === undefined && !["Variant", DEFAULT_CUSTOM_SUFFIX].includes(suffix)
     ? MANUAL_SUFFIX_MODE
     : normalizeSuffixMode(entry.suffixMode);
 
@@ -296,7 +297,7 @@ export function getPreparedEntriesForKnownSpells(actor, bookId, knownSpells) {
   return (knownSpells ?? []).flatMap((knownSpell) => getPreparedEntriesForKnownSpell(actor, bookId, knownSpell));
 }
 
-export async function addPreparedSpellVariant(actor, bookId, knownSpell, { suffix = "Variant" } = {}) {
+export async function addPreparedSpellVariant(actor, bookId, knownSpell, { suffix = DEFAULT_CUSTOM_SUFFIX } = {}) {
   const normalizedBookId = normalizeId(bookId);
   const knownSpellId = normalizeId(knownSpell?.id);
   if (!normalizedBookId || !knownSpellId) return null;
@@ -343,7 +344,7 @@ export async function updatePreparedSpellVariant(actor, bookId, entryId, {
     if (entry.id !== normalizedEntryId) return entry;
     updated = normalizeCustomPreparedEntry({
       ...entry,
-      ...(suffix !== undefined ? { suffix: normalizeId(suffix) || "Variant" } : {}),
+      ...(suffix !== undefined ? { suffix: normalizeId(suffix) || DEFAULT_CUSTOM_SUFFIX } : {}),
       ...(metamagic !== undefined ? { metamagic } : {}),
       ...(metamagicOptions !== undefined ? { metamagicOptions } : {}),
       ...(suffixMode !== undefined ? { suffixMode } : {}),

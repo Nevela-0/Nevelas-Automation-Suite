@@ -628,7 +628,6 @@
 }
 
 .nas-prep-remove-known,
-.nas-prep-add-variant,
 .nas-prep-remove-variant,
 .nas-prep-configure-metamagic {
   display: inline-flex;
@@ -645,7 +644,6 @@
 }
 
 .nas-prep-remove-known > i,
-.nas-prep-add-variant > i,
 .nas-prep-remove-variant > i,
 .nas-prep-configure-metamagic > i {
   display: inline-flex;
@@ -670,11 +668,6 @@
   color: #8b3b2c;
 }
 
-.nas-prep-add-variant:hover {
-  border-color: rgba(92, 58, 37, 0.48);
-  color: var(--nas-prep-ink);
-}
-
 .nas-prep-configure-metamagic:hover,
 .nas-prep-configure-metamagic-active {
   border-color: rgba(140, 79, 31, 0.62);
@@ -683,15 +676,24 @@
 }
 
 .nas-prep-inscription-row {
+  --nas-prep-ink: #2b2118;
+  --nas-prep-muted: #6a5542;
+  --nas-prep-rule: rgba(88, 49, 30, 0.38);
+  position: fixed;
+  z-index: 10000;
   display: block;
-  margin: 2px 0 5px 8px;
+  box-sizing: border-box;
+  margin: 0;
   padding: 0;
   border: 0;
-  border-left: 2px solid rgba(92, 58, 37, 0.18);
   list-style: none;
+  overflow: auto;
+  filter: drop-shadow(0 6px 12px rgba(42, 25, 14, 0.28));
+  font-family: var(--font-primary);
 }
 
-.nas-prep-inscription-row[hidden] {
+.nas-prep-inscription-row[hidden],
+.nas-prep-inscription-overlay-hidden {
   display: none;
 }
 
@@ -704,7 +706,7 @@
   background:
     radial-gradient(ellipse at 18% 0%, rgba(255, 255, 255, 0.34), transparent 45%),
     repeating-linear-gradient(0deg, rgba(92, 58, 37, 0.04) 0 1px, transparent 1px 17px),
-    rgba(244, 231, 198, 0.72);
+    rgba(244, 231, 198, 0.94);
   box-shadow:
     inset 0 0 0 1px rgba(255, 252, 232, 0.32),
     0 1px 3px rgba(42, 25, 14, 0.16);
@@ -761,7 +763,7 @@
 
 .nas-prep-metamagic-seals {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--nas-prep-inscription-columns, 3), minmax(var(--nas-prep-inscription-seal-min, 0px), 1fr));
   gap: 6px;
 }
 
@@ -859,6 +861,13 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.nas-prep-inscription-overlay .nas-prep-metamagic-seal,
+.nas-prep-inscription-overlay .nas-prep-metamagic-seal-shell,
+.nas-prep-inscription-overlay .nas-prep-seal-mark {
+  overflow: visible;
+  text-overflow: clip;
 }
 
 .nas-prep-metamagic-choice-variable:not(.nas-prep-metamagic-choice-selected) .nas-prep-seal-mark {
@@ -988,11 +997,11 @@
 
 @container (max-width: 340px) {
   .nas-prep-variant-row {
-    grid-template-columns: minmax(0, 1fr);
-    align-items: start;
-    gap: 2px;
-    min-height: 60px;
-    padding: 4px 0 5px 7px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 5px;
+    min-height: 40px;
+    padding: 3px 0 3px 7px;
   }
 
   .nas-prep-variant-row .nas-prep-spell-main {
@@ -1025,10 +1034,11 @@
   }
 
   .nas-prep-variant-row .nas-prep-spell-meta {
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     gap: 2px 4px;
     font-size: 11px;
     line-height: 1.1;
+    overflow: hidden;
   }
 
   .nas-prep-variant-row .nas-prep-variant-source {
@@ -1056,10 +1066,9 @@
   }
 
   .nas-prep-variant-row .nas-prep-spell-control {
-    justify-content: flex-start;
-    gap: 4px;
+    justify-content: flex-end;
+    gap: 3px;
     min-width: 0;
-    margin-left: 30px;
   }
 
   .nas-prep-variant-row .nas-prep-remove-variant,
@@ -1091,10 +1100,6 @@
   .nas-prep-variant-row .nas-prep-count-control input {
     width: 34px;
     height: 20px;
-  }
-
-  .nas-prep-inscription-row {
-    margin-left: 2px;
   }
 
   .nas-prep-inscription {

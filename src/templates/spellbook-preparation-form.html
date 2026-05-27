@@ -185,13 +185,13 @@
                     aria-label="{{@root.labels.removeKnown}}">
                     <i class="fa-solid fa-xmark" inert></i>
                   </button>
-                  {{#if spell.canAddVariant}}
+                  {{#if spell.canConfigureMetamagic}}
                   <button type="button"
-                    class="nas-prep-add-variant"
-                    data-known-spell-id="{{spell.knownSpellId}}"
-                    data-tooltip="{{@root.labels.addVariant}}"
-                    aria-label="{{@root.labels.addVariant}}">
-                    <i class="fa-solid fa-copy" inert></i>
+                    class="nas-prep-configure-metamagic {{#if spell.inscriptionOpen}}nas-prep-configure-metamagic-active{{/if}}"
+                    data-entry-id="{{spell.id}}"
+                    data-tooltip="{{@root.labels.configureMetamagic}}"
+                    aria-label="{{@root.labels.configureMetamagic}}">
+                    <i class="fa-solid fa-feather-pointed" inert></i>
                   </button>
                   {{/if}}
                   {{/if}}
@@ -241,10 +241,11 @@
                   <header class="nas-prep-inscription-header">
                     <div>
                       <span class="nas-prep-inscription-kicker">{{@root.labels.inscriptionTitle}}</span>
-                      <strong>{{spell.suffix}}</strong>
+                      <strong>{{spell.inscriptionLabel}}</strong>
                     </div>
                     <div class="nas-prep-inscription-status">
                       <span>{{@root.labels.preparedSlot}} {{spell.preparedSlotLevelLabel}}</span>
+                      {{#unless spell.isMetamagicDraft}}
                       <button type="button"
                         class="nas-prep-auto-suffix"
                         data-entry-id="{{spell.id}}"
@@ -252,6 +253,7 @@
                         aria-label="{{@root.labels.autoSuffix}}">
                         <i class="fa-solid fa-wand-magic-sparkles" inert></i>
                       </button>
+                      {{/unless}}
                     </div>
                   </header>
 
@@ -456,13 +458,13 @@
                     aria-label="{{@root.labels.removeKnown}}">
                     <i class="fa-solid fa-xmark" inert></i>
                   </button>
-                  {{#if spell.canAddVariant}}
+                  {{#if spell.canConfigureMetamagic}}
                   <button type="button"
-                    class="nas-prep-add-variant"
-                    data-known-spell-id="{{spell.knownSpellId}}"
-                    data-tooltip="{{@root.labels.addVariant}}"
-                    aria-label="{{@root.labels.addVariant}}">
-                    <i class="fa-solid fa-copy" inert></i>
+                    class="nas-prep-configure-metamagic {{#if spell.inscriptionOpen}}nas-prep-configure-metamagic-active{{/if}}"
+                    data-entry-id="{{spell.id}}"
+                    data-tooltip="{{@root.labels.configureMetamagic}}"
+                    aria-label="{{@root.labels.configureMetamagic}}">
+                    <i class="fa-solid fa-feather-pointed" inert></i>
                   </button>
                   {{/if}}
                   {{/if}}
@@ -512,10 +514,11 @@
                   <header class="nas-prep-inscription-header">
                     <div>
                       <span class="nas-prep-inscription-kicker">{{@root.labels.inscriptionTitle}}</span>
-                      <strong>{{spell.suffix}}</strong>
+                      <strong>{{spell.inscriptionLabel}}</strong>
                     </div>
                     <div class="nas-prep-inscription-status">
                       <span>{{@root.labels.preparedSlot}} {{spell.preparedSlotLevelLabel}}</span>
+                      {{#unless spell.isMetamagicDraft}}
                       <button type="button"
                         class="nas-prep-auto-suffix"
                         data-entry-id="{{spell.id}}"
@@ -523,6 +526,7 @@
                         aria-label="{{@root.labels.autoSuffix}}">
                         <i class="fa-solid fa-wand-magic-sparkles" inert></i>
                       </button>
+                      {{/unless}}
                     </div>
                   </header>
 
