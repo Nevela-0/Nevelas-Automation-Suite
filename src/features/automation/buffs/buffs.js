@@ -1360,7 +1360,6 @@ export function attachPendingBuffAutomationToChatData(actionUse) {
     const { filteredTargets, perTargetDurations } = targetContext;
     const manualResultOptions = manualSelectionResultOptions(filteredTargets);
   
-    console.log(`${MODULE.ID} | Applying buff to ${filteredTargets.length} target(s)`);
     if (perTargetDurations && perTargetDurations.length > 0) {
       if (targetContext.manualSelection === true && buffSaveGate?.deferred) {
         const targetDurations = new Map(perTargetDurations.map((entry) => [

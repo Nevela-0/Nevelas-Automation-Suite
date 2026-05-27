@@ -6,51 +6,173 @@ function normalizeString(value) {
   return (value ?? "").toString().trim();
 }
 
+function getCollectionValues(collection) {
+  if (!collection) return [];
+  if (Array.isArray(collection)) return collection;
+  if (collection instanceof Map) return Array.from(collection.values());
+  if (typeof collection.values === "function") {
+    try {
+      return Array.from(collection.values());
+    } catch (_error) {
+      return [];
+    }
+  }
+  if (typeof collection === "object") return Object.values(collection);
+  return [];
+}
+
+function hasUsefulValue(value) {
+  if (value === undefined || value === null) return false;
+  if (typeof value === "string") return value.trim().length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object") return Object.keys(value).length > 0;
+  return true;
+}
+
+function firstUsefulValue(...values) {
+  for (const value of values) {
+    if (hasUsefulValue(value)) return value;
+  }
+  return undefined;
+}
+
+function firstUsefulString(...values) {
+  const value = firstUsefulValue(...values);
+  return normalizeString(value);
+}
+
+function getActionField(action, field) {
+  return firstUsefulValue(action?.[field], action?.data?.[field], action?.system?.[field]);
+}
+
+function getActionDamageParts(action) {
+  return firstUsefulValue(action?.damage?.parts, action?.data?.damage?.parts, action?.system?.damage?.parts);
+}
+
+function getActionCandidates(source) {
+  const actions = [];
+  const seen = new Set();
+  const addAction = (action) => {
+    if (!action || seen.has(action)) return;
+    seen.add(action);
+    actions.push(action);
+  };
+  const item = source?.item ?? source?.action?.item ?? null;
+
+  addAction(source?.action);
+  getCollectionValues(item?.actions).forEach(addAction);
+  getCollectionValues(item?.system?.actions).forEach(addAction);
+  getCollectionValues(item?.system?.actions?.contents).forEach(addAction);
+
+  return actions;
+}
+
+function getFirstActionValue(source, selector) {
+  if (typeof selector !== "function") return undefined;
+  for (const action of getActionCandidates(source)) {
+    const value = selector(action);
+    if (hasUsefulValue(value)) return value;
+  }
+  return undefined;
+}
+
 function numberOrZero(value) {
   const number = Number(value ?? 0);
   return Number.isFinite(number) ? number : 0;
 }
 
 function getSpellComponents(source) {
-  return source?.components ?? source?.action?.components ?? source?.action?.item?.system?.components ?? source?.item?.system?.components ?? {};
+  return firstUsefulValue(
+    source?.components,
+    getFirstActionValue(source, (action) => getActionField(action, "components")),
+    source?.action?.item?.system?.components,
+    source?.item?.system?.components
+  ) ?? {};
 }
 
 function getSpellDuration(source) {
-  return source?.duration ?? source?.action?.duration ?? source?.action?.item?.system?.duration ?? source?.item?.system?.duration ?? {};
+  return firstUsefulValue(
+    source?.duration,
+    getFirstActionValue(source, (action) => getActionField(action, "duration")),
+    source?.action?.item?.system?.duration,
+    source?.item?.system?.duration
+  ) ?? {};
 }
 
 function getSpellActivation(source) {
-  return source?.activation ?? source?.action?.activation ?? source?.action?.item?.system?.activation ?? source?.item?.system?.activation ?? {};
+  return firstUsefulValue(
+    source?.activation,
+    getFirstActionValue(source, (action) => getActionField(action, "activation")),
+    source?.action?.item?.system?.activation,
+    source?.item?.system?.activation
+  ) ?? {};
 }
 
 function getSpellDamageParts(source) {
-  return source?.damageParts ?? source?.action?.damage?.parts ?? source?.action?.item?.system?.damage?.parts ?? source?.item?.system?.damage?.parts ?? [];
+  return firstUsefulValue(
+    source?.damageParts,
+    getFirstActionValue(source, (action) => getActionDamageParts(action)),
+    source?.action?.item?.system?.damage?.parts,
+    source?.item?.system?.damage?.parts
+  ) ?? [];
 }
 
-function getSpellRangeUnits(source) {
-  const rawUnits =
-    source?.rangeUnits ??
-    source?.range?.units ??
-    source?.action?.range?.units ??
-    source?.action?.item?.system?.range?.units ??
-    source?.item?.system?.range?.units ??
-    "";
+export function getMetamagicSpellRangeUnits(source) {
+  const actionRange = getFirstActionValue(source, (action) => getActionField(action, "range"));
+  const rawUnits = firstUsefulString(
+    source?.rangeUnits,
+    source?.range?.units,
+    actionRange?.units,
+    source?.action?.item?.system?.range?.units,
+    source?.item?.system?.range?.units
+  );
   const normalized = rawUnits?.toString?.().toLowerCase() ?? "";
   if (normalized) return normalized;
-  if (source?.touch === true || source?.action?.touch === true || source?.item?.system?.range?.touch === true || source?.item?.system?.touch === true) return "touch";
+  if (
+    source?.touch === true
+    || source?.range?.touch === true
+    || actionRange?.touch === true
+    || source?.action?.touch === true
+    || source?.action?.item?.system?.range?.touch === true
+    || source?.action?.item?.system?.touch === true
+    || source?.item?.system?.range?.touch === true
+    || source?.item?.system?.touch === true
+  ) return "touch";
   return "";
 }
 
+function getSpellRangeUnits(source) {
+  return getMetamagicSpellRangeUnits(source);
+}
+
 function getSpellArea(source) {
-  return source?.area ?? source?.action?.area ?? source?.action?.item?.system?.area ?? source?.item?.system?.area ?? "";
+  return firstUsefulValue(
+    source?.area,
+    getFirstActionValue(source, (action) => getActionField(action, "area")),
+    source?.action?.item?.system?.area,
+    source?.item?.system?.area
+  ) ?? "";
 }
 
 function getSpellTemplateType(source) {
-  return source?.measureTemplate?.type ?? source?.action?.measureTemplate?.type ?? source?.action?.item?.system?.measureTemplate?.type ?? source?.item?.system?.measureTemplate?.type ?? "";
+  const measureTemplate = firstUsefulValue(
+    source?.measureTemplate,
+    getFirstActionValue(source, (action) => getActionField(action, "measureTemplate")),
+    source?.action?.item?.system?.measureTemplate,
+    source?.item?.system?.measureTemplate
+  );
+  return normalizeString(measureTemplate?.type);
 }
 
 function getSpellSaveType(source) {
-  return source?.saveType ?? source?.save?.type ?? source?.action?.save?.type ?? source?.action?.item?.system?.save?.type ?? source?.item?.system?.save?.type ?? "";
+  const actionSave = getFirstActionValue(source, (action) => getActionField(action, "save"));
+  return firstUsefulString(
+    source?.saveType,
+    source?.save?.type,
+    actionSave?.type,
+    source?.action?.item?.system?.save?.type,
+    source?.item?.system?.save?.type
+  );
 }
 
 function getSpellBaseLevel(source) {
