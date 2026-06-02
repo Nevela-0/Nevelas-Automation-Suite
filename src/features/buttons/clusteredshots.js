@@ -1,6 +1,8 @@
 import { MODULE } from '../../common/module.js';
 import { elementFromHtmlLike } from '../../common/foundryCompat.js';
 import { resolveEnglishName } from '../automation/utils/compendiumNameResolver.js';
+import { getTypeIdsFromInstance, toDamagePartModel } from '../automation/damage/instances.js';
+import { applyNasHeadlessDamage } from '../automation/damage/systemApplyDamage.js';
 
 const CLUSTERED_SHOTS_COMPENDIUM_SOURCE = "Compendium.pf-content.pf-feats.Item.6b29HYy9MgWVO7oW";
 const CLUSTERED_SHOTS_ENGLISH_NAME = "Clustered Shots";
@@ -18,7 +20,6 @@ function isEnglishLanguage() {
 }
 
 function isFeatItem(item) {
-    // PF1 sometimes exposes subtype on item.subType; some data has it under item.system.subType.
     const subType = item?.subType ?? item?.system?.subType;
     return item?.type === "feat" && subType === "feat";
 }
@@ -56,14 +57,12 @@ async function actorHasClusteredShots(actor) {
     const feats = Array.from(items).filter(isFeatItem);
     if (!feats.length) return false;
 
-    // Prefer stable/fast identifiers
     for (const feat of feats) {
         const reason = getClusteredShotsFastMatchReason(feat);
         if (!reason) continue;
         return true;
     }
 
-    // Fallback: resolve localized name → English (cached, deepScan off)
     if (isEnglishLanguage()) return false;
     for (const feat of feats) {
         const resolved = await resolveEnglishName(feat?.name, { documentName: "Item", deepScanMode: "off" });
@@ -428,7 +427,7 @@ async function applyClusteredShots(card, button, event) {
         }
     }
 
-    let instances = Array.from(instancesByKey.entries()).map(([key, value]) => ({
+    let instances = Array.from(instancesByKey.entries()).map(([key, value]) => toDamagePartModel({
         types: key.split("|"),
         value,
         formula: String(value)
@@ -438,12 +437,12 @@ async function applyClusteredShots(card, button, event) {
         const types = fallbackDamageTypes.size ? Array.from(fallbackDamageTypes) : ["untyped"];
         if (Number.isFinite(fallbackTotalDamage) && fallbackTotalDamage > 0) {
             const formula = String(fallbackTotalDamage);
-            instances = [{ types, value: fallbackTotalDamage, formula }];
+            instances = [toDamagePartModel({ types, value: fallbackTotalDamage, formula })];
         }
     }
 
     const totalDamage = instances.reduce((sum, inst) => sum + (Number(inst?.value) || 0), 0);
-    const damageTypes = new Set(instances.flatMap((inst) => inst.types || []));
+    const damageTypes = new Set(instances.flatMap(getTypeIdsFromInstance));
 
     if (!Number.isFinite(totalDamage) || totalDamage <= 0) {
         ui.notifications.warn(t('NAS.clusteredShots.warnings.noDamageFound'));
@@ -482,7 +481,7 @@ async function applyClusteredShots(card, button, event) {
         return;
     }
 
-    await applyDamage(totalDamage, {
+    const applyOptions = {
         targets,
         instances,
         action,
@@ -505,7 +504,12 @@ async function applyClusteredShots(card, button, event) {
                 }
             }
         }
-    });
+    };
+
+    const applied = await applyNasHeadlessDamage(totalDamage, applyOptions);
+    if (!applied?.handled) {
+        await applyDamage(totalDamage, applied?.options ?? applyOptions);
+    }
 
     ui.notifications.info(tf('NAS.clusteredShots.info.applied', { totalDamage, targets: targets?.length || 1 }));
 }

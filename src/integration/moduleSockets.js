@@ -6,6 +6,12 @@ import {
     applyMirrorImageStateSocket,
     undoMirrorImageOperationSocket
 } from '../features/automation/buffs/mirrorImage.js';
+import {
+    CONCEALED_CONDITION_ID,
+    CONCEALED_VARIANT_FLAG,
+    concealedEffectDataForVariant,
+    normalizeConcealedVariant
+} from '../features/automation/conditions/concealed/concealed.js';
 
 export let socket;
 
@@ -233,6 +239,14 @@ function normalizeReactiveApplicationOptions(options = {}) {
     if (Object.prototype.hasOwnProperty.call(raw, "durationSeconds") && Number.isFinite(Number(raw.durationSeconds))) {
         out.durationSeconds = Math.max(0, Math.floor(Number(raw.durationSeconds)));
     }
+    const concealedVariant = normalizeConcealedVariant(raw?.flags?.[MODULE.ID]?.[CONCEALED_VARIANT_FLAG]);
+    if (concealedVariant) {
+        out.flags = {
+            [MODULE.ID]: {
+                [CONCEALED_VARIANT_FLAG]: concealedVariant
+            }
+        };
+    }
     return out;
 }
 
@@ -262,10 +276,17 @@ function findConditionEffect(actor, conditionId) {
     return actor?.effects?.find?.((effect) => effect?.active && effect?.statuses?.has?.(id)) ?? null;
 }
 
-function reactiveConditionUpdates(application = {}) {
+function reactiveConditionUpdates(application = {}, conditionId = "", { includeDuration = true } = {}) {
     const options = normalizeReactiveApplicationOptions(application);
-    if (!Number.isFinite(Number(options.durationSeconds)) || Number(options.durationSeconds) <= 0) return {};
-    return { "duration.seconds": Math.max(0, Math.floor(Number(options.durationSeconds))) };
+    const updates = {};
+    if (conditionId === CONCEALED_CONDITION_ID) {
+        const concealedVariant = normalizeConcealedVariant(options?.flags?.[MODULE.ID]?.[CONCEALED_VARIANT_FLAG]);
+        if (concealedVariant) Object.assign(updates, concealedEffectDataForVariant(concealedVariant));
+    }
+    if (includeDuration && Number.isFinite(Number(options.durationSeconds)) && Number(options.durationSeconds) > 0) {
+        updates["duration.seconds"] = Math.max(0, Math.floor(Number(options.durationSeconds)));
+    }
+    return updates;
 }
 
 async function setReactiveConditionState(actor, conditionId, enabled, application = {}) {
@@ -279,13 +300,12 @@ async function setReactiveConditionState(actor, conditionId, enabled, applicatio
     const options = normalizeReactiveApplicationOptions(application);
     const existing = findConditionEffect(actor, id);
     if (existing) {
-        if (!options.refreshExisting) return true;
-        const updates = reactiveConditionUpdates(options);
+        const updates = reactiveConditionUpdates(options, id, { includeDuration: options.refreshExisting });
         if (Object.keys(updates).length) await existing.update(updates);
         return true;
     }
 
-    const updates = reactiveConditionUpdates(options);
+    const updates = reactiveConditionUpdates(options, id);
     await actor.setCondition?.(id, Object.keys(updates).length ? updates : true);
     return true;
 }

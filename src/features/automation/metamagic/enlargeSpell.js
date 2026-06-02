@@ -1,3 +1,5 @@
+import { MODULE } from "../../../common/module.js";
+
 export const METAMAGIC_DEFINITION = {
   key: "enlargeSpell",
   name: "Enlarge Spell",
@@ -5,10 +7,24 @@ export const METAMAGIC_DEFINITION = {
 };
 
 const ENLARGE_RANGE_UNITS = new Set(["close", "medium", "long"]);
+const NUMERIC_RANGE_EXCLUDED_UNITS = new Set(["", "touch", "personal", "self", "see", "seetext", "special", "spec"]);
+const HOMEBREW_NUMERIC_RANGE_SETTING = "homebrewEnlargeSpellNumericRanges";
+
+function getRangeUnits(context) {
+  return (context?.range?.range?.units ?? "").toString().trim().toLowerCase();
+}
 
 function getNumeric(value) {
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
+}
+
+function isHomebrewNumericRangeEnabled() {
+  try {
+    return globalThis.game?.settings?.get?.(MODULE.ID, HOMEBREW_NUMERIC_RANGE_SETTING) === true;
+  } catch (_err) {
+    return false;
+  }
 }
 
 function resolveBaseRangeFromRollData(units, action) {
@@ -31,17 +47,37 @@ function pickPositiveRange(...values) {
   return null;
 }
 
+function pickPositiveNumericRange(context) {
+  return pickPositiveRange(
+    context?.range?.evaluated?.value?.total,
+    context?.range?.range?.value
+  );
+}
+
+function hasNumericCustomRange(context) {
+  const units = getRangeUnits(context);
+  if (!isHomebrewNumericRangeEnabled()) return false;
+  if (ENLARGE_RANGE_UNITS.has(units) || NUMERIC_RANGE_EXCLUDED_UNITS.has(units)) return false;
+  if (context?.range?.touch === true) return false;
+  const range = pickPositiveNumericRange(context);
+  return Number.isFinite(range) && range > 0;
+}
+
 export function canApplyEnlargeSpell(context) {
-  const units = (context?.range?.range?.units ?? "").toString().trim().toLowerCase();
-  return ENLARGE_RANGE_UNITS.has(units);
+  const units = getRangeUnits(context);
+  if (ENLARGE_RANGE_UNITS.has(units)) return true;
+  return hasNumericCustomRange(context);
 }
 
 export function applyEnlargeSpell(context, action = null) {
-  const units = (context?.range?.range?.units ?? "").toString().trim().toLowerCase();
+  const units = getRangeUnits(context);
   const evaluatedTotalRaw = context?.range?.evaluated?.value?.total ?? null;
   const rangeValueRaw = context?.range?.range?.value ?? null;
-  const computedFromRollData = resolveBaseRangeFromRollData(units, action);
-  const baseRange = pickPositiveRange(evaluatedTotalRaw, rangeValueRaw, computedFromRollData);
+  const useStandardRange = ENLARGE_RANGE_UNITS.has(units);
+  const computedFromRollData = useStandardRange ? resolveBaseRangeFromRollData(units, action) : null;
+  const baseRange = useStandardRange
+    ? pickPositiveRange(evaluatedTotalRaw, rangeValueRaw, computedFromRollData)
+    : pickPositiveRange(evaluatedTotalRaw, rangeValueRaw);
   const canApply = canApplyEnlargeSpell(context);
   if (!context?.range?.range) return false;
   if (!canApply) return false;
@@ -49,7 +85,7 @@ export function applyEnlargeSpell(context, action = null) {
   if (!Number.isFinite(baseRange) || baseRange <= 0) return false;
 
   const nextRange = baseRange * 2;
-  context.range.range.units = "ft";
+  if (useStandardRange) context.range.range.units = "ft";
   context.range.range.value = String(nextRange);
   context.range.hasRange = true;
   context.range.isRanged = true;
@@ -58,8 +94,11 @@ export function applyEnlargeSpell(context, action = null) {
   const baseMin =
     getNumeric(context?.range?.evaluated?.minValue?.total)
     ?? getNumeric(context?.range?.range?.minValue);
-  if (Number.isFinite(baseMin) && baseMin >= 0) {
-    context.range.range.minUnits = "ft";
+  const hasRawMinValue = context?.range?.range?.minValue !== undefined && context?.range?.range?.minValue !== "";
+  const hasNumericMin = useStandardRange || hasRawMinValue;
+  if (hasNumericMin && Number.isFinite(baseMin) && baseMin >= 0) {
+    if (useStandardRange) context.range.range.minUnits = "ft";
+    else if (!context.range.range.minUnits && context.range.range.units) context.range.range.minUnits = context.range.range.units;
     context.range.range.minValue = String(baseMin * 2);
   }
 

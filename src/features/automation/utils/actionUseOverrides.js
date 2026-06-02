@@ -20,7 +20,6 @@ export function applyActionUseOverrides(actionUse, context) {
 
   if (context.components) {
     Object.entries(context.components).forEach(([key, value]) => {
-      // Use document path to ensure downstream chat rendering reads the projected component values.
       const path = `system.components.${key}`;
       setOverride(overrides, item, path, value);
     });

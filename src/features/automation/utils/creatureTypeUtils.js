@@ -4,6 +4,80 @@ export function getAlignmentValue(alignment) {
   return (alignment ?? "").toString().toLowerCase();
 }
 
+const ALIGNMENT_REQUIREMENT_ALIASES = {
+  g: "good",
+  e: "evil",
+  l: "lawful",
+  c: "chaotic"
+};
+
+const ALIGNMENT_REQUIREMENT_KINDS = new Set([
+  "any",
+  "good",
+  "evil",
+  "lawful",
+  "chaotic",
+  "lg",
+  "ng",
+  "cg",
+  "ln",
+  "tn",
+  "cn",
+  "le",
+  "ne",
+  "ce"
+]);
+
+const EXACT_ALIGNMENT_KINDS = new Set(["lg", "ng", "cg", "ln", "tn", "cn", "le", "ne", "ce"]);
+
+const ALIGNMENT_TEXT_ALIASES = {
+  lawfulgood: "lg",
+  neutralgood: "ng",
+  chaoticgood: "cg",
+  lawfulneutral: "ln",
+  trueneutral: "tn",
+  neutral: "tn",
+  chaoticneutral: "cn",
+  lawfulevil: "le",
+  neutralevil: "ne",
+  chaoticevil: "ce"
+};
+
+export function normalizeAlignmentRequirementKind(value) {
+  const raw = String(value ?? "any").trim().toLowerCase();
+  const kind = ALIGNMENT_REQUIREMENT_ALIASES[raw] ?? raw;
+  return ALIGNMENT_REQUIREMENT_KINDS.has(kind) ? kind : "any";
+}
+
+function getActorAlignmentCode(alignment) {
+  const raw = getAlignmentValue(alignment);
+  if (EXACT_ALIGNMENT_KINDS.has(raw)) return raw;
+  const compact = raw.replace(/[^a-z]/g, "");
+  if (EXACT_ALIGNMENT_KINDS.has(compact)) return compact;
+  if (ALIGNMENT_TEXT_ALIASES[compact]) return ALIGNMENT_TEXT_ALIASES[compact];
+  return raw;
+}
+
+export function actorMatchesAlignmentRequirement(actor, requirement) {
+  const kind = normalizeAlignmentRequirementKind(requirement);
+  if (kind === "any") return true;
+
+  const alignment = getActorAlignmentCode(actor?.system?.details?.alignment);
+  if (!alignment) return false;
+  if (EXACT_ALIGNMENT_KINDS.has(kind)) return alignment === kind;
+  if (EXACT_ALIGNMENT_KINDS.has(alignment)) {
+    if (kind === "good") return alignment.includes("g");
+    if (kind === "evil") return alignment.includes("e");
+    if (kind === "lawful") return alignment.includes("l");
+    if (kind === "chaotic") return alignment.includes("c");
+  }
+  if (kind === "good") return /\bgood\b/.test(alignment);
+  if (kind === "evil") return /\bevil\b/.test(alignment);
+  if (kind === "lawful") return /\blawful\b/.test(alignment);
+  if (kind === "chaotic") return /\bchaotic\b/.test(alignment);
+  return true;
+}
+
 function parseAliasList(value) {
   if (Array.isArray(value)) {
     return value

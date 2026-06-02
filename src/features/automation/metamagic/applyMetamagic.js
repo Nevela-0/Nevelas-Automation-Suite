@@ -580,16 +580,6 @@ function applyGrandMaestroComponents(context) {
 }
 
 function applyHealersBlessingDamageBonus(context) {
-  // TODO(NAS-HealersBlessing): Add branch-aware damage handling for spells with
-  // multiple target-type outcomes (living/undead/construct/light-vulnerable).
-  // Cure/Inflict and spells like Searing Light need separate formula branches.
-  //
-  // TODO(NAS-HealersBlessing): Add chat-card multi-section damage blocks with
-  // independent apply buttons, then route final branch selection through actor/token
-  // creature-type data before applying healing/damage.
-  //
-  // TODO(NAS-HealersBlessing): When branch-aware handling exists, enforce RAW
-  // exclusion so this bonus does not empower cure-spell damage dealt to undead.
   const overrides = mapDamagePartFormulas(context, (formula) => applyEmpowerToFormula(formula));
   if (!appendDamagePartOverrides(context, overrides)) return false;
   return true;
@@ -644,8 +634,6 @@ function applyOneBodyTwoMindsEffects(context, action, { allowMindAffectingExtend
 
   context.metamagic ??= { applied: [], slotIncrease: 0 };
   context.metamagic.oneBodyTwoMindsCastTimeSurcharge = true;
-  // TODO(NAS-OneBodyTwoMinds): House rule currently keeps spontaneous metamagic cast-time
-  // increase for this ability; revisit if table ruling changes.
   if (touched || appliedExtend) {
     context.metamagic.oneBodyTwoMindsApplied = true;
   }
@@ -1018,8 +1006,6 @@ async function consumeHigherSpellSlot(action, slotIncrease) {
   if (typeof action.shared?.rollData?.chargeCost === "number") {
     action.shared.rollData.chargeCost = 0;
   }
-  // We already consumed the higher-level slot manually above.
-  // Prevent PF1's default charge pipeline from also deducting charges from the base spell level.
   action.shared.cost = 0;
   action.shared.rollData.chargeCost = 0;
   action.shared.rollData.chargeCostBonus = 0;
@@ -2027,7 +2013,6 @@ export async function applyMetamagicSelections(action, context) {
   context.metamagic.appliedPreparedMetamagicNames = preparedSpellbookRuntime.appliedPreparedNames;
   context.metamagic.appliedDynamicMetamagicNames = preparedSpellbookRuntime.appliedDynamicNames;
   context.metamagic.consumedSlotIncrease = consumedSlotIncrease;
-  // Backward-compatible mirror while consumers migrate to consumedSlotIncrease.
   context.metamagic.effectiveSlotIncrease = consumedSlotIncrease;
 
   const heightenApplied = Array.isArray(context?.metamagic?.applied)

@@ -96,7 +96,6 @@ function resolveChipAnchor(attack) {
         return { anchor: flavorAnchor, mode: "absolute" };
     }
 
-    // Damage-only cards (no attack roll) use attack-damage headers.
     const damageAnchor =
         attack.querySelector("th.attack-damage[colspan='2']") ??
         attack.querySelector("thead tr:first-child th.attack-damage") ??
@@ -118,8 +117,6 @@ function mountChip(anchor, wrap, mode) {
         return;
     }
 
-    // Damage-only cards: place the mode chip to the LEFT of the "Damage" label
-    // so it is visually distinct from the apply/half/healing action buttons.
     wrap.style.cssText = "display:inline-flex;align-items:center;margin-right:6px;margin-left:2px;vertical-align:middle;";
     anchor.insertBefore(wrap, anchor.firstChild);
 }

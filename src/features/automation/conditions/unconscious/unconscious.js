@@ -182,7 +182,6 @@ async function handleWoundsVigorUnconscious(actorDocument, change) {
     return;
   }
 
-  // Wounded is represented by staggered in W&V; it is not unconscious by itself.
   if (state.isWounded && actorDocument.statuses?.has?.('dying')) {
     await actorDocument.setCondition('dying', false);
   }
@@ -206,7 +205,6 @@ export async function handleUnconsciousOnUpdate(actorDocument, change, options =
       await actorDocument.setCondition("dying", false);
     }
 
-    // Clear staggered when no longer negative HP (or if dead).
     if (newHp >= 0 || actorDocument.statuses?.has?.("dead")) {
       const nlState = getNonlethalThresholdState(actorDocument);
       if (actorDocument.statuses?.has?.("staggered") && !nlState.shouldStaggered && !nlState.shouldUnconscious) {
@@ -214,7 +212,6 @@ export async function handleUnconsciousOnUpdate(actorDocument, change, options =
       }
     }
 
-    // Diehard choice should not persist once the actor is no longer at negative HP.
     if (newHp >= 0 || actorDocument.statuses?.has?.("dead")) {
       const flag = getHtkFlag(actorDocument);
       if (flag?.diehardMode) {

@@ -1,7 +1,8 @@
 import { METAMAGIC_DEFINITIONS, resolveMetamagicNameFromDatabase } from "../../metamagic/metamagic.js";
 import {
   buildMetamagicEligibilityContextFromItem,
-  canApplyMetamagicToSpellContext
+  canApplyMetamagicToSpellContext,
+  getMetamagicSpellRangeUnits
 } from "../../metamagic/metamagicEligibility.js";
 import { getSpellbookLevelAvailability } from "./slotAvailability.js";
 
@@ -80,11 +81,7 @@ function getMetamagicDefinitionForItem(item) {
 }
 
 function getSpellRangeUnits(sourceItem) {
-  const rawUnits = sourceItem?.system?.range?.units ?? "";
-  const normalized = rawUnits?.toString?.().toLowerCase() ?? "";
-  if (normalized) return normalized;
-  if (sourceItem?.system?.range?.touch === true || sourceItem?.system?.touch === true) return "touch";
-  return "";
+  return getMetamagicSpellRangeUnits({ item: sourceItem });
 }
 
 function getSpellbook(actor, sourceItem) {
@@ -566,8 +563,7 @@ export function togglePreparedEntryMetamagic(actor, sourceItem, preparedEntry, k
   }
 
   nextSelections = normalizeMetamagicSelections(nextSelections, { originalLevel, sourceItem });
-  const update = buildPreparedMetamagicUpdate(preparedEntry, originalLevel, nextSelections, fallbackSuffix);
-  return update;
+  return buildPreparedMetamagicUpdate(preparedEntry, originalLevel, nextSelections, fallbackSuffix);
 }
 
 export function updatePreparedEntryMetamagicOption(actor, sourceItem, preparedEntry, key, optionValue, { fallbackSuffix = "Metamagic copy" } = {}) {

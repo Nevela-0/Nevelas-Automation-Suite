@@ -2,6 +2,13 @@ import { MODULE } from "../../../common/module.js";
 import { getDamageTypes } from "../../../common/settings/damageSettingsForms.js";
 import { absorptionGrantedDefenseContributionsForItem, hasDamageAbsorptionData } from "../buffs/damageAbsorption.js";
 import { createNasId } from "../utils/nasIds.js";
+import {
+  isNasFeatureLikeItem,
+  isNasFeatureLikeItemActive,
+  isNasImplantItem,
+  isNasImplantItemActive,
+  isNasReactiveAutomationItem
+} from "../utils/itemTypes.js";
 
 export const GRANTED_DEFENSE_FLAG = "grantedDefenses";
 export const ITEM_REACTIVE_FLAG_KEY = "itemReactiveEffects";
@@ -110,7 +117,7 @@ export function hasGrantedDefenseData(item) {
 
 function grantedDefenseSourceStatus(item) {
   if (!item) return { active: false, reason: "missing-item" };
-  if (!["buff", "equipment"].includes(item.type)) {
+  if (!isNasReactiveAutomationItem(item)) {
     return {
       active: false,
       reason: "unsupported-item-type",
@@ -128,6 +135,36 @@ function grantedDefenseSourceStatus(item) {
   }
   const active = item.system?.equipped === true && (item.system?.quantity ?? 1) > 0;
   const notBroken = item.isBroken !== true;
+  if (isNasFeatureLikeItem(item)) {
+    const featureActive = isNasFeatureLikeItemActive(item);
+    return {
+      active: featureActive,
+      reason: featureActive
+        ? "active-feature"
+        : item.system?.disabled === true
+          ? "disabled-feature"
+          : "unowned-feature",
+      disabled: item.system?.disabled,
+      subType: item.subType ?? item.system?.subType
+    };
+  }
+  if (isNasImplantItem(item)) {
+    const implantActive = isNasImplantItemActive(item);
+    return {
+      active: implantActive,
+      reason: implantActive
+        ? "active-implant"
+        : item.system?.disabled === true
+          ? "disabled-implant"
+          : item.system?.implanted !== true
+            ? "unimplanted-implant"
+            : "inactive-implant",
+      disabled: item.system?.disabled,
+      implanted: item.system?.implanted,
+      quantity: item.system?.quantity,
+      isBroken: item.isBroken
+    };
+  }
   return {
     active: active && notBroken,
     reason: active && notBroken ? "active-equipment" : "inactive-equipment",

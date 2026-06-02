@@ -96,8 +96,6 @@ function isSpellLikeSpellbookItem(actor, spellItem) {
   const spellbookKey = normalizeKey(spellItem?.system?.spellbook);
   if (spellbookKey !== "spelllike") return false;
   const abilityType = normalizeKey(spellItem?.system?.abilityType);
-  // Spellbook "spelllike" is the authoritative PF1 discriminator for these spell entries.
-  // Some spelllike entries omit abilityType at item level, so only reject explicit non-sp values.
   if (abilityType && abilityType !== "sp") return false;
   const actorBook = actor?.system?.attributes?.spells?.spellbooks?.[spellbookKey];
   return Boolean(actorBook);

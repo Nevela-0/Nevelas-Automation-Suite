@@ -76,8 +76,6 @@ export function getBehaviorData(actor, rollResult) {
       const actions = Array.isArray(item?.system?.actions) ? item.system.actions : [];
       const hasMeleeAttackAction = actions.some((action) => action?.actionType === "mwak");
       if (!hasMeleeAttackAction) return false;
-
-      // Support both regular weapons and natural attack items.
       if (item?.type === "weapon") return !item?.system?.broken;
       if (item?.type === "attack") return true;
       return false;

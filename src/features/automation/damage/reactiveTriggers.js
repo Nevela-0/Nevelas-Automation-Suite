@@ -5,8 +5,23 @@ import { chatMessageStyle } from "../../../common/foundryCompat.js";
 import { toDamagePartModel } from "./instances.js";
 import { applyReactiveDamageToActor, toggleReactiveBuff, toggleReactiveCondition } from "../../../integration/moduleSockets.js";
 import { actorUsesWoundsVigor, isWvNoWoundsActor } from "../utils/woundsVigor.js";
-import { getCreatureTypeState } from "../utils/creatureTypeUtils.js";
+import {
+  actorMatchesAlignmentRequirement,
+  getCreatureTypeState,
+  normalizeAlignmentRequirementKind
+} from "../utils/creatureTypeUtils.js";
 import { grantNasTemporaryHp } from "../buffs/temporaryHpPools.js";
+import {
+  isNasFeatureLikeItem,
+  isNasFeatureLikeItemActive,
+  isNasImplantItem,
+  isNasImplantItemActive,
+  isNasReactiveAutomationItem
+} from "../utils/itemTypes.js";
+import {
+  CONCEALED_VARIANT_FLAG,
+  normalizeConcealedVariant
+} from "../conditions/concealed/concealed.js";
 import {
   canUserSeeTokenEffectBadge,
   refreshTokenEffectBadgesForActor,
@@ -168,10 +183,66 @@ function normalizeReactiveApplicationDuration(raw = {}) {
 
 function normalizeReactiveApplicationOptions(raw = {}, kind = "condition") {
   const options = raw && typeof raw === "object" ? raw : {};
-  return {
+  const out = {
     duration: normalizeReactiveApplicationDuration(options.duration),
     levelFormula: kind === "buff" ? String(options.levelFormula ?? options.level ?? "") : "",
     refreshExisting: options.refreshExisting === true
+  };
+  if (kind === "condition") {
+    const concealedVariant = normalizeConcealedVariant(options?.flags?.[MODULE.ID]?.[CONCEALED_VARIANT_FLAG]);
+    if (concealedVariant) {
+      out.flags = {
+        [MODULE.ID]: {
+          [CONCEALED_VARIANT_FLAG]: concealedVariant
+        }
+      };
+    }
+  }
+  return out;
+}
+
+function normalizeReactiveSourceKind(value, fallback = "any") {
+  const kind = String(value ?? fallback);
+  if (["any", "anyMelee", "meleeWeapon", "meleeNoReach", "reachMelee", "naturalAttack", "unarmedStrike", "spell"].includes(kind)) return kind;
+  if (kind === "naturalWeapon") return "naturalAttack";
+  if (kind === "nonWeapon") return "spell";
+  return fallback;
+}
+
+function normalizeReactiveCreatureKind(value) {
+  const kind = String(value ?? "any");
+  return ["any", "living", "undead", "construct", "nonliving"].includes(kind) ? kind : "any";
+}
+
+function normalizeReactiveRequirementSave(raw = {}) {
+  const save = raw && typeof raw === "object" ? raw : {};
+  const type = String(save.type ?? save.saveType ?? "ref").toLowerCase();
+  return {
+    enabled: save.enabled === true && ["fort", "ref", "will"].includes(type),
+    type: ["fort", "ref", "will"].includes(type) ? type : "ref",
+    dcFormula: String(save.dcFormula ?? save.dc ?? ""),
+    skipDialog: save.skipDialog === true,
+    onSuccess: "negates"
+  };
+}
+
+function normalizeReactiveRequirements(raw = {}) {
+  const value = raw && typeof raw === "object" ? raw : {};
+  const sourceKind = normalizeReactiveSourceKind(value.sourceKind, "any");
+  const creatureKind = normalizeReactiveCreatureKind(value.creatureKind ?? value.attackerCreatureKind);
+  const alignmentKind = normalizeAlignmentRequirementKind(value.alignmentKind ?? value.attackerAlignmentKind);
+  const save = normalizeReactiveRequirementSave(value.save);
+  const enabled = value.enabled === true
+    || sourceKind !== "any"
+    || creatureKind !== "any"
+    || alignmentKind !== "any"
+    || save.enabled;
+  return {
+    enabled,
+    sourceKind,
+    creatureKind,
+    alignmentKind,
+    save
   };
 }
 
@@ -197,21 +268,17 @@ function normalizeEffect(effect = {}) {
     temporaryHpCompatibilityMode: normalizeTemporaryHpCompatibilityMode(effect?.temporaryHpCompatibilityMode),
     temporaryHpCapMode: normalizeTemporaryHpCapMode(effect?.temporaryHpCapMode),
     application: normalizeReactiveApplicationOptions(effect?.application, applicationKind),
+    requirements: normalizeReactiveRequirements(effect?.requirements),
     message: effect?.message !== false
   };
 }
 
 function normalizeOnStruckSourceKind(value) {
-  const kind = String(value ?? "anyMelee");
-  if (["any", "anyMelee", "meleeWeapon", "meleeNoReach", "reachMelee", "naturalAttack", "unarmedStrike", "spell"].includes(kind)) return kind;
-  if (kind === "naturalWeapon") return "naturalAttack";
-  if (kind === "nonWeapon") return "spell";
-  return "anyMelee";
+  return normalizeReactiveSourceKind(value, "anyMelee");
 }
 
 function normalizeAttackerCreatureKind(value) {
-  const kind = String(value ?? "any");
-  return ["any", "living", "undead", "construct", "nonliving"].includes(kind) ? kind : "any";
+  return normalizeReactiveCreatureKind(value);
 }
 
 function normalizeSaveConfig(raw = {}) {
@@ -258,6 +325,7 @@ function normalizeOnStruckDamageRule(raw = {}, fallback = {}) {
     sourceKind: normalizeOnStruckSourceKind(raw?.sourceKind ?? fallback.sourceKind),
     onlyIfDamaged: raw?.onlyIfDamaged === true,
     attackerCreatureKind: normalizeAttackerCreatureKind(raw?.attackerCreatureKind),
+    attackerAlignmentKind: normalizeAlignmentRequirementKind(raw?.attackerAlignmentKind ?? raw?.alignmentKind),
     save: normalizeSaveConfig(raw?.save),
     spendPool: raw?.spendPool === true,
     message: raw?.message !== false
@@ -412,6 +480,8 @@ function isItemOnStruckActive(item) {
   if (!item) return false;
   if (item.type === "buff") return item.system?.active === true;
   if (item.type === "equipment") return item.system?.equipped === true;
+  if (isNasFeatureLikeItem(item)) return isNasFeatureLikeItemActive(item);
+  if (isNasImplantItem(item)) return isNasImplantItemActive(item);
   return false;
 }
 
@@ -419,7 +489,7 @@ function getOnStruckConfigs(targetActor) {
   if (!targetActor?.items) return [];
   const out = [];
   for (const item of targetActor.items) {
-    if (!["buff", "equipment"].includes(item?.type)) continue;
+    if (!isNasReactiveAutomationItem(item)) continue;
     if (!isItemOnStruckActive(item)) continue;
     const flags = getReactiveFlags(item);
     const raw = flags?.onStruck ?? null;
@@ -541,8 +611,8 @@ function isWeaponContext(options = {}) {
   return type === "weapon" || (type === "attack" && ["weapon", "natural"].includes(String(subType ?? "")));
 }
 
-function sourceMatchesOnStruckRule(rule, options = {}) {
-  const kind = normalizeOnStruckSourceKind(rule?.sourceKind);
+function sourceMatchesReactiveKind(sourceKind, options = {}, fallback = "any") {
+  const kind = normalizeReactiveSourceKind(sourceKind, fallback);
   const melee = isMeleeContext(options);
   const reach = isReachContext(options);
   const actionType = resolveActionType(options);
@@ -558,15 +628,28 @@ function sourceMatchesOnStruckRule(rule, options = {}) {
   return true;
 }
 
-function creatureMatchesOnStruckRule(rule, sourceActor) {
-  const kind = normalizeAttackerCreatureKind(rule?.attackerCreatureKind);
+function sourceMatchesOnStruckRule(rule, options = {}) {
+  return sourceMatchesReactiveKind(rule?.sourceKind, options, "anyMelee");
+}
+
+function creatureMatchesKind(creatureKind, actor) {
+  const kind = normalizeReactiveCreatureKind(creatureKind);
   if (kind === "any") return true;
-  const state = getCreatureTypeState(sourceActor);
+  if (!actor) return false;
+  const state = getCreatureTypeState(actor);
   if (kind === "living") return state.isLiving;
   if (kind === "undead") return state.isUndead;
   if (kind === "construct") return state.isConstruct;
   if (kind === "nonliving") return state.isUndead || state.isConstruct;
   return true;
+}
+
+function creatureMatchesOnStruckRule(rule, sourceActor) {
+  return creatureMatchesKind(rule?.attackerCreatureKind, sourceActor);
+}
+
+function alignmentMatchesOnStruckRule(rule, sourceActor) {
+  return actorMatchesAlignmentRequirement(sourceActor, rule?.attackerAlignmentKind);
 }
 
 function buildRollData({ sourceActor, targetActor, ownerItem = null, finalDamage = 0, excessHealing = 0, finalHealing = 0 }) {
@@ -688,6 +771,15 @@ async function resolveReactiveApplication(effect, metadata = {}) {
     return out;
   }
 
+  const concealedVariant = normalizeConcealedVariant(raw?.flags?.[MODULE.ID]?.[CONCEALED_VARIANT_FLAG]);
+  if (concealedVariant) {
+    out.flags = {
+      [MODULE.ID]: {
+        [CONCEALED_VARIANT_FLAG]: concealedVariant
+      }
+    };
+  }
+
   const duration = raw.duration;
   if (duration.enabled && duration.value.trim() && duration.units) {
     const count = await evaluateNumberFormula(duration.value, { rollData }, 0);
@@ -740,10 +832,32 @@ async function resolveSavingThrowResult(rule, sourceActor, context, options = {}
     return { multiplier: 0, outcome: "skipped" };
   }
   const total = extractRollTotal(result);
-  if (total == null || total < dc) return { multiplier: 1, outcome: "failure" };
-  if (save.onSuccess === "half") return { multiplier: 0.5, outcome: "success" };
-  if (save.onSuccess === "none") return { multiplier: 1, outcome: "success" };
-  return { multiplier: 0, outcome: "success" };
+  const outcome = total == null || total < dc ? "failure" : "success";
+  let multiplier = 1;
+  if (outcome === "success" && save.onSuccess === "half") multiplier = 0.5;
+  else if (outcome === "success" && save.onSuccess === "negates") multiplier = 0;
+  return { multiplier, outcome };
+}
+
+function triggerActorForReactiveRequirements(kind, sourceActor, targetActor) {
+  return kind === "onStruck" ? sourceActor : targetActor;
+}
+
+async function reactiveRequirementsAllowEffect({ effect, affectedActor, triggerActor, options, rollData }) {
+  const requirements = normalizeReactiveRequirements(effect?.requirements);
+  if (!requirements.enabled) return true;
+  if (!sourceMatchesReactiveKind(requirements.sourceKind, options, "any")) return false;
+  if (!creatureMatchesKind(requirements.creatureKind, triggerActor)) return false;
+  if (!actorMatchesAlignmentRequirement(triggerActor, requirements.alignmentKind)) return false;
+  if (!requirements.save.enabled) return true;
+
+  const saveResult = await resolveSavingThrowResult({
+    save: {
+      ...requirements.save,
+      onSuccess: "negates"
+    }
+  }, affectedActor, { rollData }, options);
+  return saveResult.multiplier > 0;
 }
 
 function getHealthSnapshotForDelta(actor) {
@@ -997,6 +1111,7 @@ async function applyOnStruckDamageRules({ sourceActor, targetActor, entry, final
     if (rule.onlyIfDamaged && Math.max(0, Number(finalDamage) || 0) <= 0) continue;
     if (!sourceMatchesOnStruckRule(rule, options)) continue;
     if (!creatureMatchesOnStruckRule(rule, sourceActor)) continue;
+    if (!alignmentMatchesOnStruckRule(rule, sourceActor)) continue;
 
     let magnitude = await evaluateMagnitude({ ...rule, type: "damageAttacker" }, { finalDamage, rollData });
     if (magnitude <= 0) continue;
@@ -1060,9 +1175,12 @@ async function applyEffects({ sourceActor, targetActor, effects, finalDamage, fi
 
   for (const effect of effects) {
     const isToggleEffect = TOGGLE_EFFECT_TYPES.has(effect?.type);
+    const affectedActor = effectActsOnTarget(effect, { finalHealing }) ? targetActor : sourceActor;
+    const triggerActor = triggerActorForReactiveRequirements(kind, sourceActor, targetActor);
+    const allowed = await reactiveRequirementsAllowEffect({ effect, affectedActor, triggerActor, options, rollData });
+    if (!allowed) continue;
     const magnitude = isToggleEffect ? 1 : await evaluateMagnitude(effect, { finalDamage, finalHealing, excessHealing, rollData });
     if (!isToggleEffect && magnitude <= 0) continue;
-    const affectedActor = effectActsOnTarget(effect, { finalHealing }) ? targetActor : sourceActor;
     const effType = String(effect.type ?? "");
     const actualApplied = await applyToActor(affectedActor, effect, magnitude, {
       source: sourceTag,

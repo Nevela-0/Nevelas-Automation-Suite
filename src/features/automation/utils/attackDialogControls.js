@@ -3697,8 +3697,6 @@ function renderMimicMetamagicStandaloneControl(dialog, form, actor, sources) {
       [source.id]: input.checked
     };
 
-    // Persist the checkbox state immediately so async setup/update rerenders
-    // keep the current checked value instead of restoring stale state.
     latestOptions = setFeatureStatesInOptions(latestOptions, latestStates);
     DialogStateTracker.set(dialog.appId, METAMAGIC_OPTIONS_KEY, latestOptions);
     updateMetamagicOptionsInput(optionsInput, latestOptions);

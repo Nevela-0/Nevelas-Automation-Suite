@@ -170,7 +170,6 @@ function getSqueezingGeometry(tokenDocument) {
     -1
   );
 
-  // TODO: Support actor-level width overrides in addition to token overrides.
   const tokenOverallWidthPx = tokenBodyWidthOverride * tokenSizeMultiplier * gridSize;
   const tokenHeadWidthPx = tokenHeadWidthOverride * tokenSizeMultiplier * gridSize;
 
@@ -213,7 +212,6 @@ function getEscapeFailurePoint(tokenDocument, originX, originY, destinationX, de
   let snappedPoint = getSnappedPoint(tokenDocument, point.x, point.y);
   let backstepIterations = 0;
 
-  // For stop-before handling, continue stepping backward if snapping still lands on destination.
   if (failureHandling === ESCAPE_FAIL_STOP_BEFORE) {
     const maxBacksteps = Math.max(1, sampleSteps + 2);
     while (
@@ -316,7 +314,6 @@ export function handleSqueezingPreTokenUpdate(tokenDocument, updateData, options
 
   let expectedResult;
   if (!Number.isFinite(measuredPassageWidth)) {
-    // Fallback if no enclosing walls were detected around the sampled path.
     expectedResult = "normal movement (no squeeze condition)";
   } else if (shouldApplySystemSqueezing) {
     expectedResult = "apply system squeezing";
@@ -424,5 +421,4 @@ export function handleSqueezingPreTokenUpdate(tokenDocument, updateData, options
   });
 }
 
-// Temporary export alias for existing hook wiring compatibility.
 export const handleSqueezedPreTokenUpdate = handleSqueezingPreTokenUpdate;

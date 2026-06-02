@@ -161,7 +161,6 @@ function sourcesFromMetakinesis(level) {
 }
 
 function sourcesFromMetamagicInvocation() {
-  // Only add metamagics NAS currently supports.
   const candidates = ["Enlarge Spell", "Extend Spell", "Intuitive Spell", "Logical Spell", "Quicken Spell", "Reach Spell", "Tenacious Spell"];
   return candidates
     .map((name) => normalizeSupportedMetamagicName(name))
@@ -170,7 +169,6 @@ function sourcesFromMetamagicInvocation() {
 }
 
 function sourcesFromExpandedMetakinesis() {
-  // Only add metamagics NAS currently supports.
   const candidates = ["Disrupting Spell", "Ectoplasmic Spell", "Furious Spell", "Merciful Spell", "Piercing Spell"];
   return candidates
     .map((name) => normalizeSupportedMetamagicName(name))
@@ -208,7 +206,6 @@ export async function getKineticistMetamagicSources(actor, item) {
     sources.push(...sourcesFromExpandedMetakinesis());
   }
 
-  // De-dupe by canonical metamagic name.
   const seen = new Set();
   return sources.filter((s) => {
     const key = (s?.metaName ?? "").toString();
@@ -238,7 +235,6 @@ export async function getKineticInvocationSpellMetamagicSources(actor, spellItem
   const spellbookClass = getSpellbookClassKey(spellItem);
   if (!spellbookClass) return [];
 
-  // Determine associated classes from the feats; default to kineticist if none are declared.
   const assoc = new Set();
   for (const key of getAssociatedClassKeySetFromFeat(kineticInvocationFeat)) assoc.add(key);
   for (const key of getAssociatedClassKeySetFromFeat(metamagicInvocationFeat)) assoc.add(key);
@@ -246,6 +242,5 @@ export async function getKineticInvocationSpellMetamagicSources(actor, spellItem
 
   if (!assoc.has(spellbookClass)) return [];
 
-  // Return supported metamagics from Metamagic Invocation.
   return sourcesFromMetamagicInvocation();
 }

@@ -608,7 +608,6 @@ function normalizeCustomDamageTypeEntry(entry, legacyId, newId) {
   value.name = value.name ?? entry.value?.name ?? rawKey;
   value.flags = value.flags && typeof value.flags === "object" ? value.flags : {};
 
-  // Copy legacy module flags into the new module namespace (if present).
   const legacyFlags = value.flags?.[legacyId];
   if (legacyFlags && !value.flags[newId]) {
     value.flags[newId] = duplicateFn(legacyFlags);
@@ -616,7 +615,6 @@ function normalizeCustomDamageTypeEntry(entry, legacyId, newId) {
     value.flags[newId] = mergeObjectFn(duplicateFn(value.flags[newId]), legacyFlags, { inplace: false });
   }
 
-  // Ensure NAS-style metadata exists (matches what `DamageTypeFormApplication` stores).
   value.namespace = newId;
   value._id = key;
 
@@ -649,7 +647,7 @@ async function migrateCustomDamageTypesFromLegacy(legacyId, newId) {
   for (const entry of legacyTypes) {
     const normalized = normalizeCustomDamageTypeEntry(entry, legacyId, newId);
     if (!normalized) continue;
-    if (existingKeys.has(normalized.key)) { skipped += 1; continue; } // Do not overwrite existing NAS entries
+    if (existingKeys.has(normalized.key)) { skipped += 1; continue; }
     existingKeys.add(normalized.key);
     currentTypes.push(normalized);
     imported += 1;
@@ -674,8 +672,6 @@ function normalizeLegacyDamagePriorityName(typeName) {
 
   const materialTypes = globalThis.pf1?.registry?.materials;
   const alignments = globalThis.pf1?.config?.damageResistances;
-
-  // Match materials by name/shortName; prefer treatedAs for canonical ids.
   const material = Array.isArray(materialTypes)
     ? materialTypes.find(m => m?.name === type || m?.shortName === type)
     : undefined;
@@ -699,9 +695,7 @@ async function migrateDamageTypePriorityFromLegacy(legacyId, newId, { force } = 
   if (typeof legacyPriority === "string") {
     try {
       legacyPriority = JSON.parse(legacyPriority);
-    } catch (e) {
-      // Leave as-is; handled by array check below.
-    }
+    } catch (e) {}
   }
   if (!Array.isArray(legacyPriority) || legacyPriority.length === 0) {
     return;
@@ -782,10 +776,8 @@ async function migrateConcealmentConditionToConcealed(progress) {
   const newImg = `modules/${MODULE.ID}/src/icons/concealed.png`;
   const flagKey = "concealedVariant";
 
-  // Best-effort; only run when Foundry is ready enough to access actors.
   for (const actor of game.actors ?? []) {
     try {
-      // If this actor has no legacy concealment statuses/effects, skip quickly.
       const hasLegacyStatus = actor.statuses?.has?.(fromId);
       const hasLegacyFlag = actor.getFlag?.(MODULE.ID, "concealmentState") != null;
       if (!hasLegacyStatus && !hasLegacyFlag) {
@@ -793,7 +785,6 @@ async function migrateConcealmentConditionToConcealed(progress) {
         continue;
       }
 
-      // Determine variant (prefer stored state, fallback to active buff presence).
       let variant = null;
       const state = actor.getFlag?.(MODULE.ID, "concealmentState");
       if (state?.variant === "total" || state?.variant === "normal") {
@@ -824,7 +815,6 @@ async function migrateConcealmentConditionToConcealed(progress) {
         await actor.updateEmbeddedDocuments("ActiveEffect", effectUpdates);
       }
 
-      // Deactivate any managed concealment buff items created by older NAS versions.
       const buffUpdates = [];
       for (const item of actor.items ?? []) {
         if (item.type !== "buff") continue;
@@ -837,7 +827,6 @@ async function migrateConcealmentConditionToConcealed(progress) {
         await actor.updateEmbeddedDocuments("Item", buffUpdates);
       }
 
-      // Remove legacy actor flag state
       if (hasLegacyFlag) {
         await actor.unsetFlag(MODULE.ID, "concealmentState");
       }
@@ -857,7 +846,6 @@ export async function runSuiteMigrations({ force = false } = {}) {
   let progress = null;
   let total = 0;
   try {
-    // Only a GM can migrate world data and world-scope settings.
     if (!game?.user?.isGM) return;
 
     let storedVersion = "";
@@ -867,8 +855,6 @@ export async function runSuiteMigrations({ force = false } = {}) {
       storedVersion = readWorldSettingValue(`${MODULE.ID}.migrationVersion`) ?? "";
     }
     if (!force) {
-      // If we've already migrated for this (or a newer) module version, skip.
-      // Prefer Foundry's version comparison when available.
       try {
         const isNewer = globalThis.foundry?.utils?.isNewerVersion;
         if (typeof isNewer === "function") {

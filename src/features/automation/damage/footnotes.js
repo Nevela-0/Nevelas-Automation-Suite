@@ -1,118 +1,18 @@
 import { MODULE } from '../../../common/module.js';
 import { getDamageTypes } from '../../../common/settings/damageSettingsForms.js';
 import {
-  captureMirrorImageEffectNoteRoll,
-  prepareMirrorImageEffectNote
-} from '../buffs/mirrorImage.js';
+  addAttackFootnote,
+  addCardFootnote,
+  registerActionEffectNoteCallback
+} from '../utils/footnotes.js';
 
 let _damageFootnoteHooksRegistered = false;
-let _attackFootnoteWrapperRegistered = false;
-let _attackFootnoteQueueWrapperRegistered = false;
-
-const ATTACK_FOOTNOTE_QUEUE_KEY = "__nasPendingAttackFootnotes";
 
 export function registerDamageFootnoteHooks() {
   if (_damageFootnoteHooksRegistered) return;
   _damageFootnoteHooksRegistered = true;
   Hooks.on('pf1PreActionUse', handlePreActionUse);
-  registerAttackFootnoteQueueWrapper();
-  registerAttackFootnoteRenderWrapper();
-}
-
-function registerAttackFootnoteQueueWrapper() {
-  if (_attackFootnoteQueueWrapperRegistered) return;
-  _attackFootnoteQueueWrapperRegistered = true;
-
-  if (!game.modules.get("lib-wrapper")?.active) {
-    console.warn(`${MODULE.ID} | libWrapper missing; attack-level footnote queue fallback disabled.`);
-    return;
-  }
-
-  libWrapper.register(
-    MODULE.ID,
-    "pf1.actionUse.ActionUse.prototype.addEffectNotes",
-    async function (wrapped, ...args) {
-      try {
-        this.shared[ATTACK_FOOTNOTE_QUEUE_KEY] = Object.create(null);
-        queueAttackFootnotesFromSettings(this);
-      } catch (err) {
-        console.error(`${MODULE.ID} | Failed preparing attack footnote queue`, err);
-      }
-      return wrapped(...args);
-    },
-    "WRAPPER"
-  );
-}
-
-function registerAttackFootnoteRenderWrapper() {
-  if (_attackFootnoteWrapperRegistered) return;
-  _attackFootnoteWrapperRegistered = true;
-
-  if (!game.modules.get("lib-wrapper")?.active) {
-    console.warn(`${MODULE.ID} | libWrapper missing; attack-level footnote rendering fallback disabled.`);
-    return;
-  }
-
-  libWrapper.register(
-    MODULE.ID,
-    "pf1.actionUse.ChatAttack.prototype.setEffectNotesHTML",
-    async function (wrapped, ...args) {
-      try {
-        prepareMirrorImageEffectNote(this);
-        const actionUse = this.actionUse;
-        const shared = actionUse?.shared;
-        const pendingByIndex = shared?.[ATTACK_FOOTNOTE_QUEUE_KEY];
-        if (pendingByIndex && Array.isArray(shared?.chatAttacks)) {
-          const attackIndex = shared.chatAttacks.indexOf(this);
-          if (attackIndex >= 0) {
-            const pendingNotes = pendingByIndex[attackIndex] ?? [];
-            if (pendingNotes.length > 0) {
-              if (!Array.isArray(this.effectNotes)) this.effectNotes = [];
-              const existingText = new Set(this.effectNotes.map((entry) => entry?.text).filter(Boolean));
-              for (const text of pendingNotes) {
-                if (typeof text !== "string") continue;
-                const trimmed = text.trim();
-                if (!trimmed || existingText.has(trimmed)) continue;
-                this.effectNotes.push({ text: trimmed });
-                existingText.add(trimmed);
-              }
-            }
-          }
-        }
-      } catch (err) {
-        console.error(`${MODULE.ID} | Failed injecting queued attack footnotes`, err);
-      }
-
-      const result = await wrapped(...args);
-
-      try {
-        captureMirrorImageEffectNoteRoll(this);
-      } catch (err) {
-        console.error(`${MODULE.ID} | Failed capturing Mirror Image effect note roll`, err);
-      }
-
-      return result;
-    },
-    "WRAPPER"
-  );
-}
-
-function getPendingAttackFootnoteQueue(shared) {
-  if (!shared) return null;
-  shared[ATTACK_FOOTNOTE_QUEUE_KEY] ??= Object.create(null);
-  return shared[ATTACK_FOOTNOTE_QUEUE_KEY];
-}
-
-function queueAttackFootnote(shared, attackIndex, text) {
-  if (!shared || !Number.isInteger(attackIndex)) return;
-  if (typeof text !== "string" || !text.trim()) return;
-
-  const queue = getPendingAttackFootnoteQueue(shared);
-  if (!queue) return;
-  queue[attackIndex] ??= [];
-  if (!queue[attackIndex].includes(text)) {
-    queue[attackIndex].push(text);
-  }
+  registerActionEffectNoteCallback(queueAttackFootnotesFromSettings);
 }
 
 function queueAttackFootnotesFromSettings(actionUse) {
@@ -230,49 +130,28 @@ function handlePreActionUse(action) {
 
   if (actionSettings && actionSettings.hardness && actionSettings.hardness.bypass?.inherit === false) {
     if (actionSettings.hardness.bypass.enabled) {
-      addGlobalFootnote(shared, "Bypass Hardness");
+      addCardFootnote(shared, "Bypass Hardness");
     }
   } else if (global.hardness?.bypass) {
-    addGlobalFootnote(shared, "Bypass Hardness");
+    addCardFootnote(shared, "Bypass Hardness");
   }
 
   if (actionSettings && actionSettings.immunity && actionSettings.immunity.inherit === false) {
-    addBypassFootnotes(actionSettings, "immunity", "Immunity", "Immunities", t => addGlobalFootnote(shared, t));
+    addBypassFootnotes(actionSettings, "immunity", "Immunity", "Immunities", t => addCardFootnote(shared, t));
   } else {
-    addBypassFootnotes(global, "immunity", "Immunity", "Immunities", t => addGlobalFootnote(shared, t));
+    addBypassFootnotes(global, "immunity", "Immunity", "Immunities", t => addCardFootnote(shared, t));
   }
 
   if (actionSettings && actionSettings.resistance && actionSettings.resistance.inherit === false) {
-    addBypassFootnotes(actionSettings, "resistance", "Resistance", "Resistances", t => addGlobalFootnote(shared, t));
+    addBypassFootnotes(actionSettings, "resistance", "Resistance", "Resistances", t => addCardFootnote(shared, t));
   } else {
-    addBypassFootnotes(global, "resistance", "Resistance", "Resistances", t => addGlobalFootnote(shared, t));
+    addBypassFootnotes(global, "resistance", "Resistance", "Resistances", t => addCardFootnote(shared, t));
   }
 
   if (actionSettings && actionSettings.damageReduction && actionSettings.damageReduction.inherit === false) {
-    addBypassFootnotes(actionSettings, "damageReduction", "DR", "DRs", t => addGlobalFootnote(shared, t));
+    addBypassFootnotes(actionSettings, "damageReduction", "DR", "DRs", t => addCardFootnote(shared, t));
   } else {
-    addBypassFootnotes(global, "damageReduction", "DR", "DRs", t => addGlobalFootnote(shared, t));
+    addBypassFootnotes(global, "damageReduction", "DR", "DRs", t => addCardFootnote(shared, t));
   }
 
 }
-
-export function addGlobalFootnote(shared, text) {
-  if (!shared.templateData) shared.templateData = {};
-  if (!Array.isArray(shared.templateData.footnotes)) shared.templateData.footnotes = [];
-  shared.templateData.footnotes.push({ text });
-}
-
-export function addAttackFootnote(shared, attackIndex, text) {
-  queueAttackFootnote(shared, attackIndex, text);
-
-  if (!Array.isArray(shared.chatAttacks)) return;
-  const chatAttack = shared.chatAttacks[attackIndex];
-  if (!chatAttack) return;
-  if (!Array.isArray(chatAttack.effectNotes)) chatAttack.effectNotes = [];
-  if (!chatAttack.effectNotes.some((entry) => entry?.text === text)) {
-    chatAttack.effectNotes.push({ text });
-  }
-} 
-
-
-

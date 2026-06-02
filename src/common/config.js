@@ -598,6 +598,15 @@ export function registerNasSettings() {
     default: true,
   });
 
+  game.settings.register(MODULE.ID, "homebrewEnlargeSpellNumericRanges", {
+    name: game.i18n.localize("NAS.settings.homebrewEnlargeSpellNumericRanges.name"),
+    hint: game.i18n.localize("NAS.settings.homebrewEnlargeSpellNumericRanges.hint"),
+    scope: "world",
+    config: true,
+    type: Boolean,
+    default: false
+  });
+
   game.settings.register(MODULE.ID, SPELLBOOK_PREPARATION_SETTING_KEYS.MODE, {
     name: game.i18n.localize("NAS.settings.spellbookPreparationMode.name"),
     hint: game.i18n.localize("NAS.settings.spellbookPreparationMode.hint"),
@@ -1365,6 +1374,7 @@ function registerNasSettingsUi() {
       rows: [
         () => getSettingRow("enforceSpellAbilityMinimum"),
         () => getSettingRow("enableMetamagicAutomation"),
+        () => getSettingRow("homebrewEnlargeSpellNumericRanges"),
         () => getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.MODE),
         () => getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.ALLOW_EXTRA_CAST_TIME_METAMAGIC),
         () => getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.REST_RESET),
@@ -1585,6 +1595,7 @@ function registerNasSettingsUi() {
   }
 
   const enableMetamagicAutomationRow = getSettingRow("enableMetamagicAutomation");
+  const homebrewEnlargeSpellNumericRangesRow = getSettingRow("homebrewEnlargeSpellNumericRanges");
   const metamagicCastTimeRuleRow = getSettingRow("metamagicCastTimeRule");
   const persistentSpellTargetModeRow = getSettingRow("persistentSpellTargetMode");
   const metamagicChatCardNameModeRow = getSettingRow("metamagicChatCardNameMode");
@@ -1601,6 +1612,7 @@ function registerNasSettingsUi() {
   const enableMetamagicAutomationCheckbox = enableMetamagicAutomationRow?.querySelector?.("input");
 
   const metamagicDependentRows = [
+    homebrewEnlargeSpellNumericRangesRow,
     spellbookPreparationModeRow,
     spellbookAllowExtraCastTimeMetamagicRow,
     spellbookRestResetRow,

@@ -844,9 +844,7 @@ async function consumePendingTraitFeatureUses(actionUse) {
     if ((entry?.mode ?? "use") === "displayCard") {
       try {
         await traitItem.displayCard?.({}, { token: tokenDocument });
-      } catch (_error) {
-        // Best-effort only.
-      }
+      } catch (_error) {}
       continue;
     }
 

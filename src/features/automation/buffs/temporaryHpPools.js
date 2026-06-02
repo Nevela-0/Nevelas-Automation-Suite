@@ -6,6 +6,12 @@ import { showTemporaryHpCombatText, showTemporaryHpGainCombatText } from "../uti
 import { createNasId, ensureNasId } from "../utils/nasIds.js";
 import { getStoredBuffCasterLevel } from "../utils/spellLevels.js";
 import {
+  isNasFeatureLikeItem,
+  isNasFeatureLikeItemActive,
+  isNasImplantItem,
+  isNasImplantItemActive
+} from "../utils/itemTypes.js";
+import {
   APPLIED_BUFF_LOCKOUTS_KEY,
   APPLIED_BUFF_RUNTIME_KEY,
   appliedBuffLockoutKey
@@ -172,6 +178,8 @@ function isSourceItemActive(item) {
     const quantity = Number(item.system?.quantity ?? 1);
     return equipped && quantity > 0 && item.isBroken !== true;
   }
+  if (isNasFeatureLikeItem(item)) return isNasFeatureLikeItemActive(item);
+  if (isNasImplantItem(item)) return isNasImplantItemActive(item);
   return true;
 }
 
@@ -550,19 +558,13 @@ function activeTokenObjectsForActor(actor) {
   const candidates = [];
   try {
     candidates.push(...(actor.getActiveTokens?.(true, false) ?? []));
-  } catch (_err) {
-    // Some Foundry versions do not support the second argument.
-  }
+  } catch (_err) {}
   try {
     candidates.push(...(actor.getActiveTokens?.(true, true) ?? []));
-  } catch (_err) {
-    // Some Foundry versions do not support the second argument.
-  }
+  } catch (_err) {}
   try {
     candidates.push(...(actor.getActiveTokens?.() ?? []));
-  } catch (_err) {
-    // Some Foundry versions do not expose active token lookup.
-  }
+  } catch (_err) {}
 
   const objects = [];
   const seen = new Set();
@@ -1341,10 +1343,20 @@ export function registerNasTemporaryHpPools() {
     }
     const activeChanged = foundry.utils.hasProperty(change, "system.active");
     const equippedChanged = foundry.utils.hasProperty(change, "system.equipped");
+    const disabledChanged = foundry.utils.hasProperty(change, "system.disabled");
+    const featureDisabledChanged = isNasFeatureLikeItem(item) && disabledChanged;
+    const implantChanged = isNasImplantItem(item) && foundry.utils.hasProperty(change, "system.implanted");
+    const implantDisabledChanged = isNasImplantItem(item) && disabledChanged;
     const tempHpFlagRoot = `flags.${MODULE.ID}.${REACTIVE_FLAG_KEY}.${TEMP_HP_FLAG_KEY}`;
     const tempHpFormulaChanged = foundry.utils.hasProperty(change, `${tempHpFlagRoot}.formula`);
     const tempHpEnabledChanged = foundry.utils.hasProperty(change, `${tempHpFlagRoot}.enabled`);
-    if (foundry.utils.getProperty(change, "system.active") === true || foundry.utils.getProperty(change, "system.equipped") === true) {
+    if (
+      foundry.utils.getProperty(change, "system.active") === true
+      || foundry.utils.getProperty(change, "system.equipped") === true
+      || (featureDisabledChanged && foundry.utils.getProperty(change, "system.disabled") === false)
+      || (implantChanged && foundry.utils.getProperty(change, "system.implanted") === true)
+      || (implantDisabledChanged && foundry.utils.getProperty(change, "system.disabled") === false)
+    ) {
       await resetNasTemporaryHpItem(item);
       return;
     }
@@ -1358,7 +1370,7 @@ export function registerNasTemporaryHpPools() {
       await resetNasTemporaryHpItem(item);
       return;
     }
-    if (activeChanged || equippedChanged) {
+    if (activeChanged || equippedChanged || featureDisabledChanged || implantChanged || implantDisabledChanged) {
       refreshNasTemporaryHpDisplay(item.actor);
       return;
     }

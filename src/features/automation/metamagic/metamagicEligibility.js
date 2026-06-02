@@ -1,5 +1,6 @@
 import { resolveMetamagicNameFromDatabase } from "./metamagic.js";
 import { isDurationEligibleForExtendSpell } from "./extendSpell.js";
+import { canApplyEnlargeSpell } from "./enlargeSpell.js";
 import { canIntensifyAnyDamagePart } from "./intensifiedSpell.js";
 
 function normalizeString(value) {
@@ -145,6 +146,42 @@ function getSpellRangeUnits(source) {
   return getMetamagicSpellRangeUnits(source);
 }
 
+function getSpellRangeContext(source) {
+  const actionRange = getFirstActionValue(source, (action) => getActionField(action, "range"));
+  const range = firstUsefulValue(
+    source?.range?.range,
+    source?.range,
+    actionRange,
+    source?.action?.item?.system?.range,
+    source?.item?.system?.range
+  ) ?? {};
+  const evaluatedValue = firstUsefulValue(source?.range?.evaluated?.value);
+  const evaluatedMinValue = firstUsefulValue(source?.range?.evaluated?.minValue);
+  const touch = Boolean(
+    source?.touch === true
+    || source?.range?.touch === true
+    || actionRange?.touch === true
+    || source?.action?.touch === true
+    || source?.action?.item?.system?.range?.touch === true
+    || source?.action?.item?.system?.touch === true
+    || source?.item?.system?.range?.touch === true
+    || source?.item?.system?.touch === true
+  );
+
+  return {
+    range: {
+      touch,
+      hasRange: source?.range?.hasRange ?? Boolean(range?.units || range?.value),
+      isRanged: source?.range?.isRanged ?? false,
+      range,
+      evaluated: {
+        value: evaluatedValue,
+        minValue: evaluatedMinValue
+      }
+    }
+  };
+}
+
 function getSpellArea(source) {
   return firstUsefulValue(
     source?.area,
@@ -216,10 +253,6 @@ function canApplyQuickenSpell(activation) {
   return true;
 }
 
-function canApplyEnlargeSpell(rangeUnits) {
-  return ["close", "medium", "long"].includes(rangeUnits);
-}
-
 function canApplyReachSpell(rangeUnits) {
   return ["touch", "close", "medium"].includes(rangeUnits);
 }
@@ -270,11 +303,12 @@ export function canApplyMetamagicToSpellContext(source, spellContext) {
   const duration = getSpellDuration(spellContext);
   const activation = getSpellActivation(spellContext);
   const rangeUnits = getSpellRangeUnits(spellContext);
+  const rangeContext = getSpellRangeContext(spellContext);
 
   if (name === "still spell") return components?.somatic === true;
   if (name === "silent spell") return components?.verbal === true;
   if (name === "extend spell") return isDurationEligibleForExtendSpell(duration);
-  if (name === "enlarge spell") return canApplyEnlargeSpell(rangeUnits);
+  if (name === "enlarge spell") return canApplyEnlargeSpell(rangeContext);
   if (name === "reach spell") return canApplyReachSpell(rangeUnits);
   if (name === "quicken spell") return canApplyQuickenSpell(activation);
   if (name === "selective spell") {

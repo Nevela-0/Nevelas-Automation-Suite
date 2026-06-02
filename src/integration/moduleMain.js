@@ -15,6 +15,7 @@ import { addGrappleCheckbox, addMetamagicCheckbox } from '../features/automation
 import { applyChatRangeOverrides, registerChatRangeHoverOverrides } from '../features/automation/utils/chatRangeOverrides.js';
 import { applyChatActivationOverrides } from '../features/automation/utils/chatActivationOverrides.js';
 import { registerPersistentSpellSaveOverrides } from '../features/automation/utils/chatSaveOverrides.js';
+import { registerSharedFootnoteHooks } from '../features/automation/utils/footnotes.js';
 import { applyEmpowerTooltipOverrides } from '../features/automation/metamagic/empowerSpell.js';
 import { registerDiceTooltipEnhancer } from '../features/automation/utils/diceTooltipEnhancer.js';
 import { registerHealthDeltaTextEnhancer } from '../features/automation/utils/healthDeltaText.js';
@@ -40,6 +41,7 @@ import { handleWoundsVigorThresholdSync } from '../features/automation/condition
 import { registerSystemApplyDamage } from '../features/automation/damage/systemApplyDamage.js';
 import { registerDamageSettingsHandlebarsHelpers } from '../common/settings/damageSettingsForms.js';
 import { registerDamageFootnoteHooks } from '../features/automation/damage/footnotes.js';
+import { registerMirrorImageFootnoteCallbacks } from '../features/automation/buffs/mirrorImage.js';
 import { hasHpUpdate } from '../features/automation/utils/healthUpdates.js';
 import { handleHtkCombatUpdate } from '../features/automation/utils/hardToKillCombat.js';
 import { registerTransmuterOfKoradaItemHook } from '../features/automation/metamagic/traits/index.js';
@@ -53,7 +55,9 @@ function isConditionAutomationEnabled() {
 export function registerNasModule() {
   Hooks.once("init", () => {
     registerDamageSettingsHandlebarsHelpers();
+    registerSharedFootnoteHooks();
     registerDamageFootnoteHooks();
+    registerMirrorImageFootnoteCallbacks();
     registerSqueezingTokenConfigFields();
     initializeConditionIds();
     registerConditionFootnoteWrapper(isGrappleSelected);
@@ -207,9 +211,7 @@ export function registerNasModule() {
       if (hasHpUpdate(change)) {
         options._nasPrevHp = actorDocument.system?.attributes?.hp?.value;
       }
-    } catch (_err) {
-      // ignore
-    }
+    } catch (_err) {}
   });
 
   Hooks.on('updateActor', async (actorDocument, change, options, userId) => {
@@ -273,4 +275,3 @@ export function registerNasModule() {
     }
   });
 }
-

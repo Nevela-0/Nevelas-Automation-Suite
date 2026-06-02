@@ -3347,9 +3347,7 @@ async function resolvePendingBuffTarget(targetRef) {
       const doc = await fromUuid(targetRef.tokenUuid);
       if (doc?.object) return doc.object;
       if (doc?.actor) return doc;
-    } catch (_err) {
-      // Fall through to canvas lookups.
-    }
+    } catch (_err) {}
   }
 
   if (targetRef?.tokenId && canvas?.tokens?.get) {
@@ -4020,7 +4018,6 @@ export async function applyBuffToTargets(buff, targets, duration, casterLevel, o
   const activate = options.activate !== false;
   const silent = !!options.silent;
   const buffName = getKnownBuffApplicationName(buff, options) || buff?.name || "";
-  // If not GM, use socket to request GM to apply the buff
   if (!game.user.isGM) {
     return socket.executeAsGM(
       "applyBuffToTargetsSocket",
@@ -4038,7 +4035,6 @@ export async function applyBuffToTargets(buff, targets, duration, casterLevel, o
     );
   }
   
-  // Check for valid inputs
   if (!buff || !targets || targets.length === 0) {
     console.warn(`${MODULE.ID} | Cannot apply buff: Invalid buff or no targets`);
     return;

@@ -9,6 +9,7 @@ import {
   registerTokenEffectBadgeProvider
 } from "../utils/tokenEffectBadges.js";
 import { tokenCanSeeToken, tokenDistance } from "../utils/tokenVisibility.js";
+import { registerAttackFootnoteRenderCallbacks } from "../utils/footnotes.js";
 
 export const MIRROR_IMAGE_SPELL_UUID = "Compendium.pf1.spells.Item.4jsss37x0pplib8f";
 export const MIRROR_IMAGE_BUFF_UUID = "Compendium.nevelas-automation-suite.Buffs.Item.01rgplbC3MNbskNF";
@@ -387,6 +388,17 @@ export function captureMirrorImageEffectNoteRoll(chatAttack) {
     actionUse.shared ??= {};
     actionUse.shared[MIRROR_IMAGE_INLINE_ROLL_FLAG] = Math.min(8, Math.max(1, Math.floor(total)));
   }
+}
+
+let _mirrorImageFootnoteCallbacksRegistered = false;
+
+export function registerMirrorImageFootnoteCallbacks() {
+  if (_mirrorImageFootnoteCallbacksRegistered) return;
+  _mirrorImageFootnoteCallbacksRegistered = true;
+  registerAttackFootnoteRenderCallbacks({
+    beforeRender: prepareMirrorImageEffectNote,
+    afterRender: captureMirrorImageEffectNoteRoll
+  });
 }
 
 async function getMirrorImageDuration(actionUse) {

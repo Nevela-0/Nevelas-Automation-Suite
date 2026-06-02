@@ -6,7 +6,6 @@ const WV_STAGGERED_FLAG = 'wvThresholdStaggered';
 export async function handleWoundsVigorThresholdSync(actorDocument, change) {
   if (!actorDocument?.isOwner) return;
   if (!isWoundsVigorActive(actorDocument)) return;
-  // House rule: construct/undead use vigor only and do not become "wounded".
   if (isWvNoWoundsActor(actorDocument)) return;
   if (!hasWvHealthUpdate(change)) return;
 
@@ -28,7 +27,6 @@ export async function handleWoundsVigorThresholdSync(actorDocument, change) {
     return;
   }
 
-  // Only remove staggered if NAS added it for W&V threshold behavior.
   if (wasFromWv && hasStaggered) {
     await actorDocument.setCondition('staggered', false);
   }

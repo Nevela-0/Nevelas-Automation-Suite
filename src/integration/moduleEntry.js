@@ -11,6 +11,7 @@ import { handleCombatTurn, handleCombatRound, handleFlatFootedOnCombatStart, ski
 import { applyChatRangeOverrides, registerChatRangeHoverOverrides } from '../features/automation/utils/chatRangeOverrides.js';
 import { applyChatActivationOverrides } from '../features/automation/utils/chatActivationOverrides.js';
 import { registerPersistentSpellSaveOverrides } from '../features/automation/utils/chatSaveOverrides.js';
+import { registerSharedFootnoteHooks } from '../features/automation/utils/footnotes.js';
 import { applyEmpowerTooltipOverrides } from '../features/automation/metamagic/empowerSpell.js';
 import { registerDiceTooltipEnhancer } from '../features/automation/utils/diceTooltipEnhancer.js';
 import { registerHealthDeltaTextEnhancer } from '../features/automation/utils/healthDeltaText.js';
@@ -56,6 +57,7 @@ import {
   isMirrorImageBuff,
   refreshMirrorImageSceneTokenEffects,
   refreshMirrorImageTokenEffects,
+  registerMirrorImageFootnoteCallbacks,
   registerMirrorImageTokenEffectBadgeProvider,
   renderMirrorImageChatControls
 } from '../features/automation/buffs/mirrorImage.js';
@@ -74,6 +76,7 @@ import { registerNonConsecutiveDurationHooks } from '../features/automation/buff
 import { configureKnownBuffAutomation, hasKnownBuffAutomationSource } from '../features/automation/buffs/knownBuffAutomation.js';
 import { registerSaveGatedBuffAutomation } from '../features/automation/buffs/buffs.js';
 import { registerTokenEffectBadges } from '../features/automation/utils/tokenEffectBadges.js';
+import { isNasFeatureLikeItemActive } from '../features/automation/utils/itemTypes.js';
 import {
   hasGrantedDefenseData,
   refreshGrantedDefenseActor,
@@ -284,7 +287,9 @@ Hooks.once("init", () => {
   registerNasSettings();
 
   registerDamageSettingsHandlebarsHelpers();
+  registerSharedFootnoteHooks();
   registerDamageFootnoteHooks();
+  registerMirrorImageFootnoteCallbacks();
   registerReactiveItemSheet();
   registerSqueezingTokenConfigFields();
 
@@ -386,9 +391,10 @@ Hooks.on("updateItem", async (item, changed) => {
   if (hasGrantedDefenseData(item)) refreshGrantedDefenseActor(item.actor);
   if (hasOnStruckReactiveData(item)) {
     const reactivatedOnStruck = (
-      foundry.utils.hasProperty(changed ?? {}, "system.active")
-      || foundry.utils.hasProperty(changed ?? {}, "system.equipped")
-    ) && (item.system?.active === true || item.system?.equipped === true);
+      (foundry.utils.hasProperty(changed ?? {}, "system.active") && item.system?.active === true)
+      || (foundry.utils.hasProperty(changed ?? {}, "system.equipped") && item.system?.equipped === true)
+      || (foundry.utils.hasProperty(changed ?? {}, "system.disabled") && isNasFeatureLikeItemActive(item))
+    );
     if (reactivatedOnStruck) await resetOnStruckReactiveItem(item);
     else await initializeOnStruckReactiveItem(item);
   }
@@ -519,9 +525,7 @@ Hooks.on('preUpdateActor', (actorDocument, change, options) => {
     if (hasHpUpdate(change)) {
       options._nasPrevHp = actorDocument.system?.attributes?.hp?.value;
     }
-  } catch (_err) {
-    // ignore
-  }
+  } catch (_err) {}
 });
 
 Hooks.on('updateActor', async (actorDocument, change, options, userId) => {

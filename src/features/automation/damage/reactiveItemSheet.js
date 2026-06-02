@@ -1,6 +1,8 @@
 import { MODULE } from "../../../common/module.js";
 import { elementFromHtmlLike, escapeHtmlForSheet } from "../../../common/foundryCompat.js";
 import { createNasId } from "../utils/nasIds.js";
+import { isNasReactiveAutomationItem } from "../utils/itemTypes.js";
+import { normalizeAlignmentRequirementKind } from "../utils/creatureTypeUtils.js";
 import { buildReactiveOptionChoices, ReactiveOptionSelector } from "./reactiveOptionSelector.js";
 import { getGrantedDefenseOptions, normalizeGrantedDefenses } from "../defenses/grantedDefenses.js";
 import {
@@ -19,6 +21,20 @@ import {
   setActionBuffAutomationState,
   setActionNonConsecutiveDurationState
 } from "../buffs/buffs.js";
+import {
+  CONCEALED_CONDITION_ID,
+  CONCEALED_VARIANT_FLAG,
+  concealedApplicationDataForVariant,
+  concealedPickerIdForVariant,
+  concealedPickerIdFromConditionEffect,
+  concealedVariantFromPickerId,
+  conditionIdFromConcealedPickerId,
+  getConcealedPickerLabel,
+  isConcealedPickerId,
+  normalizeConcealedPickerSelectedIds,
+  normalizeConcealedVariant,
+  syncActiveBuffConcealedEffectVariant
+} from "../conditions/concealed/concealed.js";
 
 const REACTIVE_FLAG_KEY = "itemReactiveEffects";
 
@@ -346,14 +362,107 @@ function reactiveApplicationOptionsPayload(options = {}, kind = "condition") {
   return out;
 }
 
+function normalizeReactiveSourceKind(value, fallback = "any") {
+  const kind = String(value ?? fallback);
+  if (["any", "anyMelee", "meleeWeapon", "meleeNoReach", "reachMelee", "naturalAttack", "unarmedStrike", "spell"].includes(kind)) return kind;
+  if (kind === "naturalWeapon") return "naturalAttack";
+  if (kind === "nonWeapon") return "spell";
+  return fallback;
+}
+
+function normalizeReactiveCreatureKind(value) {
+  const kind = String(value ?? "any");
+  return ["any", "living", "undead", "construct", "nonliving"].includes(kind) ? kind : "any";
+}
+
+function normalizeReactiveRequirementSave(raw = {}) {
+  const save = raw && typeof raw === "object" ? raw : {};
+  const type = String(save.type ?? save.saveType ?? "ref").toLowerCase();
+  return {
+    enabled: save.enabled === true && ["fort", "ref", "will"].includes(type),
+    type: ["fort", "ref", "will"].includes(type) ? type : "ref",
+    dcFormula: String(save.dcFormula ?? save.dc ?? ""),
+    skipDialog: save.skipDialog === true
+  };
+}
+
+function normalizeReactiveRequirements(raw = {}) {
+  const value = raw && typeof raw === "object" ? raw : {};
+  const sourceKind = normalizeReactiveSourceKind(value.sourceKind, "any");
+  const creatureKind = normalizeReactiveCreatureKind(value.creatureKind ?? value.attackerCreatureKind);
+  const alignmentKind = normalizeAlignmentRequirementKind(value.alignmentKind ?? value.attackerAlignmentKind);
+  const save = normalizeReactiveRequirementSave(value.save);
+  const enabled = value.enabled === true
+    || sourceKind !== "any"
+    || creatureKind !== "any"
+    || alignmentKind !== "any"
+    || save.enabled;
+  return {
+    enabled,
+    sourceKind,
+    creatureKind,
+    alignmentKind,
+    save
+  };
+}
+
+function reactiveRequirementsConfigured(requirements = {}) {
+  const normalized = normalizeReactiveRequirements(requirements);
+  return Boolean(
+    normalized.enabled
+    && (
+      normalized.sourceKind !== "any"
+      || normalized.creatureKind !== "any"
+      || normalized.alignmentKind !== "any"
+      || normalized.save.enabled
+    )
+  );
+}
+
+function reactiveRequirementsPayload(requirements = {}) {
+  const normalized = normalizeReactiveRequirements(requirements);
+  if (!reactiveRequirementsConfigured(normalized)) return null;
+  const out = { enabled: true };
+  if (normalized.sourceKind !== "any") out.sourceKind = normalized.sourceKind;
+  if (normalized.creatureKind !== "any") out.creatureKind = normalized.creatureKind;
+  if (normalized.alignmentKind !== "any") out.alignmentKind = normalized.alignmentKind;
+  if (normalized.save.enabled) {
+    out.save = {
+      enabled: true,
+      type: normalized.save.type,
+      dcFormula: normalized.save.dcFormula,
+      skipDialog: normalized.save.skipDialog
+    };
+  }
+  return out;
+}
+
 function normalizeReactiveEntryOptions(entryOptions = {}, selectedIds = [], kind = "condition") {
   const source = entryOptions && typeof entryOptions === "object" ? entryOptions : {};
   const out = {};
   for (const id of selectedIds) {
-    const options = normalizeReactiveApplicationOptions(source[id], kind);
-    if (reactiveApplicationOptionsConfigured(options, kind)) out[id] = options;
+    const rawOptions = getEntryOptionsForSelectedId(source, id, kind);
+    const options = normalizeReactiveApplicationOptions(rawOptions.application ?? rawOptions, kind);
+    const requirements = normalizeReactiveRequirements(rawOptions.requirements);
+    const configuredApplication = reactiveApplicationOptionsConfigured(options, kind);
+    const configuredRequirements = reactiveRequirementsConfigured(requirements);
+    if (!configuredApplication && !configuredRequirements) continue;
+    out[id] = {
+      ...options,
+      ...(configuredRequirements ? { requirements } : {})
+    };
   }
   return out;
+}
+
+function reactiveEntryOptionsPayload(options = {}, kind = "condition") {
+  const application = reactiveApplicationOptionsPayload(options, kind);
+  const requirements = reactiveRequirementsPayload(options?.requirements);
+  if (!application && !requirements) return null;
+  return {
+    ...(application ?? {}),
+    ...(requirements ? { requirements } : {})
+  };
 }
 
 function lifestealTemporaryHpDurationPayload(duration = {}) {
@@ -391,6 +500,54 @@ function timePeriodOptionsHtml(selected, { blankLabel = null } = {}) {
     return `<option value="${escapeHtmlForSheet(id)}" ${id === selected ? "selected" : ""}>${escapeHtmlForSheet(label)}</option>`;
   }));
   return options.join("");
+}
+
+function reactiveSourceOptions() {
+  return [
+    { id: "any", label: localize("onStruckSourceAny") },
+    { id: "anyMelee", label: localize("onStruckSourceAnyMelee") },
+    { id: "meleeNoReach", label: localize("onStruckSourceMeleeNoReach") },
+    { id: "reachMelee", label: localize("onStruckSourceReachMelee") },
+    { id: "meleeWeapon", label: localizeSystem("PF1.MeleeWeapon") },
+    { id: "naturalAttack", label: localizeSystem("PF1.Subtypes.Item.attack.natural.Single") },
+    { id: "unarmedStrike", label: localize("onStruckSourceUnarmed") },
+    { id: "spell", label: localizeSystem("TYPES.Item.spell") }
+  ];
+}
+
+function reactiveCreatureOptions() {
+  return [
+    { id: "any", label: localize("onStruckCreatureAny") },
+    { id: "living", label: localize("onStruckCreatureLiving") },
+    { id: "undead", label: localizeSystem("PF1.CreatureTypes.undead") },
+    { id: "construct", label: localizeSystem("PF1.CreatureTypes.construct") },
+    { id: "nonliving", label: localize("onStruckCreatureNonliving") }
+  ];
+}
+
+function reactiveAlignmentOptions() {
+  return [
+    { id: "any", label: localize("alignmentAny") },
+    { id: "good", label: localize("alignmentGood") },
+    { id: "evil", label: localize("alignmentEvil") },
+    { id: "lawful", label: localize("alignmentLawful") },
+    { id: "chaotic", label: localize("alignmentChaotic") },
+    { id: "lg", label: localize("alignmentLG") },
+    { id: "ng", label: localize("alignmentNG") },
+    { id: "cg", label: localize("alignmentCG") },
+    { id: "ln", label: localize("alignmentLN") },
+    { id: "tn", label: localize("alignmentTN") },
+    { id: "cn", label: localize("alignmentCN") },
+    { id: "le", label: localize("alignmentLE") },
+    { id: "ne", label: localize("alignmentNE") },
+    { id: "ce", label: localize("alignmentCE") }
+  ];
+}
+
+function selectOptionsHtml(options, selected) {
+  return options
+    .map((option) => `<option value="${escapeHtmlForSheet(option.id)}" ${option.id === selected ? "selected" : ""}>${escapeHtmlForSheet(option.label)}</option>`)
+    .join("");
 }
 
 function durationEndOptionsHtml(selected) {
@@ -656,10 +813,75 @@ function getConditionOptions() {
   for (const condition of pf1?.registry?.conditions ?? []) {
     const id = String(condition?._id ?? "").trim();
     if (!id) continue;
+    if (id === CONCEALED_CONDITION_ID) {
+      out.push(
+        { id: concealedPickerIdForVariant("normal"), label: getConcealedPickerLabel("normal") },
+        { id: concealedPickerIdForVariant("total"), label: getConcealedPickerLabel("total") }
+      );
+      continue;
+    }
     out.push({ id, label: condition?.name ?? id });
   }
   out.sort((a, b) => a.label.localeCompare(b.label));
   return out;
+}
+
+function normalizeConditionSelectedIds(selectedIds = []) {
+  return normalizeConcealedPickerSelectedIds(selectedIds);
+}
+
+function normalizeSelectedIdsForKind(selectedIds = [], kind = "condition") {
+  const ids = Array.isArray(selectedIds) ? selectedIds.map((id) => String(id ?? "").trim()).filter(Boolean) : [];
+  return kind === "condition" ? normalizeConditionSelectedIds(ids) : [...new Set(ids)];
+}
+
+function conditionEntryOptionSourceIds(id) {
+  if (!isConcealedPickerId(id)) return [id];
+  return [
+    id,
+    CONCEALED_CONDITION_ID,
+    concealedPickerIdForVariant("normal"),
+    concealedPickerIdForVariant("total")
+  ];
+}
+
+function getEntryOptionsForSelectedId(source = {}, id = "", kind = "condition") {
+  const keys = kind === "condition" ? conditionEntryOptionSourceIds(id) : [id];
+  for (const key of keys) {
+    const value = source?.[key];
+    if (value && typeof value === "object") return value;
+  }
+  return {};
+}
+
+function conditionApplicationForSelectedId(id, application = {}) {
+  if (!isConcealedPickerId(id)) return application;
+  const variant = concealedVariantFromPickerId(id, "normal");
+  const variantData = concealedApplicationDataForVariant(variant);
+  return {
+    ...(application ?? {}),
+    flags: {
+      ...(application?.flags ?? {}),
+      [MODULE.ID]: {
+        ...(application?.flags?.[MODULE.ID] ?? {}),
+        [CONCEALED_VARIANT_FLAG]: variantData.flags[MODULE.ID][CONCEALED_VARIANT_FLAG]
+      }
+    }
+  };
+}
+
+function effectConditionIdFromSelectedId(id) {
+  return conditionIdFromConcealedPickerId(id);
+}
+
+function pickerIdForConditionEffect(effect = {}) {
+  return concealedPickerIdFromConditionEffect(effect);
+}
+
+function pickerIdFromConditionIdAndApplication(conditionId, application = {}) {
+  const id = String(conditionId ?? "").trim();
+  if (id !== CONCEALED_CONDITION_ID) return id;
+  return concealedPickerIdForVariant(normalizeConcealedVariant(application?.flags?.[MODULE.ID]?.[CONCEALED_VARIANT_FLAG], "normal"));
 }
 
 const ROW_ACTIONS = new Set(["applySelf", "removeSelf", "applyTarget", "removeTarget"]);
@@ -680,7 +902,7 @@ function normalizeReactiveRows(rows = [], kind = "condition") {
   if (!Array.isArray(rows)) return [];
   return rows
     .map((row) => {
-      const selectedIds = Array.isArray(row?.selectedIds) ? row.selectedIds.map((id) => String(id ?? "").trim()).filter(Boolean) : [];
+      const selectedIds = normalizeSelectedIdsForKind(row?.selectedIds, kind);
       const rawEntryOptions = row?.entryOptions ?? row?.applicationOptions ?? (
         selectedIds.length === 1 && row?.application ? { [selectedIds[0]]: row.application } : {}
       );
@@ -695,7 +917,8 @@ function normalizeReactiveRows(rows = [], kind = "condition") {
 }
 
 function persistReactiveRows(rows, kind = "condition") {
-  return normalizeReactiveRows(rows ?? [], kind).map((r) => {
+  const normalizedRows = normalizeReactiveRows(rows ?? [], kind);
+  return normalizedRows.map((r) => {
     const out = {
       id: r.id,
       action: r.action,
@@ -707,25 +930,88 @@ function persistReactiveRows(rows, kind = "condition") {
   });
 }
 
-function buffEffectToRowAction(effectType) {
+function buffEffectToRowAction(effectType, context = "onHit") {
   const t = String(effectType ?? "");
+  if (context === "onStruck") {
+    if (t === "removeBuffTarget") return "removeSelf";
+    if (t === "applyBuffAttacker") return "applyTarget";
+    if (t === "removeBuffAttacker") return "removeTarget";
+    return "applySelf";
+  }
   if (t === "removeBuffAttacker") return "removeSelf";
   if (t === "applyBuffTarget") return "applyTarget";
   if (t === "removeBuffTarget") return "removeTarget";
   return "applySelf";
 }
 
-function conditionEffectToRowAction(effectType) {
+function conditionEffectToRowAction(effectType, context = "onHit") {
   const t = String(effectType ?? "");
+  if (context === "onStruck") {
+    if (t === "removeConditionTarget") return "removeSelf";
+    if (t === "applyConditionAttacker") return "applyTarget";
+    if (t === "removeConditionAttacker") return "removeTarget";
+    return "applySelf";
+  }
   if (t === "removeConditionAttacker") return "removeSelf";
   if (t === "applyConditionTarget") return "applyTarget";
   if (t === "removeConditionTarget") return "removeTarget";
   return "applySelf";
 }
 
-function buffRowsFromPersistedOrEffects(raw, effects) {
+function reactiveEffectToRowAction(effect, kind = "condition", context = "onHit") {
+  return kind === "buff"
+    ? buffEffectToRowAction(effect?.type, context)
+    : conditionEffectToRowAction(effect?.type, context);
+}
+
+function reactiveEffectEntryId(effect, kind = "condition") {
+  return String(kind === "buff" ? effect?.buffUuid ?? "" : pickerIdForConditionEffect(effect)).trim();
+}
+
+function hydrateReactiveRowsFromEffects(rows, effects, kind = "condition", context = "onHit") {
+  const hydratedRows = normalizeReactiveRows(rows, kind);
+  const effectOptions = new Map();
+
+  for (const effect of Array.isArray(effects) ? effects : []) {
+    const id = reactiveEffectEntryId(effect, kind);
+    const rowAction = reactiveEffectToRowAction(effect, kind, context);
+    if (!id || !rowActionApplies(rowAction)) continue;
+    const requirements = reactiveRequirementsPayload(effect?.requirements);
+    if (!requirements) continue;
+    effectOptions.set(`${rowAction}:${id}`, { requirements });
+  }
+
+  if (!effectOptions.size) return hydratedRows;
+
+  return hydratedRows.map((row) => {
+    if (!rowActionApplies(row.action)) return row;
+    const entryOptions = { ...(row.entryOptions ?? {}) };
+    let changed = false;
+
+    for (const id of row.selectedIds ?? []) {
+      const fromEffect = effectOptions.get(`${row.action}:${id}`);
+      if (!fromEffect?.requirements) continue;
+      const existing = entryOptions[id] ?? {};
+      if (reactiveRequirementsConfigured(existing.requirements)) continue;
+      entryOptions[id] = {
+        ...existing,
+        requirements: normalizeReactiveRequirements(fromEffect.requirements)
+      };
+      changed = true;
+    }
+
+    return changed
+      ? {
+        ...row,
+        entryOptions: normalizeReactiveEntryOptions(entryOptions, row.selectedIds, kind)
+      }
+      : row;
+  });
+}
+
+function buffRowsFromPersistedOrEffects(raw, effects, context = "onHit") {
   if (raw != null && typeof raw === "object" && Object.prototype.hasOwnProperty.call(raw, "buffRows")) {
-    return normalizeReactiveRows(raw.buffRows, "buff");
+    return hydrateReactiveRowsFromEffects(raw.buffRows, effects, "buff", context);
   }
   return effects
     .filter((effect) =>
@@ -734,19 +1020,21 @@ function buffRowsFromPersistedOrEffects(raw, effects) {
     )
     .map((effect) => ({
       id: createNasId(),
-      action: buffEffectToRowAction(effect?.type),
+      action: buffEffectToRowAction(effect?.type, context),
       selectedIds: [String(effect?.buffUuid ?? "")],
       entryOptions: normalizeReactiveEntryOptions(
-        effect?.application ? { [String(effect?.buffUuid ?? "")]: effect.application } : {},
+        (effect?.application || effect?.requirements)
+          ? { [String(effect?.buffUuid ?? "")]: { ...(effect.application ?? {}), ...(effect.requirements ? { requirements: effect.requirements } : {}) } }
+          : {},
         [String(effect?.buffUuid ?? "")],
         "buff"
       )
     }));
 }
 
-function conditionRowsFromPersistedOrEffects(raw, effects) {
+function conditionRowsFromPersistedOrEffects(raw, effects, context = "onHit") {
   if (raw != null && typeof raw === "object" && Object.prototype.hasOwnProperty.call(raw, "conditionRows")) {
-    return normalizeReactiveRows(raw.conditionRows, "condition");
+    return hydrateReactiveRowsFromEffects(raw.conditionRows, effects, "condition", context);
   }
   return effects
     .filter((effect) =>
@@ -754,16 +1042,21 @@ function conditionRowsFromPersistedOrEffects(raw, effects) {
         String(effect?.type ?? "")
       ) && String(effect?.conditionId ?? "")
     )
-    .map((effect) => ({
-      id: createNasId(),
-      action: conditionEffectToRowAction(effect?.type),
-      selectedIds: [String(effect?.conditionId ?? "")],
-      entryOptions: normalizeReactiveEntryOptions(
-        effect?.application ? { [String(effect?.conditionId ?? "")]: effect.application } : {},
-        [String(effect?.conditionId ?? "")],
-        "condition"
-      )
-    }));
+    .map((effect) => {
+      const entryId = pickerIdForConditionEffect(effect);
+      return {
+        id: createNasId(),
+        action: conditionEffectToRowAction(effect?.type, context),
+        selectedIds: [entryId],
+        entryOptions: normalizeReactiveEntryOptions(
+          (effect?.application || effect?.requirements)
+            ? { [entryId]: { ...(effect.application ?? {}), ...(effect.requirements ? { requirements: effect.requirements } : {}) } }
+            : {},
+          [entryId],
+          "condition"
+        )
+      };
+    });
 }
 
 function applicationKindForRowKey(rowKey) {
@@ -854,6 +1147,107 @@ function bindReactiveApplicationOptionsHost(host, kind, onChange, applyOptions) 
   });
 }
 
+function reactiveRequirementsFieldsHtml(requirements = {}) {
+  const normalized = normalizeReactiveRequirements(requirements);
+  const fieldsDisplay = normalized.enabled ? "" : "display:none;";
+  const saveDisplay = normalized.enabled && normalized.save.enabled ? "" : "display:none;";
+  return `
+    <div class="form-group stacked" style="margin:0;">
+      <label class="checkbox">
+        <input type="checkbox" data-req-role="enabled" ${normalized.enabled ? "checked" : ""}>
+        ${localize("reactiveRequirements")}
+      </label>
+    </div>
+    <div data-req-fields style="${fieldsDisplay}">
+      <div class="form-group" style="margin:0;">
+        <label>${localize("reactiveRequirementSource")}</label>
+        <div class="form-fields">
+          <select data-req-role="sourceKind">${selectOptionsHtml(reactiveSourceOptions(), normalized.sourceKind)}</select>
+        </div>
+      </div>
+      <div class="form-group" style="margin:0;">
+        <label>${localize("reactiveRequirementCreature")}</label>
+        <div class="form-fields">
+          <select data-req-role="creatureKind">${selectOptionsHtml(reactiveCreatureOptions(), normalized.creatureKind)}</select>
+        </div>
+      </div>
+      <div class="form-group" style="margin:0;">
+        <label>${localize("reactiveRequirementAlignment")}</label>
+        <div class="form-fields">
+          <select data-req-role="alignmentKind">${selectOptionsHtml(reactiveAlignmentOptions(), normalized.alignmentKind)}</select>
+        </div>
+      </div>
+      <div class="form-group stacked" style="margin:0;">
+        <label class="checkbox">
+          <input type="checkbox" data-req-role="saveEnabled" ${normalized.save.enabled ? "checked" : ""}>
+          ${localize("reactiveRequirementSave")}
+        </label>
+      </div>
+      <div data-req-save-fields style="${saveDisplay}">
+        <div class="form-group" style="margin:0;">
+          <label>${localize("onStruckSaveType")}</label>
+          <div class="form-fields">
+            <select data-req-role="saveType">
+              <option value="fort" ${normalized.save.type === "fort" ? "selected" : ""}>${game.i18n.localize("PF1.SavingThrowFort")}</option>
+              <option value="ref" ${normalized.save.type === "ref" ? "selected" : ""}>${game.i18n.localize("PF1.SavingThrowRef")}</option>
+              <option value="will" ${normalized.save.type === "will" ? "selected" : ""}>${game.i18n.localize("PF1.SavingThrowWill")}</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group" style="margin:0;">
+          <label>${localize("onStruckSaveDc")}</label>
+          <div class="form-fields"><input class="formula roll" type="text" data-req-role="saveDcFormula" value="${escapeHtmlForSheet(normalized.save.dcFormula)}" placeholder="10 + @cl"></div>
+        </div>
+        <div class="form-group stacked" style="margin:0;">
+          <label class="checkbox">
+            <input type="checkbox" data-req-role="saveSkipDialog" ${normalized.save.skipDialog ? "checked" : ""}>
+            ${localize("onStruckSaveSkipDialog")}
+          </label>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function readReactiveRequirementsFromHost(host) {
+  const enabled = host.querySelector('[data-req-role="enabled"]')?.checked === true;
+  if (!enabled) return normalizeReactiveRequirements({});
+  return normalizeReactiveRequirements({
+    enabled,
+    sourceKind: host.querySelector('[data-req-role="sourceKind"]')?.value ?? "any",
+    creatureKind: host.querySelector('[data-req-role="creatureKind"]')?.value ?? "any",
+    alignmentKind: host.querySelector('[data-req-role="alignmentKind"]')?.value ?? "any",
+    save: {
+      enabled: host.querySelector('[data-req-role="saveEnabled"]')?.checked === true,
+      type: host.querySelector('[data-req-role="saveType"]')?.value ?? "ref",
+      dcFormula: host.querySelector('[data-req-role="saveDcFormula"]')?.value ?? "",
+      skipDialog: host.querySelector('[data-req-role="saveSkipDialog"]')?.checked === true
+    }
+  });
+}
+
+function syncReactiveRequirementsHost(host) {
+  const enabled = host.querySelector('[data-req-role="enabled"]')?.checked === true;
+  const saveEnabled = host.querySelector('[data-req-role="saveEnabled"]')?.checked === true;
+  const fields = host.querySelector("[data-req-fields]");
+  const saveFields = host.querySelector("[data-req-save-fields]");
+  if (fields) fields.style.display = enabled ? "" : "none";
+  if (saveFields) saveFields.style.display = enabled && saveEnabled ? "" : "none";
+}
+
+function bindReactiveRequirementsHost(host, onChange, applyRequirements) {
+  if (!host) return;
+  syncReactiveRequirementsHost(host);
+  host.querySelectorAll("input, select").forEach((control) => {
+    control.addEventListener("change", (event) => {
+      excludeNasChangeFromParentForm(event);
+      applyRequirements(readReactiveRequirementsFromHost(host));
+      syncReactiveRequirementsHost(host);
+      onChange();
+    });
+  });
+}
+
 function attachReactiveRowEditor(section, item, state, rowKey, optionList, pickerTitle, onChange, reactiveContext = "onHit") {
   const list = section.querySelector(`[data-nas-list="${rowKey}"]`);
   const addBtn = section.querySelector(`[data-nas-add="${rowKey}"]`);
@@ -883,7 +1277,7 @@ function attachReactiveRowEditor(section, item, state, rowKey, optionList, picke
       initialSelectedIds: [...row.selectedIds],
       hasCustom: false,
       onCommit: (selectedIds) => {
-        row.selectedIds = selectedIds;
+        row.selectedIds = normalizeSelectedIdsForKind(selectedIds, entryKind);
         row.entryOptions = normalizeReactiveEntryOptions(row.entryOptions, row.selectedIds, entryKind);
         render();
         onChange();
@@ -940,21 +1334,44 @@ function attachReactiveRowEditor(section, item, state, rowKey, optionList, picke
         row.entryOptions = normalizeReactiveEntryOptions(row.entryOptions, row.selectedIds, entryKind);
         entryOptionsHost.innerHTML = row.selectedIds.map((id) => {
           const label = optionList.find((option) => option.id === id)?.label ?? id;
-          const options = normalizeReactiveApplicationOptions(row.entryOptions?.[id], entryKind);
+          const entryOption = row.entryOptions?.[id] ?? {};
+          const options = normalizeReactiveApplicationOptions(entryOption, entryKind);
+          const requirements = normalizeReactiveRequirements(entryOption?.requirements);
           return `
             <div class="nas-reactive-entry-application" data-entry-id="${escapeHtmlForSheet(id)}" style="border-left:2px solid rgba(0,0,0,0.18);padding-left:6px;">
               <div style="font-weight:600;font-size:var(--font-size-12,12px);margin:0 0 2px;">${escapeHtmlForSheet(label)}</div>
               <div class="nas-reactive-application-options" style="display:block;width:100%;">
                 ${reactiveApplicationOptionsFieldsHtml(options, entryKind)}
               </div>
+              <div class="nas-reactive-requirements" style="display:block;width:100%;margin-top:4px;">
+                ${reactiveRequirementsFieldsHtml(requirements)}
+              </div>
             </div>
           `;
         }).join("");
         entryOptionsHost.querySelectorAll("[data-entry-id]").forEach((host) => {
           const id = String(host.dataset.entryId ?? "");
-          bindReactiveApplicationOptionsHost(host, entryKind, onChange, (options) => {
+          bindReactiveApplicationOptionsHost(host.querySelector(".nas-reactive-application-options"), entryKind, onChange, (options) => {
             row.entryOptions ??= {};
-            if (reactiveApplicationOptionsConfigured(options, entryKind)) row.entryOptions[id] = options;
+            const existing = row.entryOptions[id] ?? {};
+            const next = {
+              ...options,
+              ...(existing.requirements ? { requirements: existing.requirements } : {})
+            };
+            const payload = reactiveEntryOptionsPayload(next, entryKind);
+            if (payload) row.entryOptions[id] = payload;
+            else delete row.entryOptions[id];
+          });
+          bindReactiveRequirementsHost(host.querySelector(".nas-reactive-requirements"), onChange, (requirements) => {
+            row.entryOptions ??= {};
+            const existing = row.entryOptions[id] ?? {};
+            const options = normalizeReactiveApplicationOptions(existing, entryKind);
+            const next = {
+              ...options,
+              ...(reactiveRequirementsConfigured(requirements) ? { requirements } : {})
+            };
+            const payload = reactiveEntryOptionsPayload(next, entryKind);
+            if (payload) row.entryOptions[id] = payload;
             else delete row.entryOptions[id];
           });
         });
@@ -1004,16 +1421,11 @@ function normalizeDamageTypeIds(ids) {
 }
 
 function normalizeOnStruckSourceKind(value) {
-  const kind = String(value ?? "anyMelee");
-  if (["any", "anyMelee", "meleeWeapon", "meleeNoReach", "reachMelee", "naturalAttack", "unarmedStrike", "spell"].includes(kind)) return kind;
-  if (kind === "naturalWeapon") return "naturalAttack";
-  if (kind === "nonWeapon") return "spell";
-  return "anyMelee";
+  return normalizeReactiveSourceKind(value, "anyMelee");
 }
 
 function normalizeOnStruckCreatureKind(value) {
-  const kind = String(value ?? "any");
-  return ["any", "living", "undead", "construct", "nonliving"].includes(kind) ? kind : "any";
+  return normalizeReactiveCreatureKind(value);
 }
 
 function normalizeOnStruckSave(raw = {}) {
@@ -1025,10 +1437,13 @@ function normalizeOnStruckSave(raw = {}) {
     }
     const kind = effectKind === "applyBuff" ? "buff" : "condition";
     const application = reactiveApplicationOptionsPayload(value?.application, kind);
+    const conditionId = kind === "condition"
+      ? (normalizeConditionSelectedIds([pickerIdFromConditionIdAndApplication(value?.conditionId, value?.application)])[0] ?? "")
+      : String(value?.conditionId ?? "");
     return {
       effectKind,
       buffUuid: String(value?.buffUuid ?? ""),
-      conditionId: String(value?.conditionId ?? ""),
+      conditionId,
       ...(application ? { application } : {})
     };
   };
@@ -1065,9 +1480,34 @@ function normalizeOnStruckDamageRule(raw = {}, fallback = {}) {
     sourceKind: normalizeOnStruckSourceKind(raw?.sourceKind ?? fallback?.sourceKind),
     onlyIfDamaged: raw?.onlyIfDamaged === true,
     attackerCreatureKind: normalizeOnStruckCreatureKind(raw?.attackerCreatureKind),
+    attackerAlignmentKind: normalizeAlignmentRequirementKind(raw?.attackerAlignmentKind ?? raw?.alignmentKind),
     save: normalizeOnStruckSave(raw?.save),
     spendPool: raw?.spendPool === true,
     message: raw?.message !== false
+  };
+}
+
+function onStruckSaveOutcomePayload(outcome = {}) {
+  const normalized = normalizeOnStruckSave({ enabled: true, type: "ref", effects: { success: outcome } }).effects.success;
+  if (normalized.effectKind !== "applyCondition") return normalized;
+  const selectedId = normalizeConditionSelectedIds([normalized.conditionId])[0] ?? "";
+  const conditionId = effectConditionIdFromSelectedId(selectedId);
+  const application = conditionApplicationForSelectedId(selectedId, reactiveApplicationOptionsPayload(normalized.application, "condition") ?? {});
+  return {
+    ...normalized,
+    conditionId,
+    ...(Object.keys(application).length ? { application } : {})
+  };
+}
+
+function onStruckSavePayload(save = {}) {
+  const normalized = normalizeOnStruckSave(save);
+  return {
+    ...normalized,
+    effects: {
+      success: onStruckSaveOutcomePayload(normalized.effects.success),
+      failure: onStruckSaveOutcomePayload(normalized.effects.failure)
+    }
   };
 }
 
@@ -1079,6 +1519,7 @@ function newOnStruckDamageRule(fallback = {}) {
     damageTypeIds: fallback.damageTypeIds ?? ["fire"],
     sourceKind: fallback.sourceKind ?? "meleeNoReach",
     attackerCreatureKind: "any",
+    attackerAlignmentKind: "any",
     save: {
       enabled: false,
       type: "ref",
@@ -1227,8 +1668,8 @@ function normalizeOnHitConfig(raw = {}) {
   const primary = primaryDamageHealFromEffects(effects) ?? {};
   const message = resolveReactivePostMessageFromRaw(raw, effects, primary);
   const onHitFunction = inferOnHitFunction(raw, effects);
-  const buffRows = buffRowsFromPersistedOrEffects(raw, effects);
-  const conditionRows = conditionRowsFromPersistedOrEffects(raw, effects);
+  const buffRows = buffRowsFromPersistedOrEffects(raw, effects, "onHit");
+  const conditionRows = conditionRowsFromPersistedOrEffects(raw, effects, "onHit");
   const damageTypeIds = normalizeDamageTypeIds(
     Array.isArray(raw?.damageTypeIds) && raw.damageTypeIds.length
       ? raw.damageTypeIds
@@ -1262,8 +1703,8 @@ function normalizeOnStruckConfig(raw = {}) {
   const primary = primaryDamageHealFromEffects(effects) ?? {};
   const message = resolveReactivePostMessageFromRaw(raw, effects, primary);
   const onStruckFunction = inferOnStruckFunction(raw, effects);
-  const buffRows = buffRowsFromPersistedOrEffects(raw, effects);
-  const conditionRows = conditionRowsFromPersistedOrEffects(raw, effects);
+  const buffRows = buffRowsFromPersistedOrEffects(raw, effects, "onStruck");
+  const conditionRows = conditionRowsFromPersistedOrEffects(raw, effects, "onStruck");
   const damageTypeIds = normalizeDamageTypeIds(
     Array.isArray(raw?.damageTypeIds) && raw.damageTypeIds.length
       ? raw.damageTypeIds
@@ -1668,23 +2109,9 @@ function renderOnStruckDamageRuleEditor(section, item, state, onChange, buffOpti
   if (!Array.isArray(state.damageRules) || !state.damageRules.length) {
     state.damageRules = [newOnStruckDamageRule(state)];
   }
-  const sourceOptions = [
-    { id: "any", label: localize("onStruckSourceAny") },
-    { id: "anyMelee", label: localize("onStruckSourceAnyMelee") },
-    { id: "meleeNoReach", label: localize("onStruckSourceMeleeNoReach") },
-    { id: "reachMelee", label: localize("onStruckSourceReachMelee") },
-    { id: "meleeWeapon", label: localizeSystem("PF1.MeleeWeapon") },
-    { id: "naturalAttack", label: localizeSystem("PF1.Subtypes.Item.attack.natural.Single") },
-    { id: "unarmedStrike", label: localize("onStruckSourceUnarmed") },
-    { id: "spell", label: localizeSystem("TYPES.Item.spell") }
-  ];
-  const creatureOptions = [
-    { id: "any", label: localize("onStruckCreatureAny") },
-    { id: "living", label: localize("onStruckCreatureLiving") },
-    { id: "undead", label: localizeSystem("PF1.CreatureTypes.undead") },
-    { id: "construct", label: localizeSystem("PF1.CreatureTypes.construct") },
-    { id: "nonliving", label: localize("onStruckCreatureNonliving") }
-  ];
+  const sourceOptions = reactiveSourceOptions();
+  const creatureOptions = reactiveCreatureOptions();
+  const alignmentOptions = reactiveAlignmentOptions();
   host.innerHTML = state.damageRules.map((rule, index) => {
     const save = normalizeOnStruckSave(rule.save);
     return `
@@ -1726,6 +2153,14 @@ function renderOnStruckDamageRuleEditor(section, item, state, onChange, buffOpti
         <div class="form-fields">
           <select data-rule-key="attackerCreatureKind">
             ${creatureOptions.map((option) => `<option value="${option.id}">${escapeHtmlForSheet(option.label)}</option>`).join("")}
+          </select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>${localize("onStruckRuleAlignment")}</label>
+        <div class="form-fields">
+          <select data-rule-key="attackerAlignmentKind">
+            ${alignmentOptions.map((option) => `<option value="${option.id}">${escapeHtmlForSheet(option.label)}</option>`).join("")}
           </select>
         </div>
       </div>
@@ -1852,6 +2287,7 @@ function renderOnStruckDamageRuleEditor(section, item, state, onChange, buffOpti
     row.querySelector('[data-rule-key="mode"]').value = rule.mode ?? "formula";
     row.querySelector('[data-rule-key="sourceKind"]').value = normalizeOnStruckSourceKind(rule.sourceKind);
     row.querySelector('[data-rule-key="attackerCreatureKind"]').value = normalizeOnStruckCreatureKind(rule.attackerCreatureKind);
+    row.querySelector('[data-rule-key="attackerAlignmentKind"]').value = normalizeAlignmentRequirementKind(rule.attackerAlignmentKind);
     row.querySelector('[data-rule-key="saveType"]').value = normalizeOnStruckSave(rule.save).type;
     row.querySelector('[data-rule-key="saveOnSuccess"]').value = normalizeOnStruckSave(rule.save).onSuccess;
     const save = normalizeOnStruckSave(rule.save);
@@ -1890,6 +2326,7 @@ function renderOnStruckDamageRuleEditor(section, item, state, onChange, buffOpti
       else if (key === "formula") rule.formula = String(control.value ?? "");
       else if (key === "sourceKind") rule.sourceKind = normalizeOnStruckSourceKind(control.value);
       else if (key === "attackerCreatureKind") rule.attackerCreatureKind = normalizeOnStruckCreatureKind(control.value);
+      else if (key === "attackerAlignmentKind") rule.attackerAlignmentKind = normalizeAlignmentRequirementKind(control.value);
       else {
         rule.save = normalizeOnStruckSave(rule.save);
         if (key === "saveEnabled") rule.save.enabled = control.checked === true;
@@ -2072,19 +2509,30 @@ function toOnHitPayload(state) {
       const uuid = String(buffUuid ?? "").trim();
       if (!uuid) continue;
       const effect = { type: effectType, buffUuid: uuid, message: state.message !== false };
-      const application = effectType.startsWith("apply") ? reactiveApplicationOptionsPayload(row?.entryOptions?.[uuid], "buff") : null;
-      if (application) effect.application = application;
+      const entryOptions = effectType.startsWith("apply") ? reactiveEntryOptionsPayload(row?.entryOptions?.[uuid], "buff") : null;
+      if (entryOptions) {
+        const application = reactiveApplicationOptionsPayload(entryOptions, "buff");
+        if (application) effect.application = application;
+        if (entryOptions.requirements) effect.requirements = entryOptions.requirements;
+      }
       effects.push(effect);
     }
   }
   for (const row of state.conditionRows ?? []) {
     const effectType = mapConditionRowToEffectType(row?.action);
-    for (const conditionId of row?.selectedIds ?? []) {
-      const id = String(conditionId ?? "").trim();
+    for (const selectedConditionId of normalizeConditionSelectedIds(row?.selectedIds ?? [])) {
+      const selectedId = String(selectedConditionId ?? "").trim();
+      const id = effectConditionIdFromSelectedId(selectedId);
       if (!id) continue;
       const effect = { type: effectType, conditionId: id, message: state.message !== false };
-      const application = effectType.startsWith("apply") ? reactiveApplicationOptionsPayload(row?.entryOptions?.[id], "condition") : null;
-      if (application) effect.application = application;
+      const entryOptions = effectType.startsWith("apply") ? reactiveEntryOptionsPayload(row?.entryOptions?.[selectedId], "condition") : null;
+      if (entryOptions) {
+        const application = conditionApplicationForSelectedId(selectedId, reactiveApplicationOptionsPayload(entryOptions, "condition") ?? {});
+        if (Object.keys(application).length) effect.application = application;
+        if (entryOptions.requirements) effect.requirements = entryOptions.requirements;
+      } else if (effectType.startsWith("apply") && isConcealedPickerId(selectedId)) {
+        effect.application = conditionApplicationForSelectedId(selectedId, {});
+      }
       effects.push(effect);
     }
   }
@@ -2134,19 +2582,30 @@ function toOnStruckPayload(state) {
       const uuid = String(buffUuid ?? "").trim();
       if (!uuid) continue;
       const effect = { type: effectType, buffUuid: uuid, message: state.message !== false };
-      const application = effectType.startsWith("apply") ? reactiveApplicationOptionsPayload(row?.entryOptions?.[uuid], "buff") : null;
-      if (application) effect.application = application;
+      const entryOptions = effectType.startsWith("apply") ? reactiveEntryOptionsPayload(row?.entryOptions?.[uuid], "buff") : null;
+      if (entryOptions) {
+        const application = reactiveApplicationOptionsPayload(entryOptions, "buff");
+        if (application) effect.application = application;
+        if (entryOptions.requirements) effect.requirements = entryOptions.requirements;
+      }
       effects.push(effect);
     }
   }
   for (const row of state.conditionRows ?? []) {
     const effectType = mapConditionRowToEffectType(row?.action, "onStruck");
-    for (const conditionId of row?.selectedIds ?? []) {
-      const id = String(conditionId ?? "").trim();
+    for (const selectedConditionId of normalizeConditionSelectedIds(row?.selectedIds ?? [])) {
+      const selectedId = String(selectedConditionId ?? "").trim();
+      const id = effectConditionIdFromSelectedId(selectedId);
       if (!id) continue;
       const effect = { type: effectType, conditionId: id, message: state.message !== false };
-      const application = effectType.startsWith("apply") ? reactiveApplicationOptionsPayload(row?.entryOptions?.[id], "condition") : null;
-      if (application) effect.application = application;
+      const entryOptions = effectType.startsWith("apply") ? reactiveEntryOptionsPayload(row?.entryOptions?.[selectedId], "condition") : null;
+      if (entryOptions) {
+        const application = conditionApplicationForSelectedId(selectedId, reactiveApplicationOptionsPayload(entryOptions, "condition") ?? {});
+        if (Object.keys(application).length) effect.application = application;
+        if (entryOptions.requirements) effect.requirements = entryOptions.requirements;
+      } else if (effectType.startsWith("apply") && isConcealedPickerId(selectedId)) {
+        effect.application = conditionApplicationForSelectedId(selectedId, {});
+      }
       effects.push(effect);
     }
   }
@@ -2172,7 +2631,8 @@ function toOnStruckPayload(state) {
           sourceKind: normalized.sourceKind,
           onlyIfDamaged: normalized.onlyIfDamaged,
           attackerCreatureKind: normalized.attackerCreatureKind,
-          save: normalizeOnStruckSave(normalized.save),
+          attackerAlignmentKind: normalized.attackerAlignmentKind,
+          save: onStruckSavePayload(normalized.save),
           spendPool: normalized.spendPool,
           message: normalized.message
         };
@@ -2869,7 +3329,7 @@ async function renderOnStruckSection(sheet, root) {
   if (!detailsTab) return;
   const hadOnStruckNas = !!detailsTab.querySelector(".nas-onstruck-effects");
   const item = sheet?.item;
-  if (!item || !["buff", "equipment"].includes(item.type)) return;
+  if (!isNasReactiveAutomationItem(item)) return;
   if (hadOnStruckNas) return;
 
   const appKey = "onstruck";
@@ -3592,7 +4052,7 @@ async function renderGrantedDefensesSection(sheet, root) {
   const detailsTab = findDetailsTab(root);
   if (!detailsTab) return;
   const item = sheet?.item;
-  if (!item || !["buff", "equipment"].includes(item.type)) return;
+  if (!isNasReactiveAutomationItem(item)) return;
   if (detailsTab.querySelector(".nas-granted-defenses")) return;
 
   const appKey = "grantedDefenses";
@@ -3904,7 +4364,7 @@ async function renderTemporaryHpSection(sheet, root) {
   const detailsTab = findDetailsTab(root);
   if (!detailsTab) return;
   const item = sheet?.item;
-  if (!item || !["buff", "equipment"].includes(item.type)) return;
+  if (!isNasReactiveAutomationItem(item)) return;
   if (detailsTab.querySelector(".nas-temporary-hp")) return;
 
   const appKey = "temporaryHp";
@@ -4215,10 +4675,91 @@ function onRenderItemActionSheet(sheet, html) {
   })().finally(() => scheduleNasScrollRestoreRetry(sheet));
 }
 
+function selectedConditionPickerIdsForBuffItem(item) {
+  const selected = [];
+  for (const id of Array.isArray(item?.system?.conditions) ? item.system.conditions : []) {
+    const conditionId = String(id ?? "").trim();
+    if (!conditionId) continue;
+    if (conditionId === CONCEALED_CONDITION_ID) {
+      selected.push(concealedPickerIdForVariant(normalizeConcealedVariant(item.getFlag?.(MODULE.ID, CONCEALED_VARIANT_FLAG), "normal")));
+    } else {
+      selected.push(conditionId);
+    }
+  }
+  return normalizeConditionSelectedIds(selected);
+}
+
+async function updateBuffItemConditionsFromPicker(item, selectedIds = []) {
+  const normalizedSelectedIds = normalizeConditionSelectedIds(selectedIds);
+  const selectedConcealedId = normalizedSelectedIds.find((id) => isConcealedPickerId(id));
+  const conditionIds = [];
+  for (const selectedId of normalizedSelectedIds) {
+    const conditionId = effectConditionIdFromSelectedId(selectedId);
+    if (conditionId && !conditionIds.includes(conditionId)) conditionIds.push(conditionId);
+  }
+
+  const updateData = {
+    "system.conditions": conditionIds
+  };
+  if (selectedConcealedId) {
+    updateData[`flags.${MODULE.ID}.${CONCEALED_VARIANT_FLAG}`] = concealedVariantFromPickerId(selectedConcealedId, "normal");
+  } else {
+    updateData[`flags.${MODULE.ID}.-=${CONCEALED_VARIANT_FLAG}`] = null;
+  }
+
+  await item.update(updateData);
+  await syncActiveBuffConcealedEffectVariant(item);
+}
+
+function renderBuffConditionVariantLabels(sheet, root) {
+  const item = sheet?.item;
+  if (item?.type !== "buff") return;
+  if (!Array.isArray(item.system?.conditions) || !item.system.conditions.includes(CONCEALED_CONDITION_ID)) return;
+  const label = getConcealedPickerLabel(normalizeConcealedVariant(item.getFlag?.(MODULE.ID, CONCEALED_VARIANT_FLAG), "normal"));
+  const baseLabel = String(pf1?.registry?.conditions?.get?.(CONCEALED_CONDITION_ID)?.name ?? game.i18n.localize("NAS.conditions.list.concealed.label"));
+  for (const el of root.querySelectorAll(".form-group.conditions li.tag, .property-list.conditions li.condition")) {
+    if (String(el.textContent ?? "").trim() === baseLabel) el.textContent = label;
+  }
+}
+
+function renderBuffConditionPickerControl(sheet, root) {
+  const item = sheet?.item;
+  if (item?.type !== "buff") return;
+  renderBuffConditionVariantLabels(sheet, root);
+  if (root.dataset.nasConcealedBuffConditionPicker === "true") return;
+  root.dataset.nasConcealedBuffConditionPicker = "true";
+  root.addEventListener("click", (event) => {
+    const control = event.target?.closest?.('a.trait-selector[data-for="system.conditions"][data-options="conditions"]');
+    if (!control || !root.contains(control)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    if (!sheet?.isEditable) return;
+    if (!pf1?.applications?.ActorTraitSelector) {
+      ui.notifications?.warn?.("PF1 trait selector is not available.");
+      return;
+    }
+    const optionList = getConditionOptions();
+    const { choices, indexToId } = buildReactiveOptionChoices(optionList);
+    new ReactiveOptionSelector({
+      document: item,
+      title: game.i18n.localize(control.dataset.title || "PF1.ConditionPlural"),
+      subject: "nasBuffConditionVariants",
+      rowId: "buffConditions",
+      choices,
+      indexToId,
+      initialSelectedIds: selectedConditionPickerIdsForBuffItem(item),
+      hasCustom: false,
+      onCommit: (selectedIds) => updateBuffItemConditionsFromPicker(item, selectedIds)
+    }).render(true);
+  }, true);
+}
+
 function onRenderItemSheet(sheet, html) {
   const root = elementFromHtmlLike(sheet?.element) ?? elementFromHtmlLike(html);
   if (!root) return;
   void (async () => {
+    await runReactiveSheetStage("buffConditionPicker", sheet, root, () => renderBuffConditionPickerControl(sheet, root));
     await runReactiveSheetStage("onHit", sheet, root, () => renderOnHitSection(sheet, root));
     await runReactiveSheetStage("onStruck", sheet, root, () => renderOnStruckSection(sheet, root));
     await runReactiveSheetStage("appliedBuffOverrides", sheet, root, () => renderAppliedBuffOverridesSection(sheet, root));
