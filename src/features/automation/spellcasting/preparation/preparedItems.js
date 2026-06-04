@@ -186,6 +186,9 @@ function makePreparedItemFlag(bookId, knownSpell, sourceItem, {
 
 function makeGeneratedPreparedItemData(bookId, knownSpell, preparedEntry, sourceItem, count, mode) {
   const data = cloneData(sourceItem?.toObject?.() ?? sourceItem ?? {});
+  const preparedFlag = makePreparedItemFlag(bookId, knownSpell, sourceItem, {
+    preparedEntry
+  });
   delete data._id;
 
   data.type = "spell";
@@ -196,7 +199,7 @@ function makeGeneratedPreparedItemData(bookId, knownSpell, preparedEntry, source
   data.img = data.img || knownSpell?.img || "icons/svg/book.svg";
   data.system ??= {};
   data.system.spellbook = normalizeId(bookId);
-  data.system.level = getSpellLevel(sourceItem, knownSpell?.level ?? data.system.level ?? 0);
+  data.system.level = preparedFlag.preparedSlotLevel;
   data.system.preparation ??= {};
 
   if (mode === "hybrid") {
@@ -208,9 +211,7 @@ function makeGeneratedPreparedItemData(bookId, knownSpell, preparedEntry, source
 
   data.flags ??= {};
   data.flags[MODULE.ID] ??= {};
-  data.flags[MODULE.ID][SPELLBOOK_PREPARED_ITEM_FLAG] = makePreparedItemFlag(bookId, knownSpell, sourceItem, {
-    preparedEntry
-  });
+  data.flags[MODULE.ID][SPELLBOOK_PREPARED_ITEM_FLAG] = preparedFlag;
 
   return data;
 }

@@ -30,7 +30,7 @@ function getConcealedVariantForTargets(targets = []) {
     const actor = target?.actor;
     if (!actor?.statuses?.has?.(CONCEALED_CONDITION_ID)) continue;
     const variant = getConcealedVariant(actor) || "normal";
-    chosen = (!chosen || chosen === "normal" && variant === "total") ? variant : chosen;
+    chosen = (!chosen || (chosen === "normal" && variant === "total")) ? variant : chosen;
     if (chosen === "total") break;
   }
   return chosen;

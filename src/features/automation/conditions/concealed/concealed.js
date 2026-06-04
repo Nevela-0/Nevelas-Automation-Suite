@@ -16,14 +16,54 @@ export function normalizeConcealedVariant(value, fallback = null) {
   return fallback;
 }
 
+function statusesInclude(statuses, id) {
+  if (typeof statuses?.has === "function") return statuses.has(id);
+  return Array.isArray(statuses) && statuses.includes(id);
+}
+
+function getConcealedVariantFlag(document) {
+  return document?.getFlag?.(MODULE.ID, CONCEALED_VARIANT_FLAG)
+    ?? document?.flags?.[MODULE.ID]?.[CONCEALED_VARIANT_FLAG]
+    ?? null;
+}
+
+function concealedVariantFromEffectDocument(effect, fallback = "normal") {
+  if (!statusesInclude(effect?.statuses, CONCEALED_CONDITION_ID)) return null;
+  return normalizeConcealedVariant(getConcealedVariantFlag(effect), fallback);
+}
+
+function activeBuffAppliesConcealed(item) {
+  return (
+    item?.type === "buff"
+    && item?.system?.active === true
+    && Array.isArray(item.system?.conditions)
+    && item.system.conditions.includes(CONCEALED_CONDITION_ID)
+  );
+}
+
+function concealedVariantFromActiveBuffItem(item) {
+  if (!activeBuffAppliesConcealed(item)) return null;
+  return (
+    normalizeConcealedVariant(getConcealedVariantFlag(item), null)
+    ?? concealedVariantFromEffectDocument(item.effect, null)
+    ?? "normal"
+  );
+}
+
 export function getConcealedVariant(actor) {
   if (!actor) return null;
+  let foundNormal = false;
   for (const ae of actor.effects ?? []) {
-    if (!ae?.statuses?.has?.(CONCEALED_CONDITION_ID)) continue;
-    const v = ae.getFlag?.(MODULE.ID, CONCEALED_VARIANT_FLAG);
-    return (v === "total" || v === "normal") ? v : "normal";
+    const variant = concealedVariantFromEffectDocument(ae, "normal");
+    if (variant === "total") return "total";
+    if (variant === "normal") foundNormal = true;
   }
-  return null;
+  for (const item of actor.items ?? []) {
+    const variant = concealedVariantFromActiveBuffItem(item);
+    if (variant === "total") return "total";
+    if (variant === "normal") foundNormal = true;
+  }
+  return foundNormal ? "normal" : null;
 }
 
 export function concealedVariantFromApplication(application = {}, fallback = null) {
@@ -183,10 +223,11 @@ function applyConcealedDataToBuffEffect(item, effectData) {
 }
 
 export async function syncActiveBuffConcealedEffectVariant(item) {
-  if (item?.type !== "buff" || item?.system?.active !== true) return;
+  if (item?.type !== "buff") return;
   if (!Array.isArray(item.system?.conditions) || !item.system.conditions.includes(CONCEALED_CONDITION_ID)) return;
+  if (item?.system?.active !== true) return;
   const effect = item.effect;
-  if (!effect?.statuses?.has?.(CONCEALED_CONDITION_ID)) return;
+  if (!statusesInclude(effect?.statuses, CONCEALED_CONDITION_ID)) return;
   const variant = normalizeConcealedVariant(item.getFlag?.(MODULE.ID, CONCEALED_VARIANT_FLAG), "normal");
   const update = concealedApplicationDataForVariant(variant);
   if (effect.getFlag?.(MODULE.ID, CONCEALED_VARIANT_FLAG) === variant) return;

@@ -204,6 +204,7 @@ export function mergePreparedVariantMetamagicIntoContext(actionUse, context) {
   );
   context.spellLevel ??= {};
   context.spellLevel.original = originalSpellLevel;
+  context.spellLevel.effective = originalSpellLevel;
   context.spellLevel.preparedSlotLevel = preparedSlotLevel;
 
   if (!preparedSelections.length) {

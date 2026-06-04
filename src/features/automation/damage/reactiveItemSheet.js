@@ -4686,7 +4686,8 @@ function selectedConditionPickerIdsForBuffItem(item) {
       selected.push(conditionId);
     }
   }
-  return normalizeConditionSelectedIds(selected);
+  const normalized = normalizeConditionSelectedIds(selected);
+  return normalized;
 }
 
 async function updateBuffItemConditionsFromPicker(item, selectedIds = []) {
@@ -4741,6 +4742,7 @@ function renderBuffConditionPickerControl(sheet, root) {
     }
     const optionList = getConditionOptions();
     const { choices, indexToId } = buildReactiveOptionChoices(optionList);
+    const initialSelectedIds = selectedConditionPickerIdsForBuffItem(item);
     new ReactiveOptionSelector({
       document: item,
       title: game.i18n.localize(control.dataset.title || "PF1.ConditionPlural"),
@@ -4748,7 +4750,7 @@ function renderBuffConditionPickerControl(sheet, root) {
       rowId: "buffConditions",
       choices,
       indexToId,
-      initialSelectedIds: selectedConditionPickerIdsForBuffItem(item),
+      initialSelectedIds,
       hasCustom: false,
       onCommit: (selectedIds) => updateBuffItemConditionsFromPicker(item, selectedIds)
     }).render(true);

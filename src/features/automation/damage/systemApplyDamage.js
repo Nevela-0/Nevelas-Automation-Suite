@@ -4,7 +4,7 @@ import { checkMassiveDamage } from '../../../integration/moduleSockets.js';
 import { abilityDeltaCalculation } from './ability.js';
 import { buildAbilityDmgEntries, splitAbilityInstances } from './abilityTags.js';
 import { applyNasDefenseBypass, getNasDefenseBypassSettings } from './nasBypass.js';
-import { applyLegacyPriorityTypes } from './priorityTypes.js';
+import { applyLegacyPriorityTypes, getPriorityTypesForOptions } from './priorityTypes.js';
 import { applyManualVulnerability, buildNumericInstances, sumInstanceValues } from './instances.js';
 import { normalizeTargets } from '../utils/targeting.js';
 import { actorHasGrantedCriticalImmunity, getActorGrantedFortification } from '../defenses/grantedDefenses.js';
@@ -113,6 +113,16 @@ function summarizeReductionOptions(options = {}) {
     return out;
 }
 
+function isArchaicDamageButton(button) {
+    return Boolean(button?.closest?.(".archaic-damage-buttons"));
+}
+
+function isArchaicHalfDamageButton(button) {
+    if (!isArchaicDamageButton(button)) return false;
+    if (button?.classList?.contains("apply-half")) return true;
+    return String(button?.textContent ?? "").trim() === "50%";
+}
+
 function typeValuesFrom(value) {
     if (!value) return [];
     if (Array.isArray(value)) return value.flatMap(typeValuesFrom);
@@ -131,6 +141,16 @@ function damageTypesFromApplyDamageOptions(options = {}) {
                 if (id) ids.add(id);
             }
         }
+    }
+    return [...ids];
+}
+
+function damageReductionBypassTypesFromApplyDamageOptions(options = {}) {
+    const instances = Array.isArray(options.instances) ? options.instances : [];
+    const ids = new Set(damageTypesFromApplyDamageOptions(options));
+    for (const id of getPriorityTypesForOptions(options, instances)) {
+        const normalized = String(id ?? "").trim().toLowerCase();
+        if (normalized) ids.add(normalized);
     }
     return [...ids];
 }
@@ -442,13 +462,29 @@ function isNasAbsorptionResistanceEntry(entry = {}) {
     return entry?.nas?.source === "damageAbsorption";
 }
 
+function isDamageReductionRelevantTypeId(typeId) {
+    const raw = String(typeId ?? "").trim().toLowerCase();
+    if (!raw) return false;
+    if (raw === "untyped") return true;
+    return !isEnergyTypeId(raw);
+}
+
+function hasDamageReductionRelevantDamage(options = {}) {
+    return (options.instances ?? []).some((instance) => {
+        if (instanceDamageAmount(instance) <= 0) return false;
+        const typeIds = damageTypeIdsFromInstance(instance);
+        if (!typeIds.length) return true;
+        return typeIds.some((typeId) => isDamageReductionRelevantTypeId(typeId));
+    });
+}
+
 function nativeDamageReductionForApplyDamage(actor, value, options = {}, { ignoreNasAbsorption = false } = {}) {
     if (Number.isFinite(Number(options?.reduction)) && Number(options.reduction) > 0) {
         return { reduction: 0, reason: "already-has-reduction" };
     }
     if (options?.asWounds || value <= 0) return { reduction: 0, reason: "not-hp-damage" };
 
-    const damageTypes = damageTypesFromApplyDamageOptions(options);
+    const damageTypes = damageReductionBypassTypesFromApplyDamageOptions(options);
     const entries = Array.isArray(actor?.system?.traits?.dr?.value) ? actor.system.traits.dr.value : [];
     const candidates = [];
     for (const entry of entries) {
@@ -464,6 +500,62 @@ function nativeDamageReductionForApplyDamage(actor, value, options = {}, { ignor
     }
     const reduction = Math.min(value, Math.max(0, ...candidates.filter((candidate) => !candidate.bypassed).map((candidate) => candidate.amount)));
     return { reduction, damageTypes, candidates };
+}
+
+function stackedDamageReductionForApplyDamage(actor, value, options = {}, { ignoreNasAbsorption = false } = {}) {
+    if (options?.asWounds || value <= 0) return { reduction: 0, reason: "not-hp-damage" };
+
+    const damageTypes = damageReductionBypassTypesFromApplyDamageOptions(options);
+    const entries = Array.isArray(actor?.system?.traits?.dr?.value) ? actor.system.traits.dr.value : [];
+    const candidates = [];
+    for (const entry of entries) {
+        if (ignoreNasAbsorption && isNasAbsorptionResistanceEntry(entry)) continue;
+        const amount = Math.max(0, Math.floor(Number(entry?.amount ?? entry?.value) || 0));
+        if (amount <= 0) continue;
+        const bypassed = drEntryBypassed(entry, damageTypes);
+        candidates.push({
+            entry: foundry.utils.deepClone(entry),
+            amount,
+            bypassed
+        });
+    }
+    const reduction = Math.min(value, candidates
+        .filter((candidate) => !candidate.bypassed)
+        .reduce((sum, candidate) => sum + candidate.amount, 0));
+    return { reduction, damageTypes, candidates };
+}
+
+function normalizeStackedDamageReductionOptions(actor, value, options = {}) {
+    if (!actor || !options || options._nasDamageReductionNormalized) return options;
+    if (options?.asWounds || options?.isHealing === true) return options;
+
+    const incomingValue = Math.max(0, Math.floor(Number(value) || 0));
+    const currentReduction = Number(options.reduction);
+    if (incomingValue <= 0 || !(Number.isFinite(currentReduction) && currentReduction > 0)) return options;
+    if (!hasDamageReductionRelevantDamage(options)) return options;
+
+    const calculationOptions = { ...options, reduction: 0 };
+    const maxDr = nativeDamageReductionForApplyDamage(actor, incomingValue, calculationOptions, { ignoreNasAbsorption: true });
+    const stackedDr = stackedDamageReductionForApplyDamage(actor, incomingValue, calculationOptions, { ignoreNasAbsorption: true });
+    if (stackedDr.reduction <= maxDr.reduction) return options;
+    if (currentReduction < stackedDr.reduction) return options;
+
+    const correctedReduction = Math.max(0, currentReduction - stackedDr.reduction + maxDr.reduction);
+    if (correctedReduction === currentReduction) return options;
+
+    return {
+        ...options,
+        reduction: correctedReduction,
+        _nasDamageReductionNormalized: true,
+        _nasDamageReductionOriginalReduction: currentReduction,
+        _nasDamageReductionStackedReduction: stackedDr.reduction,
+        _nasDamageReductionMaxReduction: maxDr.reduction
+    };
+}
+
+function getApplyDamageTargetActor(target) {
+    if (target?.system?.traits) return target;
+    return target?.actor ?? target?.document?.actor ?? target?.token?.actor ?? target?.object?.actor ?? null;
 }
 
 function resistanceEntryMatchesDamageTypes(entry, damageTypes = []) {
@@ -919,10 +1011,19 @@ function buildChatApplyDamageData(message, eventLike) {
         if (isCritical) addInstances(attack.critDamage, "critical");
     }
 
+    const isArchaicHalf = isArchaicHalfDamageButton(button);
+    const instanceValue = sumInstanceValues(instances);
+    const archaicHalfBaseValue = instanceValue > 0 ? instanceValue : Math.abs(value);
+    const hasArchaicHalfBaseValue = isArchaicHalf && archaicHalfBaseValue > 0;
+    const resolvedValue = hasArchaicHalfBaseValue
+        ? Math.abs(archaicHalfBaseValue)
+        : value;
+    const resolvedRatio = hasArchaicHalfBaseValue ? 0.5 : null;
+
     const item = message.itemSource;
     const action = message.actionSource;
     return {
-        value,
+        value: resolvedValue,
         options: {
             asNonlethal,
             event: eventLike,
@@ -935,6 +1036,7 @@ function buildChatApplyDamageData(message, eventLike) {
             isCritical,
             critMult: isCritical ? (message.system.config.critMult ?? 0) : 0,
             instances,
+            ...(resolvedRatio ? { ratio: resolvedRatio } : {}),
             interactive: true
         }
     };
@@ -1189,6 +1291,7 @@ export async function applyNasHeadlessDamage(value = 0, options = {}) {
                 applyDamageOpts.isCritical = targetOpts.isCritical === true;
                 applyDamageOpts.critMult = targetOpts.critMult ?? 0;
             }
+            Object.assign(applyDamageOpts, normalizeStackedDamageReductionOptions(actor, appliedValue, applyDamageOpts));
 
             const preVigor = Number(actor?.system?.attributes?.vigor?.value ?? 0) || 0;
             const preTemp = Number(actor?.system?.attributes?.vigor?.temp ?? 0) || 0;
@@ -1350,9 +1453,12 @@ export function registerSystemApplyDamage() {
     if (!globalThis.libWrapper) return false;
 
     function markDialogUse(wrapped, ...args) {
-        const rv = wrapped(...args);
+        let rv = wrapped(...args);
         if (rv && typeof rv === "object") {
             rv._nasDamageDialog = true;
+            const actor = getApplyDamageTargetActor(args[0]);
+            const value = Math.max(0, Math.floor(Number(this?.value) || 0));
+            rv = normalizeStackedDamageReductionOptions(actor, value, rv);
         }
         return rv;
     }
@@ -1400,6 +1506,7 @@ export function registerSystemApplyDamage() {
                 }
             }
             options = getMismatchedChatTargetHardnessFallback(this, value, options) ?? options;
+            options = normalizeStackedDamageReductionOptions(this, value, options);
             if (
                 actorHasAbsorptionData(this)
                 && !options?._nasAbsorptionApplied
