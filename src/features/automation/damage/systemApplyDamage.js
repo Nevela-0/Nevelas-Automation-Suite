@@ -982,6 +982,7 @@ function getMismatchedChatTargetHardnessFallback(actor, value = 0, options = {})
 function buildChatApplyDamageData(message, eventLike) {
     const button = eventLike?.currentTarget ?? eventLike?.target;
     if (button?.dataset?.action !== "applyDamage") return null;
+    const isArchaicButton = isArchaicDamageButton(button);
 
     let asNonlethal;
     if (message?.system?.config?.nonlethal) asNonlethal = true;
@@ -1013,12 +1014,13 @@ function buildChatApplyDamageData(message, eventLike) {
 
     const isArchaicHalf = isArchaicHalfDamageButton(button);
     const instanceValue = sumInstanceValues(instances);
-    const archaicHalfBaseValue = instanceValue > 0 ? instanceValue : Math.abs(value);
-    const hasArchaicHalfBaseValue = isArchaicHalf && archaicHalfBaseValue > 0;
-    const resolvedValue = hasArchaicHalfBaseValue
-        ? Math.abs(archaicHalfBaseValue)
-        : value;
-    const resolvedRatio = hasArchaicHalfBaseValue ? 0.5 : null;
+    const hasArchaicInstanceValue = isArchaicButton && instanceValue > 0;
+    const resolvedValue = hasArchaicInstanceValue
+        ? Math.abs(instanceValue)
+        : isArchaicHalf
+            ? Math.abs(value)
+            : value;
+    const resolvedRatio = isArchaicHalf && Math.abs(resolvedValue) > 0 ? 0.5 : null;
 
     const item = message.itemSource;
     const action = message.actionSource;
@@ -1043,6 +1045,8 @@ function buildChatApplyDamageData(message, eventLike) {
 }
 
 export async function applyNasHeadlessDamage(value = 0, options = {}) {
+    const isArchaicButton = isArchaicDamageButton(options?.element);
+
     if (!game.settings.get(MODULE.ID, "enableDamageAutomation")) {
         return { handled: false };
     }
@@ -1058,12 +1062,12 @@ export async function applyNasHeadlessDamage(value = 0, options = {}) {
     if (showDialog) return { handled: false };
 
     if (resistanceCheckWouldForceDialog(options)) {
-        return { handled: false, options: { ...options, dialog: true } };
+        return { handled: false, options: { ...options, dialog: true }, reason: "resistanceCheckWouldForceDialog" };
     }
 
     if (!pf1?.applications?.ApplyDamage) return { handled: false };
 
-    if (hasInvalidControlledTargets(options)) return { handled: false };
+    if (!isArchaicButton && hasInvalidControlledTargets(options)) return { handled: false };
 
     const targets = normalizeTargets(options);
     if (!targets.length) return { handled: true, result: false };
