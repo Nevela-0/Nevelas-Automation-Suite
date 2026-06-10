@@ -5,10 +5,12 @@ import { getHealthModeForElement } from './healthModeChip.js';
 const MARK_ATTR = "data-nas-healing-extra";
 const HOVER_ATTR = "data-nas-healing-hover";
 const ROOT_HOVER_ATTR = "data-nas-healing-root-hover";
+const HEALING_ACTION = "nasApplyHealing";
 
 export function onRenderChatMessage(html) {
     const root = elementFromHtmlLike(html);
     if (!(root instanceof HTMLElement)) return;
+    retagHealingExtras(root);
     bindRootHoverHandlers(root);
     addInlineExtras(root);
     addSimpleDamageExtras(root);
@@ -74,11 +76,20 @@ function createHealingClone(orig, kind) {
 
 function markExtra(el, kind) {
     el.setAttribute(MARK_ATTR, MODULE.ID);
+    el.dataset.action = HEALING_ACTION;
     el.dataset.nasHealingKind = kind;
     el.dataset.nasHealingMode = "healing-clone";
     el.classList.add("nas-healing-applyDamage");
     el.setAttribute("aria-label", kind === "half" ? "Apply Half (Healing)" : "Apply (Healing)");
     if (el.tagName === "A") el.setAttribute("role", "button");
+}
+
+function retagHealingExtras(root) {
+    const extras = root.querySelectorAll?.(`[${MARK_ATTR}]`) ?? [];
+    for (const extra of extras) {
+        if (extra.getAttribute(MARK_ATTR) !== MODULE.ID) continue;
+        extra.dataset.action = HEALING_ACTION;
+    }
 }
 
 function bindHoverVisibility(extraEl) {

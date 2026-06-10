@@ -656,10 +656,15 @@ function buildRollData({ sourceActor, targetActor, ownerItem = null, finalDamage
   const sourceRollData = sourceActor?.getRollData?.() ?? {};
   const targetRollData = targetActor?.getRollData?.() ?? {};
   const ownerItemRollData = ownerItem?.getRollData?.() ?? {};
+  const ownerActor = ownerItem?.actor ?? targetActor ?? sourceActor ?? null;
+  const ownerActorRollData = ownerActor?.getRollData?.() ?? {};
+  const casterLevel = resolveReactiveOwnerCasterLevel(ownerActor, ownerItem, ownerActorRollData, ownerItemRollData);
+  const itemRollData = rollDataWithReactiveItemLevel(ownerItemRollData, ownerItem, casterLevel);
   return {
     ...targetRollData,
     ...sourceRollData,
-    item: ownerItemRollData,
+    cl: casterLevel,
+    item: itemRollData,
     nas: {
       finalDamage: Number(finalDamage) || 0,
       excessHealing: Number(excessHealing) || 0,
@@ -667,6 +672,39 @@ function buildRollData({ sourceActor, targetActor, ownerItem = null, finalDamage
     },
     attacker: sourceRollData,
     target: targetRollData
+  };
+}
+
+function resolveReactiveOwnerCasterLevel(actor, item, actorData = {}, itemData = {}) {
+  const itemType = String(item?.type ?? "");
+  const storedBuffCl = itemType === "buff" ? numericCandidate(getStoredBuffCasterLevel(item, actor)) : null;
+  const matchingSpellCl = matchingSpellCasterLevel(actor, item);
+  const actorSpellbookCl = strongestActorSpellbookCasterLevel(actor);
+  return numericCandidate(itemData?.cl)
+    ?? numericCandidate(item?.casterLevel)
+    ?? numericCandidate(item?.system?.cl)
+    ?? storedBuffCl
+    ?? matchingSpellCl
+    ?? actorSpellbookCl
+    ?? numericCandidate(actorData?.cl)
+    ?? numericCandidate(item?.system?.level)
+    ?? 0;
+}
+
+function rollDataWithReactiveItemLevel(itemRollData = {}, item = null, casterLevel = 0) {
+  const level = numericCandidate(itemRollData?.level)
+    ?? numericCandidate(item?.system?.level)
+    ?? numericCandidate(itemRollData?.system?.level)
+    ?? casterLevel;
+  const system = itemRollData?.system && typeof itemRollData.system === "object" ? itemRollData.system : {};
+  return {
+    ...itemRollData,
+    cl: numericCandidate(itemRollData?.cl) ?? casterLevel,
+    level,
+    system: {
+      ...system,
+      level
+    }
   };
 }
 
@@ -1060,10 +1098,11 @@ function rollDataForOnStruckPool(ownerActor, ownerItem, context = {}) {
   const actorData = ownerActor?.getRollData?.() ?? {};
   const itemData = ownerItem?.getRollData?.() ?? {};
   const cl = resolveOnStruckPoolCasterLevel(ownerActor, ownerItem, actorData);
+  const itemRollData = rollDataWithReactiveItemLevel(itemData, ownerItem, cl);
   return {
     ...actorData,
     cl,
-    item: itemData,
+    item: itemRollData,
     nas: {
       ...(actorData?.nas ?? {}),
       finalDamage: Math.max(0, Number(context.finalDamage) || 0)
