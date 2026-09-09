@@ -38,9 +38,7 @@
       "flags": {}
     }
   ],
-  "esmodules": [
-    "src/integration/moduleEntry.js"
-  ],
+  "esmodules": ["src/integration/moduleEntry.js"],
   "styles": [
     "src/templates/css/damage-type-form.css",
     "src/templates/css/damage-priority-form.css"
@@ -83,6 +81,6 @@
     }
   ],
   "socket": true,
-  "manifest": "https://forge.rulytafzil.com/Home/Nevelas-Automation-Suite/raw/branch/feat/temp-hp-duration-priority/module.json",
-  "download": "https://forge.rulytafzil.com/Home/Nevelas-Automation-Suite/archive/feat/temp-hp-duration-priority.zip"
+  "manifest": "https://github.com/Nevela-0/Nevelas-Automation-Suite/releases/latest/download/module.json",
+  "download": "https://github.com/Nevela-0/Nevelas-Automation-Suite/releases/download/2.2.9/nevelas-automation-suite.zip"
 }
