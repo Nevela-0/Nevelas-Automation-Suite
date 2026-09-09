@@ -1337,7 +1337,8 @@ function registerNasSettingsUi() {
         () => getSettingRow("buffTargetFiltering"),
         () => getSettingRow("communalHandling"),
         () => getSettingRow("personalTargeting"),
-        () => getSettingRow("variantTargetCap")
+        () => getSettingRow("variantTargetCap"),
+        () => getSettingRow("temporaryHpSpendingOrder")
       ]
     },
     {
