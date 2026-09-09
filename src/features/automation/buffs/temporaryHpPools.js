@@ -144,6 +144,30 @@ function timePeriodSeconds(value, units) {
   return amount;
 }
 
+function poolRemainingDurationSeconds(pool) {
+  const effect = pool?.item?.effects?.find((ae) => ae.type === "buff" && ae.getFlag("pf1", "tracker") === true)
+    ?? pool?.item?.effect;
+  const effectSeconds = Number(effect?.duration?.seconds);
+  if (Number.isFinite(effectSeconds) && effectSeconds > 0) {
+    const startTime = Number(effect?.duration?.startTime ?? effect?.start?.time ?? 0);
+    const elapsed = Math.max(0, (game.time?.worldTime ?? 0) - startTime);
+    return Math.max(0, effectSeconds - elapsed);
+  }
+
+  const poolDuration = pool?.duration ?? pool?.item?.system?.duration;
+  const units = poolDuration?.units;
+  if (!units || units === "perm" || units === "permanent") return Infinity;
+
+  const totalSeconds = timePeriodSeconds(poolDuration?.value, units);
+  if (totalSeconds > 0) {
+    const startTime = Number(poolDuration?.start ?? pool?.createdAt ?? 0);
+    const elapsed = Math.max(0, (game.time?.worldTime ?? 0) - startTime);
+    return Math.max(0, totalSeconds - elapsed);
+  }
+
+  return Infinity;
+}
+
 function normalizeTemporaryHpRegeneration(raw = {}) {
   const value = raw && typeof raw === "object" ? raw : {};
   return {
@@ -459,11 +483,18 @@ export function getNasTemporaryHpPools(actor) {
       pools.push(poolDescriptor(item, config));
     }
   }
-  return pools.sort((a, b) =>
-    (a.createdAt || 0) - (b.createdAt || 0)
-    || String(a.itemId).localeCompare(String(b.itemId))
-    || String(a.poolId).localeCompare(String(b.poolId))
-  );
+  const sortByDuration = game.settings?.get(MODULE.ID, "temporaryHpSpendingOrder") === "duration";
+
+  return pools.sort((a, b) => {
+    if (sortByDuration) {
+      const durA = poolRemainingDurationSeconds(a);
+      const durB = poolRemainingDurationSeconds(b);
+      if (durA !== durB) return durA - durB;
+    }
+    return (a.createdAt || 0) - (b.createdAt || 0)
+      || String(a.itemId).localeCompare(String(b.itemId))
+      || String(a.poolId).localeCompare(String(b.poolId));
+  });
 }
 
 function blocksOtherNas(pool) {
