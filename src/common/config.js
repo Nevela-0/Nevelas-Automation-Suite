@@ -708,6 +708,19 @@ export function registerNasSettings() {
     type: Boolean,
     default: true
   });
+
+  game.settings.register(MODULE.ID, "temporaryHpSpendingOrder", {
+    name: game.i18n.localize("NAS.settings.temporaryHpSpendingOrder.name"),
+    hint: game.i18n.localize("NAS.settings.temporaryHpSpendingOrder.hint"),
+    scope: "world",
+    config: true,
+    type: String,
+    choices: {
+      "fifo": game.i18n.localize("NAS.settings.temporaryHpSpendingOrder.choices.fifo"),
+      "duration": game.i18n.localize("NAS.settings.temporaryHpSpendingOrder.choices.duration")
+    },
+    default: "fifo"
+  });
   
   game.settings.register(MODULE.ID, 'buffAutomationMode', {
     name: game.i18n.localize("NAS.settings.buffAutomationMode.name"),
@@ -1324,7 +1337,8 @@ function registerNasSettingsUi() {
         () => getSettingRow("buffTargetFiltering"),
         () => getSettingRow("communalHandling"),
         () => getSettingRow("personalTargeting"),
-        () => getSettingRow("variantTargetCap")
+        () => getSettingRow("variantTargetCap"),
+        () => getSettingRow("temporaryHpSpendingOrder")
       ]
     },
     {

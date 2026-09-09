@@ -326,6 +326,14 @@
         "name": "Enable Automatic Buffs",
         "hint": "When enabled, the module will attempt to find and apply matching buffs when spells or consumables are used."
       },
+      "temporaryHpSpendingOrder": {
+        "name": "Temporary HP Spending Priority",
+        "hint": "Determines which temporary HP pool absorbs damage first when multiple pools stack.",
+        "choices": {
+          "fifo": "First In, First Out (Creation Time)",
+          "duration": "Shortest Remaining Duration First"
+        }
+      },
       "buffAutomationMode": {
         "name": "Buff Automation Mode",
         "hint": "Choose how strict the buff automation should be when no targets are selected.",
