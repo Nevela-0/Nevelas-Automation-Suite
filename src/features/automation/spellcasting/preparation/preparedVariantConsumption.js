@@ -77,6 +77,7 @@ export function getPreparedVariantConsumptionState(actionUse, context, { include
   const originalSpellLevel = toSpellLevel(flag.originalSpellLevel ?? item.system?.level ?? 0, 0);
   const preparedSlotLevel = toSpellLevel(flag.preparedSlotLevel ?? originalSpellLevel, originalSpellLevel);
   const itemSpellLevel = toSpellLevel(item.system?.level ?? originalSpellLevel, originalSpellLevel);
+  const runtimeSpellLevel = toSpellLevel(context?.spellLevel?.effective ?? itemSpellLevel, itemSpellLevel);
   const dynamicConsumedSlotIncrease = toNonNegativeInteger(
     context?.metamagic?.consumedSlotIncrease
       ?? context?.metamagic?.dynamicConsumedSlotIncrease
@@ -84,7 +85,9 @@ export function getPreparedVariantConsumptionState(actionUse, context, { include
     0
   );
   const targetSlotLevel = preparedSlotLevel + dynamicConsumedSlotIncrease;
+
   const needsBridge = targetSlotLevel !== itemSpellLevel
+    || targetSlotLevel !== runtimeSpellLevel
     || context?.metamagic?.preparedSpellbookHigherSlotConsumptionDeferred === true;
 
   if (!includeDefaultTarget && !needsBridge) {
@@ -98,6 +101,7 @@ export function getPreparedVariantConsumptionState(actionUse, context, { include
       originalSpellLevel,
       preparedSlotLevel,
       itemSpellLevel,
+      runtimeSpellLevel,
       dynamicConsumedSlotIncrease,
       targetSlotLevel
     };
@@ -116,6 +120,7 @@ export function getPreparedVariantConsumptionState(actionUse, context, { include
     originalSpellLevel,
     preparedSlotLevel,
     itemSpellLevel,
+    runtimeSpellLevel,
     dynamicConsumedSlotIncrease,
     targetSlotLevel,
     preparationValue: getPreparationValue(item),
@@ -151,6 +156,7 @@ function buildPreparedConsumptionSnapshot(state) {
     spellbookId: state.bookId,
     originalSpellLevel: state.originalSpellLevel,
     itemSpellLevel: state.itemSpellLevel,
+    runtimeSpellLevel: state.runtimeSpellLevel,
     preparedSlotLevel: state.preparedSlotLevel,
     dynamicConsumedSlotIncrease: state.dynamicConsumedSlotIncrease,
     targetSlotLevel: state.targetSlotLevel,
@@ -161,7 +167,8 @@ function buildPreparedConsumptionSnapshot(state) {
 }
 
 export function installPreparedVariantConsumptionOverrides(actionUse, context) {
-  const state = getPreparedVariantConsumptionState(actionUse, context);
+  let state = getPreparedVariantConsumptionState(actionUse, context);
+
   if (state.eligible !== true) return () => {};
 
   const restoreGetSpellUses = setOwnMethod(state.item, "getSpellUses", function getNasPreparedSpellUses(max = false) {
@@ -185,9 +192,13 @@ export function installPreparedVariantConsumptionOverrides(actionUse, context) {
     if (!Number.isFinite(amount) || amount === 0) return this;
 
     const { spellLevelKey, spellLevelData } = getSpellLevelData(state.actor, state.bookId, state.targetSlotLevel);
-    if (!spellLevelData) return this;
+    if (!spellLevelData) {
+
+      return this;
+    }
 
     const current = Number(spellLevelData.value ?? 0);
+
     const nextValue = Math.max(0, (Number.isFinite(current) ? current : 0) + amount);
     const updatePath = `system.attributes.spells.spellbooks.${state.bookId}.spells.${spellLevelKey}.value`;
     await state.actor.update({
@@ -200,10 +211,12 @@ export function installPreparedVariantConsumptionOverrides(actionUse, context) {
     return this;
   });
 
-  context.spellbookPreparedSpell ??= {};
-  context.spellbookPreparedSpell.consumption = buildPreparedConsumptionSnapshot(state);
-  context.metamagic ??= {};
-  context.metamagic.preparedSpellbookConsumption = buildPreparedConsumptionSnapshot(state);
+  {
+    context.spellbookPreparedSpell ??= {};
+    context.spellbookPreparedSpell.consumption = buildPreparedConsumptionSnapshot(state);
+    context.metamagic ??= {};
+    context.metamagic.preparedSpellbookConsumption = buildPreparedConsumptionSnapshot(state);
+  }
 
   return () => {
     restoreAddCharges();

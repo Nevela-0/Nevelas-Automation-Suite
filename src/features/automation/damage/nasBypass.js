@@ -146,7 +146,7 @@ function normalizeNasSettingsFromOptions(options) {
         immunityBypassTypes: resolveBypassTypes("immunity", attackSettings, actionSettings, globalSettings),
         hardnessIgnore,
         hardnessBypass,
-        debug: flags?.debug === true
+
     };
 }
 

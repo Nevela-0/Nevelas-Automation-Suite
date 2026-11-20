@@ -1,6 +1,7 @@
 import { resolveMetamagicNameFromDatabase } from "./metamagic.js";
 import { isDurationEligibleForExtendSpell } from "./extendSpell.js";
 import { canApplyEnlargeSpell } from "./enlargeSpell.js";
+import { canApplyWidenSpell } from "./widenSpell.js";
 import { canIntensifyAnyDamagePart } from "./intensifiedSpell.js";
 
 function normalizeString(value) {
@@ -192,13 +193,29 @@ function getSpellArea(source) {
 }
 
 function getSpellTemplateType(source) {
-  const measureTemplate = firstUsefulValue(
+  return normalizeString(getSpellMeasureTemplate(source)?.type);
+}
+
+function canWidenSpellContext(source) {
+  const fromAction = (action) => canApplyWidenSpell({
+    area: getActionField(action, "area") ?? "",
+    measureTemplate: getActionField(action, "measureTemplate"),
+  });
+
+  if (source?.action) return fromAction(source.action);
+  if (source?.measureTemplate?.type) return canApplyWidenSpell(source);
+  const actions = getActionCandidates(source);
+  if (actions.length) return actions.some(fromAction);
+  return canApplyWidenSpell({ area: getSpellArea(source), measureTemplate: getSpellMeasureTemplate(source) });
+}
+
+function getSpellMeasureTemplate(source) {
+  return firstUsefulValue(
     source?.measureTemplate,
     getFirstActionValue(source, (action) => getActionField(action, "measureTemplate")),
     source?.action?.item?.system?.measureTemplate,
     source?.item?.system?.measureTemplate
   );
-  return normalizeString(measureTemplate?.type);
 }
 
 function getSpellSaveType(source) {
@@ -309,6 +326,7 @@ export function canApplyMetamagicToSpellContext(source, spellContext) {
   if (name === "silent spell") return components?.verbal === true;
   if (name === "extend spell") return isDurationEligibleForExtendSpell(duration);
   if (name === "enlarge spell") return canApplyEnlargeSpell(rangeContext);
+  if (name === "widen spell") return canWidenSpellContext(spellContext);
   if (name === "reach spell") return canApplyReachSpell(rangeUnits);
   if (name === "quicken spell") return canApplyQuickenSpell(activation);
   if (name === "selective spell") {

@@ -1,5 +1,6 @@
 import { MODULE } from "../../../common/module.js";
 import { consumeCombatTextContext } from "./combatTextContext.js";
+import { actorUsesWoundsVigor } from "./woundsVigor.js";
 
 let hookRegistered = false;
 
@@ -265,6 +266,7 @@ function renderCinematicTextInternal(actor, options = {}, textData = {}, style, 
   try {
     if (game.settings.get("core", "scrollingStatusText") !== true) return true;
   } catch (_err) {
+
   }
 
   const token = resolveActorToken(actor);
@@ -356,15 +358,15 @@ function renderCinematicText(actor, options = {}, textData = {}, style, context)
 function styleHealthDeltaText(actor, options = {}, textData = {}) {
   const context = consumeCombatTextContext(actor);
   if (context?.nasTemporaryHpSpent > 0 && !options._nasTemporaryHpMerged) {
-    const nativeTempHpSpent = options.key === "hp.temp"
+    const nativeTempHpSpent = options.key === (actorUsesWoundsVigor(actor) ? "vigor.temp" : "hp.temp")
       ? Math.max(0, Math.floor(Math.abs(Number(options.value) || 0)))
       : 0;
     if (nativeTempHpSpent > 0) {
       const totalTempHpSpent = context.nasTemporaryHpSpent + nativeTempHpSpent;
-      options.label = temporaryHpCombatTextLabel(totalTempHpSpent);
+      options.label = temporaryHpCombatTextLabel(totalTempHpSpent, { actor });
       options.value = -totalTempHpSpent;
     } else {
-      const tempLabel = temporaryHpCombatTextLabel(context.nasTemporaryHpSpent);
+      const tempLabel = temporaryHpCombatTextLabel(context.nasTemporaryHpSpent, { actor });
       options.label = options.label ? `${tempLabel} / ${options.label}` : tempLabel;
     }
     options._nasTemporaryHpMerged = true;
@@ -391,12 +393,13 @@ function absorptionCombatTextLabel(amount) {
   return `Absorbed ${value}`;
 }
 
-function temporaryHpCombatTextLabel(amount, { positive = false } = {}) {
+function temporaryHpCombatTextLabel(amount, { positive = false, actor = null } = {}) {
   const value = Math.max(0, Math.floor(Number(amount) || 0));
   const signed = `${positive ? "+" : "-"}${value}`;
-  const key = "PF1.ActiveFeedback.Deltas.TempHP";
+  const vigor = actorUsesWoundsVigor(actor);
+  const key = vigor ? "PF1.ActiveFeedback.Deltas.TempVigor" : "PF1.ActiveFeedback.Deltas.TempHP";
   if (globalThis.game?.i18n?.has?.(key)) return game.i18n.format(key, { value: signed });
-  return `${signed} Temp. HP`;
+  return `${signed} Temp. ${vigor ? "Vigor" : "HP"}`;
 }
 
 export async function showAbsorptionCombatText(actor, amount) {
@@ -455,10 +458,10 @@ async function showTemporaryHpDeltaCombatText(actor, amount, { positive = false 
     jitter: 0.85,
     distance: Math.max((globalThis.canvas?.grid?.size ?? 72) * 0.55, 24)
   };
-  const label = temporaryHpCombatTextLabel(value, { positive });
+  const label = temporaryHpCombatTextLabel(value, { positive, actor });
   const options = {
     label,
-    key: "hp.temp",
+    key: actorUsesWoundsVigor(actor) ? "vigor.temp" : "hp.temp",
     value: positive ? value : -value,
     positive
   };

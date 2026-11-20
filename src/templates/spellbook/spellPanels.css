@@ -1,0 +1,235 @@
+.nas-proto-spell-preview {
+  position: fixed;
+  z-index: 100000;
+  box-sizing: border-box;
+  width: min(340px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+  overflow: hidden;
+  padding: 12px 14px;
+  border: 1px solid #a78c5b;
+  border-radius: 5px;
+  background: #f0e5cd;
+  box-shadow: 0 5px 18px #0006;
+  color: #34291d;
+  font: 12px/1.4 Georgia, "Times New Roman", serif;
+  text-shadow: none;
+  pointer-events: none;
+  overflow-wrap: anywhere;
+}
+
+.nas-proto-spell-preview strong {
+  display: block;
+  font-size: 15px;
+  line-height: 1.3;
+}
+
+.nas-proto-spell-preview p {
+  margin: 4px 0 0;
+}
+
+.nas-proto-spell-preview-level,
+.nas-proto-spell-preview-defense {
+  color: #6e5c3e;
+}
+
+.nas-proto-spell-preview-description {
+  padding-top: 6px;
+  border-top: 1px solid #a78c5b66;
+}
+
+.nas-proto-spell-panel {
+  box-sizing: border-box;
+  max-height: calc(100vh - 24px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: #34291d;
+  background: #f0e5cd;
+  border: 1px solid #a78c5b;
+  border-radius: 8px;
+  box-shadow: 0 12px 36px #0009, inset 0 0 18px #7c5b2818;
+  font: 14px/1.4 Georgia, "Times New Roman", serif;
+}
+
+.nas-proto-spell-panel *,
+.nas-proto-spell-panel *::before,
+.nas-proto-spell-panel *::after {
+  box-sizing: border-box;
+}
+
+.nas-proto-spell-panel-header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid #a78c5b77;
+  background: #d9c69c44;
+}
+
+.nas-proto-spell-panel-header small {
+  font: 10px/1.2 sans-serif;
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  color: #79592e;
+}
+
+.nas-proto-spell-panel-header > div {
+  min-width: 0;
+}
+
+.nas-proto-spell-panel h2 {
+  margin: 4px 0 0;
+  color: inherit;
+  border: 0;
+  font: 22px/1.2 Georgia, "Times New Roman", serif;
+  overflow-wrap: anywhere;
+}
+
+.nas-proto-spell-panel-body {
+  padding: 14px 18px 18px;
+  overflow: auto;
+  min-height: 0;
+}
+
+.nas-proto-spell-panel button,
+.nas-proto-spell-panel input,
+.nas-proto-spell-panel select {
+  min-height: 30px;
+  padding: 5px 8px;
+  margin: 0;
+  border: 1px solid #a68b5f;
+  border-radius: 4px;
+  background: #fff8e966;
+  color: inherit;
+  box-shadow: none;
+  font: inherit;
+  line-height: 1.3;
+}
+
+.nas-proto-spell-panel button {
+  cursor: pointer;
+  white-space: normal;
+  width: auto;
+}
+
+.nas-proto-spell-panel button:hover:not(:disabled) {
+  background: #cbb27a66;
+}
+
+.nas-proto-spell-panel :is(button, input, select):focus-visible {
+  outline: 2px solid #795824;
+  outline-offset: 2px;
+}
+
+.nas-proto-spell-panel button:disabled,
+.nas-proto-spell-panel select:disabled {
+  cursor: default;
+  opacity: .55;
+}
+
+.nas-proto-spell-panel-close {
+  flex: 0 0 auto;
+}
+
+.nas-proto-spell-panel-stats {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 16px;
+  margin: 0 0 16px;
+}
+
+.nas-proto-spell-panel-stats dt {
+  color: #6e5c3e;
+  text-shadow: none;
+  font-weight: bold;
+}
+
+.nas-proto-spell-panel-stats dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.nas-proto-spell-panel-description {
+  border-top: 1px solid #a78c5b66;
+  padding-top: 10px;
+}
+
+.nas-proto-spell-panel-description :first-child {
+  margin-top: 0;
+}
+
+.nas-proto-spell-panel-preview {
+  display: grid;
+  gap: 3px;
+  margin-bottom: 14px;
+  padding: 10px;
+  background: #ceb57e33;
+  border-left: 2px solid #a78c5b;
+}
+
+.nas-proto-spell-panel-preview strong {
+  font-weight: normal;
+  font-size: 17px;
+}
+
+.nas-proto-spell-panel-preview span,
+.nas-proto-spell-panel-seal small {
+  font-size: 12px;
+  color: #6e5c3e;
+}
+
+.nas-proto-spell-panel-seals {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 195px), 1fr));
+  gap: 10px;
+}
+
+.nas-proto-spell-panel-seal {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+}
+
+.nas-proto-spell-panel-seal > button {
+  width: 100%;
+  min-height: 38px;
+  text-align: left;
+}
+
+.nas-proto-spell-panel-seal.is-selected > button {
+  border-color: #795824;
+  background: #cbb27a77;
+  box-shadow: inset 3px 0 #795824;
+}
+
+.nas-proto-spell-panel-seal label {
+  display: grid;
+  gap: 3px;
+  font-size: 12px;
+}
+
+.nas-proto-spell-panel-labels {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid #a78c5b66;
+}
+
+.nas-proto-spell-panel-labels label {
+  display: grid;
+  gap: 4px;
+}
+
+.nas-proto-spell-panel-labels input {
+  width: 100%;
+}
+
+.nas-proto-spell-panel-error {
+  color: #8d241b;
+  margin: 12px 0 0;
+}

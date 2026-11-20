@@ -17,6 +17,7 @@ import { spendNasTemporaryHp } from '../buffs/temporaryHpPools.js';
 import { recordCombatTextContext } from '../utils/combatTextContext.js';
 import { showAbsorptionCombatText, showTemporaryHpCombatText } from '../utils/healthDeltaText.js';
 import { getRuntimeCasterLevel, rollDataWithRuntimeLevels } from '../utils/spellLevels.js';
+import { captureAbsorptionDefenses, copyDamageInstances, prepareAbsorptionDefenses, resolveAbsorptionDefenses } from './absorptionDefenses.js';
 
 async function callApplyDamageNoop(wrapped, actor, options = {}) {
     return wrapped.call(actor, 0, {
@@ -85,7 +86,7 @@ function actorHasAbsorptionData(actor) {
 function summarizeApplyDamageInstance(instance) {
     return {
         value: instance?.value,
-        type: instance?.type,
+        type: instance?.typeIds == null && instance?.types == null ? instance?.type : undefined,
         typeIds: instance?.typeIds ?? instance?.types,
         damageType: instance?.damageType,
         damageTypes: instance?.damageTypes,
@@ -136,7 +137,7 @@ function typeValuesFrom(value) {
 function damageTypesFromApplyDamageOptions(options = {}) {
     const ids = new Set();
     for (const instance of options.instances ?? []) {
-        for (const key of ["typeIds", "types", "type", "damageType", "damageTypes"]) {
+        for (const key of damageTypeKeys(instance)) {
             for (const id of typeValuesFrom(instance?.[key])) {
                 if (id) ids.add(id);
             }
@@ -163,9 +164,16 @@ function actorChatName(actor) {
     return actor?.name ?? game.i18n.localize("NAS.common.labels.target");
 }
 
+function damageTypeKeys(instance) {
+
+    return instance?.typeIds != null || instance?.types != null
+        ? ["typeIds", "types", "damageType", "damageTypes"]
+        : ["type", "damageType", "damageTypes"];
+}
+
 function damageTypeIdsFromInstance(instance = {}) {
     const ids = new Set();
-    for (const key of ["typeIds", "types", "type", "damageType", "damageTypes"]) {
+    for (const key of damageTypeKeys(instance)) {
         for (const id of typeValuesFrom(instance?.[key])) {
             if (id) ids.add(String(id).toLowerCase());
         }
@@ -233,6 +241,7 @@ function inlineRollHtml(roll, fallbackTotal = null) {
         const anchor = roll?.toAnchor?.();
         if (anchor?.outerHTML) return anchor.outerHTML;
     } catch (_err) {
+
     }
     const total = Math.max(1, Math.floor(Number(fallbackTotal ?? roll?.total) || 0));
     return escHtml(total);
@@ -594,22 +603,6 @@ function nativeEnergyResistanceForApplyDamage(actor, value, options = {}, { igno
     return { reduction, damageTypes, candidates };
 }
 
-function additionalReductionAfterAbsorption(actor, value, options = {}, absorption = {}) {
-    const remaining = Math.max(0, Math.floor(Number(value) || 0));
-    if (remaining <= 0) return 0;
-
-    let reduction = 0;
-    if (Math.max(0, Number(absorption?.drReduction) || 0) > 0) {
-        const nativeDr = nativeDamageReductionForApplyDamage(actor, remaining, { ...options, reduction: 0 }, { ignoreNasAbsorption: true });
-        reduction = Math.max(reduction, Math.max(0, nativeDr.reduction - Math.max(0, Math.floor(Number(absorption.drReduction) || 0))));
-    }
-    if (Math.max(0, Number(absorption?.erReduction) || 0) > 0) {
-        const nativeEr = nativeEnergyResistanceForApplyDamage(actor, remaining, { ...options, reduction: 0 }, { ignoreNasAbsorption: true });
-        reduction = Math.max(reduction, nativeEr.reduction);
-    }
-    return Math.min(remaining, reduction);
-}
-
 function buildConvertedDamageInstances(amount, damageType) {
     const value = Math.max(0, Math.floor(Number(amount) || 0));
     const type = String(damageType ?? "untyped").trim() || "untyped";
@@ -828,6 +821,7 @@ function resistanceCheckWouldForceDialog(options) {
                 keysToCheck.push(key);
             }
         } catch (_err) {
+
         }
     }
     if (!keysToCheck.length) return false;
@@ -1003,6 +997,7 @@ function buildChatApplyDamageData(message, eventLike) {
             const d = new pf1.models.action.DamagePartModel(dmg.damageType.toObject());
             d.value = dmg.total;
             d._nasDamageRole = role;
+
             instances.push(d);
         }
     };
@@ -1044,7 +1039,7 @@ function buildChatApplyDamageData(message, eventLike) {
     };
 }
 
-export async function applyNasHeadlessDamage(value = 0, options = {}) {
+export async function applyNasHeadlessDamage(value = 0, options = {}, { assertCurrent } = {}) {
     const isArchaicButton = isArchaicDamageButton(options?.element);
 
     if (!game.settings.get(MODULE.ID, "enableDamageAutomation")) {
@@ -1094,7 +1089,8 @@ export async function applyNasHeadlessDamage(value = 0, options = {}) {
     const calcOpts = {
         ...options,
         targets,
-        value,          
+        value,           
+
     };
 
     const allInstances = buildNumericInstances(Math.abs(value), calcOpts);
@@ -1159,7 +1155,9 @@ export async function applyNasHeadlessDamage(value = 0, options = {}) {
                 for (const target of app.targets) {
                     target.ratio = ratio;
                 }
-                if (typeof app._refreshTargets === "function") {
+                if (typeof app._refreshTarget === "function") {
+                    for (const target of app.targets) app._refreshTarget(target.uuid);
+                } else if (typeof app._refreshTargets === "function") {
                     app._refreshTargets();
                 }
             }
@@ -1216,6 +1214,12 @@ export async function applyNasHeadlessDamage(value = 0, options = {}) {
     const promises = [];
     for (const actor of targets) {
         promises.push((async () => {
+            const nativeApplyDamage = actor.applyDamage.bind(actor);
+            const applyDamage = assertCurrent ? async (...args) => {
+                await assertCurrent();
+                return nativeApplyDamage(...args);
+            } : nativeApplyDamage;
+            if (assertCurrent) await assertCurrent();
             const mirrorImage = await resolveMirrorImageForApplyDamage({
                 sourceActor,
                 targetActor: actor,
@@ -1254,7 +1258,7 @@ export async function applyNasHeadlessDamage(value = 0, options = {}) {
             const targetOpts = {
                 ...targetCalcOpts,
                 targets: [actor],
-                instances: vulnInstances,
+                instances: copyDamageInstances(vulnInstances),
                 value: vulnValue,
                 asWounds: targetAsWounds
             };
@@ -1275,7 +1279,9 @@ export async function applyNasHeadlessDamage(value = 0, options = {}) {
                 for (const target of app.targets) {
                     target.ratio = ratio;
                 }
-                if (typeof app._refreshTargets === "function") {
+                if (typeof app._refreshTarget === "function") {
+                    for (const target of app.targets) app._refreshTarget(target.uuid);
+                } else if (typeof app._refreshTargets === "function") {
                     app._refreshTargets();
                 }
             }
@@ -1295,29 +1301,45 @@ export async function applyNasHeadlessDamage(value = 0, options = {}) {
                 applyDamageOpts.isCritical = targetOpts.isCritical === true;
                 applyDamageOpts.critMult = targetOpts.critMult ?? 0;
             }
-            Object.assign(applyDamageOpts, normalizeStackedDamageReductionOptions(actor, appliedValue, applyDamageOpts));
+            if (!actorHasAbsorptionData(actor)) {
+                Object.assign(applyDamageOpts, normalizeStackedDamageReductionOptions(actor, appliedValue, applyDamageOpts));
+            }
 
             const preVigor = Number(actor?.system?.attributes?.vigor?.value ?? 0) || 0;
             const preTemp = Number(actor?.system?.attributes?.vigor?.temp ?? 0) || 0;
             const targetPreHp = numericHpValue(actor);
-            const originalApplyDamageOpts = applyDamageOpts;
+            const originalApplyDamageOpts = { ...applyDamageOpts };
+            const defenseContext = applyDamageOpts._nasAbsorptionDefenses ?? captureAbsorptionDefenses(app, targetModel);
             let convertedNonlethal = 0;
             let convertedTypedApplied = 0;
             let absorptionChanged = false;
             const rawFinalDamage = Math.floor(Math.max(0, Math.floor(Math.max(0, appliedValue) * (originalApplyDamageOpts?.ratio ?? 1))));
+
+            if (assertCurrent) await assertCurrent();
             const absorption = await applyDamageAbsorption({
                 actor,
                 value: rawFinalDamage,
                 applyDamageOptions: originalApplyDamageOpts,
-                sourceOptions: targetOpts
+                sourceOptions: { ...targetOpts, instances: copyDamageInstances(defenseContext?.instances ?? targetOpts.instances) }
             });
+            if (absorption?.changed || actorHasAbsorptionData(actor)) {
+                const opaqueReduction = !options._nasAbsorptionDefenses && Number(options.reduction) > 0;
+                const resolved = resolveAbsorptionDefenses(
+                    opaqueReduction ? null : defenseContext,
+                    absorption,
+                    opaqueReduction ? options : originalApplyDamageOpts
+                );
+                appliedValue = resolved.value;
+                Object.assign(applyDamageOpts, {
+                    ratio: 1, reduction: resolved.reduction, instances: resolved.instances,
+                    _nasDamageReductionNormalized: true
+                });
+            }
             applyDamageOpts._nasAbsorptionApplied = true;
             if (absorption?.changed) {
                 absorptionChanged = true;
                 appliedValue = Math.max(0, Math.floor(Number(absorption.value) || 0));
                 convertedNonlethal = Math.max(0, Math.floor(Number(absorption.convertedNonlethal) || 0));
-                applyDamageOpts.ratio = 1;
-                applyDamageOpts.reduction = additionalReductionAfterAbsorption(actor, appliedValue, originalApplyDamageOpts, absorption);
                 postDamageAbsorptionChatSummary({
                     actor,
                     otherActor: sourceActor,
@@ -1329,13 +1351,17 @@ export async function applyNasHeadlessDamage(value = 0, options = {}) {
 
             const onStruckPreTempHpConfigs = snapshotOnStruckConfigsForTrigger(actor);
             recordDamageCombatTextContext(actor, targetOpts);
-            let result = appliedValue > 0 ? await actor.applyDamage(appliedValue, applyDamageOpts) : false;
+
+            let result = appliedValue > 0 || absorption?.changed ? await applyDamage(appliedValue, applyDamageOpts) : false;
+            result = Boolean(result || absorption?.changed);
+
             if (convertedNonlethal > 0) {
                 recordDamageCombatTextContext(actor, targetOpts);
-                const nonlethalResult = await actor.applyDamage(convertedNonlethal, {
+                const nonlethalResult = await applyDamage(convertedNonlethal, {
                     ...applyDamageOpts,
                     ratio: 1,
                     reduction: 0,
+                    instances: buildConvertedDamageInstances(convertedNonlethal, 'nonlethal'),
                     asWounds: false,
                     asNonlethal: true,
                     _nasDamageDialog: true,
@@ -1358,7 +1384,7 @@ export async function applyNasHeadlessDamage(value = 0, options = {}) {
                 convertedTypedApplied += convertedApplied;
                 if (convertedApplied <= 0) continue;
                 recordDamageCombatTextContext(actor, targetOpts);
-                const convertedResult = await actor.applyDamage(amount, {
+                const convertedResult = await applyDamage(amount, {
                     ...applyDamageOpts,
                     ratio: 1,
                     reduction: convertedResistance.reduction,
@@ -1382,7 +1408,7 @@ export async function applyNasHeadlessDamage(value = 0, options = {}) {
             });
             if (result && critBonus > 0) {
                 recordDamageCombatTextContext(actor, targetOpts);
-                await actor.applyDamage(critBonus, {
+                await applyDamage(critBonus, {
                     asWounds: true,
                     _nasDamageDialog: true
                 });
@@ -1457,12 +1483,16 @@ export function registerSystemApplyDamage() {
     if (!globalThis.libWrapper) return false;
 
     function markDialogUse(wrapped, ...args) {
+
         let rv = wrapped(...args);
         if (rv && typeof rv === "object") {
+
             rv._nasDamageDialog = true;
             const actor = getApplyDamageTargetActor(args[0]);
             const value = Math.max(0, Math.floor(Number(this?.value) || 0));
-            rv = normalizeStackedDamageReductionOptions(actor, value, rv);
+            rv._nasAbsorptionDefenses = captureAbsorptionDefenses(this, args[0]);
+
+            if (!actorHasAbsorptionData(actor)) rv = normalizeStackedDamageReductionOptions(actor, value, rv);
         }
         return rv;
     }
@@ -1478,170 +1508,179 @@ export function registerSystemApplyDamage() {
         MODULE.ID,
         "pf1.documents.actor.ActorPF.prototype.applyDamage",
         async function (wrapped, value = 0, options = {}) {
-            let nasWrappedCallCount = 0;
-            const isHealing = (value < 0) || options?.isHealing === true;
-            const applyNasTempHp = async (damageValue, damageOptions = {}) => applyDamageAfterNasTemporaryHp(wrapped, this, damageValue, damageOptions);
-            if (!isHealing && !options?._nasFortificationApplied) {
-                const rawValue = Math.max(0, Math.floor(Math.abs(Number(value) || 0)));
-                if (rawValue > 0) {
-                    const fortificationInstances = buildNumericInstances(rawValue, { ...options, value: rawValue });
-                    const fortification = await applyFortificationForTarget({
-                        actor: this,
-                        instances: fortificationInstances,
-                        options: {
-                            ...options,
-                            value: rawValue
-                        },
-                        sourceActor: resolveSourceActorFromOptions(options)
-                    });
-                    if (fortification?.checked) {
-                        options = {
-                            ...options,
-                            ...fortification.options,
-                            instances: fortification.instances,
-                            value: fortification.value
-                        };
-                        value = Math.max(0, Math.floor(Number(fortification.value) || 0));
-                        if (fortification.success && value <= 0) {
-                            await callApplyDamageNoop(wrapped, this, options);
-                            return true;
-                        }
-                    }
-                }
-            }
-            options = getMismatchedChatTargetHardnessFallback(this, value, options) ?? options;
-            options = normalizeStackedDamageReductionOptions(this, value, options);
-            if (
-                actorHasAbsorptionData(this)
-                && !options?._nasAbsorptionApplied
-                && !isHealing
-                && !Boolean(options?.asWounds)
-            ) {
-                const rawFinalDamage = Math.floor(Math.max(0, Math.floor(Math.max(0, value) * (options?.ratio ?? 1))));
-                const nativeDr = nativeDamageReductionForApplyDamage(this, rawFinalDamage, { ...options, reduction: 0 }, { ignoreNasAbsorption: true });
-                const incomingFinalDamage = Math.max(0, rawFinalDamage - Math.min(rawFinalDamage, options?.reduction ?? 0) - nativeDr.reduction);
-                const absorption = await applyDamageAbsorption({
-                    actor: this,
-                    value: rawFinalDamage,
-                    applyDamageOptions: options,
-                    sourceOptions: options
-                });
-                if (absorption?.changed) {
-                    const remainingDamage = Math.max(0, Math.floor(Number(absorption.value) || 0));
-                    const convertedNonlethal = Math.max(0, Math.floor(Number(absorption.convertedNonlethal) || 0));
-                    const nonlethalReduction = Math.max(0, Math.floor(Number(absorption.nonlethalReduction) || 0));
-                    postDamageAbsorptionChatSummary({
-                        actor: this,
-                        incomingDamage: rawFinalDamage,
-                        events: absorption.events
-                    });
-                    await showAbsorptionCombatText(this, absorption.damageReduction);
 
-                    let result = false;
-                    const remainingReduction = additionalReductionAfterAbsorption(this, remainingDamage, options, absorption);
-                    if (remainingDamage > 0) {
-                        nasWrappedCallCount += 1;
-                        const tempResult = await applyNasTempHp(remainingDamage, {
-                            ...options,
-                            ratio: 1,
-                            reduction: remainingReduction,
-                            _nasAbsorptionApplied: true
+                let nasWrappedCallCount = 0;
+                const isHealing = (value < 0) || options?.isHealing === true;
+                const applyNasTempHp = (damageValue, damageOptions = {}) => applyDamageAfterNasTemporaryHp(wrapped, this, damageValue, damageOptions);
+                if (!isHealing && !options?._nasFortificationApplied) {
+                    const rawValue = Math.max(0, Math.floor(Math.abs(Number(value) || 0)));
+                    if (rawValue > 0) {
+                        const fortificationInstances = buildNumericInstances(rawValue, { ...options, value: rawValue });
+                        const fortification = await applyFortificationForTarget({
+                            actor: this,
+                            instances: fortificationInstances,
+                            options: {
+                                ...options,
+                                value: rawValue
+                            },
+                            sourceActor: resolveSourceActorFromOptions(options)
                         });
-                        result = tempResult.handled ? tempResult.result : await wrapped.call(this, remainingDamage, {
-                            ...options,
-                            ratio: 1,
-                            reduction: remainingReduction,
-                            _nasAbsorptionApplied: true
-                        });
-                    }
-                    if (convertedNonlethal > 0) {
-                        nasWrappedCallCount += 1;
-                        const nonlethalOptions = {
-                            ...options,
-                            ratio: 1,
-                            reduction: 0,
-                            asWounds: false,
-                            asNonlethal: true,
-                            _nasAbsorptionApplied: true
-                        };
-                        const tempResult = await applyNasTempHp(convertedNonlethal, nonlethalOptions);
-                        const nonlethalResult = tempResult.handled ? tempResult.result : await wrapped.call(this, convertedNonlethal, nonlethalOptions);
-                        result = Boolean(result || nonlethalResult);
-                    }
-                    for (const converted of absorption?.convertedDamage ?? []) {
-                        const amount = Math.max(0, Math.floor(Number(converted?.amount) || 0));
-                        if (amount <= 0) continue;
-                        const convertedInstances = buildConvertedDamageInstances(amount, converted.damageType);
-                        const convertedResistance = nativeEnergyResistanceForApplyDamage(this, amount, {
-                            ...options,
-                            instances: convertedInstances,
-                            asWounds: false,
-                            asNonlethal: false,
-                            reduction: 0
-                        });
-                        if (amount - convertedResistance.reduction <= 0) {
-                            result = true;
-                            continue;
+                        if (fortification?.checked) {
+                            options = {
+                                ...options,
+                                ...fortification.options,
+                                instances: fortification.instances,
+                                value: fortification.value
+                            };
+                            value = Math.max(0, Math.floor(Number(fortification.value) || 0));
+                            if (fortification.success && value <= 0) {
+                                await callApplyDamageNoop(wrapped, this, options);
+                                return true;
+                            }
                         }
-                        nasWrappedCallCount += 1;
-                        const convertedOptions = {
-                            ...options,
-                            ratio: 1,
-                            reduction: convertedResistance.reduction,
-                            instances: convertedInstances,
-                            asWounds: false,
-                            asNonlethal: false,
-                            _nasAbsorptionApplied: true
-                        };
-                        const tempResult = await applyNasTempHp(amount, convertedOptions);
-                        const convertedResult = tempResult.handled ? tempResult.result : await wrapped.call(this, amount, convertedOptions);
-                        result = Boolean(result || convertedResult);
                     }
-                    if (nasWrappedCallCount === 0) {
-                        await callApplyDamageNoop(wrapped, this, options);
-                    }
-                    return Boolean(result || nonlethalReduction > 0 || absorption.changed);
                 }
-                if (nativeDr.reduction > 0) {
-                    if (incomingFinalDamage <= 0) {
+
+                options = getMismatchedChatTargetHardnessFallback(this, value, options) ?? options;
+                if (!actorHasAbsorptionData(this)) options = normalizeStackedDamageReductionOptions(this, value, options);
+
+                if (
+                    actorHasAbsorptionData(this)
+                    && !options?._nasAbsorptionApplied
+                    && !isHealing
+                    && !Boolean(options?.asWounds)
+                ) {
+                    const rawFinalDamage = Math.floor(Math.max(0, Math.floor(Math.max(0, value) * (options?.ratio ?? 1))));
+                    const defenseContext = prepareAbsorptionDefenses(this, value, options);
+
+                    const absorption = await applyDamageAbsorption({
+                        actor: this,
+                        value: rawFinalDamage,
+                        applyDamageOptions: options,
+                        sourceOptions: defenseContext
+                            ? { ...options, instances: copyDamageInstances(defenseContext.instances) }
+                            : options
+                    });
+                    const resolved = resolveAbsorptionDefenses(defenseContext, absorption, options);
+                    if (absorption?.changed) {
+                        const remainingDamage = resolved.value;
+                        const convertedNonlethal = Math.max(0, Math.floor(Number(absorption.convertedNonlethal) || 0));
+                        const nonlethalReduction = Math.max(0, Math.floor(Number(absorption.nonlethalReduction) || 0));
+                        postDamageAbsorptionChatSummary({
+                            actor: this,
+                            incomingDamage: rawFinalDamage,
+                            events: absorption.events
+                        });
+                        await showAbsorptionCombatText(this, absorption.damageReduction);
+
+                        let result = false;
+                        const remainingReduction = resolved.reduction;
+                        if (remainingDamage > 0) {
+                            nasWrappedCallCount += 1;
+                            const tempResult = await applyNasTempHp(remainingDamage, {
+                                ...options,
+                                ratio: 1,
+                                reduction: remainingReduction,
+                                instances: resolved.instances,
+                                _nasDamageReductionNormalized: true,
+                                _nasAbsorptionApplied: true
+                            });
+                            result = tempResult.handled ? tempResult.result : await wrapped.call(this, remainingDamage, {
+                                ...options,
+                                ratio: 1,
+                                reduction: remainingReduction,
+                                instances: resolved.instances,
+                                _nasDamageReductionNormalized: true,
+                                _nasAbsorptionApplied: true
+                            });
+                        }
+                        if (convertedNonlethal > 0) {
+                            nasWrappedCallCount += 1;
+                            const nonlethalOptions = {
+                                ...options,
+                                ratio: 1,
+                                reduction: 0,
+                                instances: buildConvertedDamageInstances(convertedNonlethal, 'nonlethal'),
+                                asWounds: false,
+                                asNonlethal: true,
+                                _nasAbsorptionApplied: true
+                            };
+                            const tempResult = await applyNasTempHp(convertedNonlethal, nonlethalOptions);
+                            const nonlethalResult = tempResult.handled ? tempResult.result : await wrapped.call(this, convertedNonlethal, nonlethalOptions);
+                            result = Boolean(result || nonlethalResult);
+                        }
+                        for (const converted of absorption?.convertedDamage ?? []) {
+                            const amount = Math.max(0, Math.floor(Number(converted?.amount) || 0));
+                            if (amount <= 0) continue;
+                            const convertedInstances = buildConvertedDamageInstances(amount, converted.damageType);
+                            const convertedResistance = nativeEnergyResistanceForApplyDamage(this, amount, {
+                                ...options,
+                                instances: convertedInstances,
+                                asWounds: false,
+                                asNonlethal: false,
+                                reduction: 0
+                            });
+                            if (amount - convertedResistance.reduction <= 0) {
+                                result = true;
+                                continue;
+                            }
+                            nasWrappedCallCount += 1;
+                            const convertedOptions = {
+                                ...options,
+                                ratio: 1,
+                                reduction: convertedResistance.reduction,
+                                instances: convertedInstances,
+                                asWounds: false,
+                                asNonlethal: false,
+                                _nasAbsorptionApplied: true
+                            };
+                            const tempResult = await applyNasTempHp(amount, convertedOptions);
+                            const convertedResult = tempResult.handled ? tempResult.result : await wrapped.call(this, amount, convertedOptions);
+                            result = Boolean(result || convertedResult);
+                        }
+                        if (nasWrappedCallCount === 0) {
+                            await callApplyDamageNoop(wrapped, this, options);
+                        }
+                        return Boolean(result || nonlethalReduction > 0 || absorption.changed);
+                    }
+                    if (resolved.value - resolved.reduction <= 0) {
                         await callApplyDamageNoop(wrapped, this, options);
                         return true;
                     }
-                    const nativeDrOptions = {
-                        ...options,
-                        ratio: 1,
-                        reduction: 0,
+                    const resolvedOptions = {
+                        ...options, ratio: 1, reduction: resolved.reduction,
+                        instances: resolved.instances, _nasDamageReductionNormalized: true,
                         _nasAbsorptionApplied: true
                     };
-                    const tempResult = await applyNasTempHp(incomingFinalDamage, nativeDrOptions);
-                    return tempResult.handled ? tempResult.result : wrapped.call(this, incomingFinalDamage, nativeDrOptions);
+                    const tempResult = await applyNasTempHp(resolved.value, resolvedOptions);
+                    return tempResult.handled ? tempResult.result : wrapped.call(this, resolved.value, resolvedOptions);
                 }
-            }
-            const tempResult = await applyNasTempHp(value, options);
-            if (tempResult.handled) return tempResult.result;
-            if (!options?._nasDamageDialog) return wrapped.call(this, value, options);
-            if (!Boolean(options?.asWounds)) return wrapped.call(this, value, options);
-            if (!isWoundsVigorActive(this)) return wrapped.call(this, value, options);
+                const tempResult = await applyNasTempHp(value, options);
+                if (tempResult.handled) return tempResult.result;
+                if (!options?._nasDamageDialog) return wrapped.call(this, value, options);
+                if (!Boolean(options?.asWounds)) return wrapped.call(this, value, options);
+                if (!isWoundsVigorActive(this)) return wrapped.call(this, value, options);
 
-            if (isWvNoWoundsActor(this)) {
-                return wrapped.call(this, value, { ...options, asWounds: false });
-            }
+                if (isWvNoWoundsActor(this)) {
+                    return wrapped.call(this, value, { ...options, asWounds: false });
+                }
 
-            const instances = Array.isArray(options?.instances) ? options.instances : [];
-            const useRuleMagnitude = isHealing || isLifeEnergyContext(options, instances);
-            if (!useRuleMagnitude) return wrapped.call(this, value, options);
+                const instances = Array.isArray(options?.instances) ? options.instances : [];
+                const useRuleMagnitude = isHealing || isLifeEnergyContext(options, instances);
+                if (!useRuleMagnitude) return wrapped.call(this, value, options);
 
-            const adjustedMagnitude = getRuleWoundMagnitude(
-                options,
-                instances,
-                this,
-                Math.abs(Number(value) || 0)
-            );
-            const adjustedValue = isHealing
-                ? -Math.abs(adjustedMagnitude)
-                : Math.abs(adjustedMagnitude);
+                const adjustedMagnitude = getRuleWoundMagnitude(
+                    options,
+                    instances,
+                    this,
+                    Math.abs(Number(value) || 0)
+                );
+                const adjustedValue = isHealing
+                    ? -Math.abs(adjustedMagnitude)
+                    : Math.abs(adjustedMagnitude);
 
-            return wrapped.call(this, adjustedValue, options);
+                return wrapped.call(this, adjustedValue, options);
+
         },
         libWrapper.WRAPPER
     );

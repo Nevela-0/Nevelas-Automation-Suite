@@ -25,18 +25,18 @@ export class EditDamageType extends FormApplication {
 
     getData() {
         let categoryDisplay = this.item.value.category;
-    
+
         if (!["physical", "energy", "misc"].includes(this.item.value.category)) {
             categoryDisplay = this.item.value.category.capitalize();
         }
-    
+
         return {
             item: {
                 ...this.item.value,
                 imgInput: this.item.value.imgOriginal || this.item.value.img || "",
                 imgPreview: this.item.value.img || this.item.value.imgOriginal || "",
                 imgColor: this.item.value.imgColor || this.item.value.color || "#000000",
-                category: categoryDisplay  
+                category: categoryDisplay   
             },
             moduleId: MODULE.ID
         };
@@ -46,17 +46,18 @@ export class EditDamageType extends FormApplication {
         super.activateListeners(html);
         html = jqueryFromHtmlLike(html) ?? html;
         this.selectedRadio = html.find('input[name="flag-type"]:checked');
-    
+
         html.find(`input[name="flag-type"][value="${this.item.value.flags[MODULE.ID]?.type}"]`).prop('checked', true);
-    
+
         html.find(`select[name="flag-ability"]`).val(this.item.value.flags[MODULE.ID]?.abilities || '');
-    
+
         html.find('button.file-picker').click(this._onFilePicker.bind(this));
         html.find('input[name="custom-category"]').on('focus', this._onCustomCategoryFocus.bind(this));
         html.find('input[name="flag-type"]').on('click', this._onRadioClick.bind(this));
         html.find('input[name="img-color"]').on('input', () => this._syncImagePreview());
-    
+
         html.find('button[name="save"]').on('click', (event) => {
+
             this._onSubmit(event);
         });
 
@@ -153,32 +154,30 @@ export class EditDamageType extends FormApplication {
                 type: flagType || ""
             }
         };
-
-        const imageData = await this._prepareImageValue(img, imgColor);
+const imageData = await this._prepareImageValue(img, imgColor);
         const resolvedImg = (this.initialImg && img === this.initialImg && icon && !this.initialIcon) ? "" : imageData.img;
 
         const updatedItem = {
             name,
-            img: resolvedImg,
+            img: resolvedImg,  
             imgOriginal: resolvedImg ? imageData.imgOriginal : "",
             imgColor,
             category,
             abbr,
-            icon: (this.initialIcon && icon === this.initialIcon && img && !this.initialImg) ? "" : icon, 
+            icon: (this.initialIcon && icon === this.initialIcon && img && !this.initialImg) ? "" : icon,  
             color,
             isModifier,
             flags: updatedFlags
         };
 
         this.item.value = updatedItem;
-
-        this.onSubmitCallback(updatedItem);
         await this.onSubmitCallback(updatedItem);
 
         this.close();
     }
 
     async _updateObject(event, formData) {
+
     }
 
     _isSvgPath(path) {
@@ -248,6 +247,3 @@ export class EditDamageType extends FormApplication {
         preview.style.display = "block";
     }
 }
-
-
-

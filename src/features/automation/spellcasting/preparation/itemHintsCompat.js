@@ -1,3 +1,4 @@
+import { localizePreparation as localize } from "./i18n.js";
 import { getKnownSpells } from "./knownSpells.js";
 import {
   getGeneratedPreparedSpellItemFlag,
@@ -17,12 +18,6 @@ function formatLocalized(key, data, fallback = key) {
   const value = game.i18n.format(fullKey, data);
   if (value && value !== fullKey) return value;
   return fallback.replace(/\{(\w+)\}/g, (_match, field) => data?.[field] ?? "");
-}
-
-function localize(key, fallback = key) {
-  const fullKey = `NAS.spellbookPreparation.${key}`;
-  const value = game.i18n.localize(fullKey);
-  return value && value !== fullKey ? value : fallback;
 }
 
 function normalizeId(value) {
@@ -106,7 +101,7 @@ export function getUntrackedKnownSpellMarker(actor, item) {
     label: localize("labels.sheetUntrackedKnownSpellBadge", "Untracked"),
     tooltip: localize(
       "tooltips.untrackedKnownSpell",
-      "This spell is not in the NAS known spellbook yet. Use Prepare to import it before managing preparation or variants."
+      "Open the spellbook and add this spell before preparing or inscribing it."
     ),
     bookId
   };

@@ -30,7 +30,7 @@ export function applyReachSpell(context, steps = 1) {
   range.units = currentUnit;
   context.range.hasRange = true;
   context.range.isRanged = true;
-  context.range.touch = false;
+
   if (!range.minUnits || range.minUnits === "touch") {
     range.minUnits = currentUnit;
   }

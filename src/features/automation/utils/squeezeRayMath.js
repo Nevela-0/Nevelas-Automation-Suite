@@ -19,7 +19,7 @@ function isMovementBlockingWall(wall) {
 }
 
 export function getTokenCenter(tokenDocument, x, y) {
-  return tokenDocument.getCenterPoint({
+  if (typeof tokenDocument.getCenterPoint === "function") return tokenDocument.getCenterPoint({
     x,
     y,
     elevation: tokenDocument.elevation ?? 0,
@@ -27,6 +27,14 @@ export function getTokenCenter(tokenDocument, x, y) {
     height: tokenDocument.height,
     shape: tokenDocument.shape
   });
+
+  if (typeof tokenDocument.object?.getCenterPoint === "function") return tokenDocument.object.getCenterPoint({ x, y });
+  if (typeof tokenDocument.object?.getCenter === "function") return tokenDocument.object.getCenter(x, y);
+  const grid = tokenDocument.parent?.grid;
+  const sizeX = grid?.sizeX ?? grid?.size;
+  const sizeY = grid?.sizeY ?? grid?.size;
+  if (![sizeX, sizeY].every((size) => Number.isFinite(size) && size > 0)) return null;
+  return { x: x + (tokenDocument.width ?? 1) * sizeX / 2, y: y + (tokenDocument.height ?? 1) * sizeY / 2 };
 }
 
 export function buildWaypoint(tokenDocument, x, y, scale) {

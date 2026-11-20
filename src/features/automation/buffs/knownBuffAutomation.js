@@ -273,7 +273,7 @@ function fireShieldAbsorptionConfig(opposingEnergy) {
     preset: "custom",
     energyType: opposingEnergy,
     totalFormula: "",
-    perAttackFormula: "floor(@nas.finalDamage / 2)",
+    perAttackFormula: "@nas.matchingDamage - floor(@nas.matchingDamage / 2)",
     remaining: null,
     capacity: null,
     dischargeAtZero: false,
@@ -286,7 +286,7 @@ function fireShieldAbsorptionConfig(opposingEnergy) {
       damageTypeIds: [opposingEnergy],
       includeUntyped: false,
       action: "reduce",
-      amountFormula: "floor(@nas.finalDamage / 2)",
+      amountFormula: "@nas.matchingDamage - floor(@nas.matchingDamage / 2)",
       defenseKind: "er",
       reductionBypassTypes: [opposingEnergy],
       spendPool: false
@@ -346,7 +346,7 @@ function setFlagUpdate(updates, key, value) {
   };
 }
 
-function buildKnownBuffUpdates(item, options = {}) {
+export function buildKnownBuffUpdates(item, options = {}) {
   const kind = knownBuffKind(item);
   if (!kind) return null;
   const updates = {};

@@ -1,5 +1,7 @@
 import { elementFromHtmlLike } from "../../../../common/foundryCompat.js";
 import { getEligibleSpellbookIds } from "./eligibility.js";
+import { localizePreparation as localize } from "./i18n.js";
+import { isSpellbookManagementEnabled } from "./preferences.js";
 import { isSpellbookPreparationPending } from "./flags.js";
 import {
   getPreparedSlotMarkerLabels,
@@ -7,7 +9,7 @@ import {
   isItemHintsIntegrationActive
 } from "./itemHintsCompat.js";
 import { getKnownSpells } from "./knownSpells.js";
-import { SpellbookPreparationApp } from "./app.js";
+import { openSpellbookOptions } from "./access.js";
 import {
   getGeneratedPreparedSpellItemFlag,
   isGeneratedPreparedSpellItem,
@@ -22,12 +24,6 @@ import {
 
 const PREPARE_CONTROL_SELECTOR = "[data-nas-spellbook-prepare]";
 const SPELL_LEVEL_COUNT = 10;
-
-function localize(key, fallback = key) {
-  const fullKey = `NAS.spellbookPreparation.${key}`;
-  const value = game.i18n.localize(fullKey);
-  return value && value !== fullKey ? value : fallback;
-}
 
 function getSheetActor(app) {
   return app?.actor ?? app?.document ?? app?.object ?? null;
@@ -71,13 +67,16 @@ function hasPrepareControl(container, bookId) {
 
 function createPrepareControl(actor, bookId) {
   const pending = isSpellbookPreparationPending(actor, bookId);
+  const enabled = isSpellbookManagementEnabled(actor, bookId);
   const control = document.createElement("a");
   control.classList.add("nas-spellbook-prepare-control");
   control.classList.add(`nas-spellbook-animation-${getSpellbookAnimationMode()}`);
   if (pending) control.classList.add("nas-spellbook-prepare-pending");
   control.dataset.nasSpellbookPrepare = "true";
   control.dataset.bookId = bookId;
-  control.dataset.tooltip = pending
+  control.dataset.tooltip = !enabled
+    ? localize("tooltips.options", "Open spellbook options")
+    : pending
     ? localize("tooltips.preparePending", "Prepare this spellbook for the new day")
     : localize("tooltips.prepare", "Prepare this spellbook");
   control.setAttribute("aria-label", control.dataset.tooltip);
@@ -90,7 +89,9 @@ function createPrepareControl(actor, bookId) {
   control.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
-    SpellbookPreparationApp.open(actor, bookId);
+    void openSpellbookOptions(actor, bookId).catch((error) => {
+      ui.notifications.warn(error?.message || localize("warnings.openOptions", "The spellbook options could not be opened."));
+    });
   });
 
   return control;
@@ -344,13 +345,36 @@ function hideManagedSourceSpellItems(actor, root, bookId) {
 }
 
 export function injectSpellbookPreparationActorSheetControls(app, html) {
-  if (!isSpellbookPreparedVariantSupportEnabled()) return;
-
   const root = elementFromHtmlLike(html);
   const actor = getSheetActor(app);
   if (!root || !actor) return;
 
   for (const bookId of getEligibleSpellbookIds(actor)) {
+    if (!isSpellbookManagementEnabled(actor, bookId)) {
+      const body = getSpellbookBody(root, bookId);
+      for (const item of getActorItems(actor)) {
+        if (`${item.system?.spellbook ?? ""}` !== bookId) continue;
+        for (const row of findItemSheetRows(body, item.id)) {
+          if (isGeneratedPreparedSpellItem(item)) {
+            row.classList.add("nas-suspended-prepared-spell");
+            row.style.display = "none";
+          } else if (row.classList.contains("nas-hidden-known-spell-source")) {
+            row.classList.remove("nas-hidden-known-spell-source");
+            row.style.display = "";
+          }
+        }
+      }
+      if (actor.isOwner !== false && shouldShowSpellbookPrepareControl()) {
+        injectSpellbookPrepareControl(actor, root, bookId);
+      }
+      continue;
+    }
+    const body = getSpellbookBody(root, bookId);
+    for (const row of body?.querySelectorAll?.(".nas-suspended-prepared-spell") ?? []) {
+      row.classList.remove("nas-suspended-prepared-spell");
+      row.style.display = "";
+    }
+    if (!isSpellbookPreparedVariantSupportEnabled()) continue;
     annotateUntrackedKnownSpellItems(actor, root, bookId);
     if (shouldHideSpellbookSourceSpells()) hideManagedSourceSpellItems(actor, root, bookId);
     relocateGeneratedPreparedSpellItems(actor, root, bookId);

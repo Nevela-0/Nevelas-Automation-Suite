@@ -1,4 +1,5 @@
 import { MODULE } from "../../../common/module.js";
+import { openResistanceSelector } from "./resistanceSelector.js";
 import { elementFromHtmlLike, escapeHtmlForSheet } from "../../../common/foundryCompat.js";
 import { createNasId } from "../utils/nasIds.js";
 import { isNasReactiveAutomationItem } from "../utils/itemTypes.js";
@@ -167,19 +168,26 @@ function normalizeBuffSaveAlliesBypassMode(value) {
   return ["setting", "enabled", "disabled"].includes(mode) ? mode : "setting";
 }
 
+function normalizeBuffSaveRecipients(value) {
+  return ["allies", "enemies"].includes(value) ? value : "any";
+}
+
 function normalizeBuffSaveOverrideConfig(raw = {}) {
   const value = raw && typeof raw === "object" ? raw : {};
   return {
-    override: value.override === true || normalizeBuffSaveHandlingMode(value.mode) !== "ignore" || normalizeBuffSaveAlliesBypassMode(value.alliesBypass) !== "setting",
+    override: value.override !== false && (value.override === true || Object.hasOwn(value, "mode") || Object.hasOwn(value, "alliesBypass") || Object.hasOwn(value, "recipients")),
     mode: normalizeBuffSaveHandlingMode(value.mode),
-    alliesBypass: normalizeBuffSaveAlliesBypassMode(value.alliesBypass)
+    alliesBypass: normalizeBuffSaveAlliesBypassMode(value.alliesBypass),
+    recipients: normalizeBuffSaveRecipients(value.recipients)
   };
 }
 
 function toBuffSaveOverridePayload(state = {}) {
   return {
+    override: state.override !== false,
     mode: normalizeBuffSaveHandlingMode(state.mode),
-    alliesBypass: normalizeBuffSaveAlliesBypassMode(state.alliesBypass)
+    alliesBypass: normalizeBuffSaveAlliesBypassMode(state.alliesBypass),
+    recipients: normalizeBuffSaveRecipients(state.recipients)
   };
 }
 
@@ -295,6 +303,17 @@ function buffSaveAlliesBypassOptionsHtml(selected) {
     ["disabled", localizeSystem("PF1.Disabled")]
   ].map(([id, label]) =>
     `<option value="${escapeHtmlForSheet(id)}" ${id === current ? "selected" : ""}>${escapeHtmlForSheet(label)}</option>`
+  ).join("");
+}
+
+function buffSaveRecipientOptionsHtml(selected) {
+  const current = normalizeBuffSaveRecipients(selected);
+  return [
+    ["any", localize("buffSaveRecipientsAny")],
+    ["allies", localize("buffSaveRecipientsAllies")],
+    ["enemies", localize("buffSaveRecipientsEnemies")]
+  ].map(([id, label]) =>
+    `<option value="${id}" ${id === current ? "selected" : ""}>${escapeHtmlForSheet(label)}</option>`
   ).join("");
 }
 
@@ -699,6 +718,7 @@ function findActionTabDamageHealingFormHeader(hostTab) {
       const t = game.i18n.localize(key)?.trim?.();
       if (t) set.add(t.toLowerCase());
     } catch {
+
     }
   }
   for (const h3 of hostTab.querySelectorAll("h3.form-header")) {
@@ -848,7 +868,8 @@ function conditionEntryOptionSourceIds(id) {
 function getEntryOptionsForSelectedId(source = {}, id = "", kind = "condition") {
   const keys = kind === "condition" ? conditionEntryOptionSourceIds(id) : [id];
   for (const key of keys) {
-    const value = source?.[key];
+
+    const value = source?.[key] ?? foundry.utils.getProperty(source, key);
     if (value && typeof value === "object") return value;
   }
   return {};
@@ -1841,11 +1862,11 @@ function absorptionUsesDischargeTotal(absorption) {
   return absorption?.preset !== "custom" || (absorption?.rules ?? []).some((rule) => rule?.spendPool === true);
 }
 
-function renderRuleTags(tags, optionList, selectedIds) {
+function renderRuleTags(tags, optionList, selectedIds, placeholderKey = "NAS.common.placeholders.noneSelected") {
   if (!tags) return;
   const ids = Array.isArray(selectedIds) ? selectedIds : [];
   if (!ids.length) {
-    tags.innerHTML = `<li class="tag placeholder" inert>${game.i18n.localize("NAS.common.placeholders.noneSelected")}</li>`;
+    tags.innerHTML = `<li class="tag placeholder" inert>${escapeHtmlForSheet(game.i18n.localize(placeholderKey))}</li>`;
     return;
   }
   tags.innerHTML = ids
@@ -2812,8 +2833,9 @@ function isAppliedBuffOverridesConfigured(state) {
 
 function isBuffSaveGateConfigured(state) {
   return Boolean(
-    String(state?.mode ?? "ignore") !== "ignore"
+    state?.override === true || String(state?.mode ?? "ignore") !== "ignore"
     || String(state?.alliesBypass ?? "setting") !== "setting"
+    || normalizeBuffSaveRecipients(state?.recipients) !== "any"
   );
 }
 
@@ -2967,7 +2989,7 @@ async function renderBuffSaveGateSection(sheet, root) {
     ReactiveUiState.get(sheet.appId, appKey) ?? flags[BUFF_SAVE_ACTION_SHEET_KEY]?.[action.id]
   );
   ReactiveUiState.set(sheet.appId, appKey, state);
-  
+
   const section = document.createElement("div");
   section.classList.add("nas-buff-save-gate");
   section.innerHTML = `
@@ -2976,6 +2998,10 @@ async function renderBuffSaveGateSection(sheet, root) {
     <div class="form-group" data-nas-row="mode">
       <label>${escapeHtmlForSheet(localize("buffSaveHandling"))}</label>
       <select data-nas-key="mode">${buffSaveHandlingOptionsHtml(state.mode)}</select>
+    </div>
+    <div class="form-group" data-nas-row="recipients">
+      <label>${escapeHtmlForSheet(localize("buffSaveRecipients"))}</label>
+      <select data-nas-key="recipients">${buffSaveRecipientOptionsHtml(state.recipients)}</select>
     </div>
     <div class="form-group" data-nas-row="alliesBypass">
       <label>${escapeHtmlForSheet(localize("buffSaveAlliesBypass"))}</label>
@@ -3002,6 +3028,8 @@ async function renderBuffSaveGateSection(sheet, root) {
     if (!key) return;
     if (key === "mode") state.mode = normalizeBuffSaveHandlingMode(event.target.value);
     else if (key === "alliesBypass") state.alliesBypass = normalizeBuffSaveAlliesBypassMode(event.target.value);
+    else if (key === "recipients") state.recipients = normalizeBuffSaveRecipients(event.target.value);
+    state.override = true;
     updateRows();
     persist();
   });
@@ -3857,7 +3885,7 @@ function attachGrantedDefenseMultiField(section, item, state, key, onChange) {
       onCommit: (selectedIds) => {
         state[key] = selectedIds;
         renderTags();
-        onChange();
+        onChange(key);
       }
     }).render(true);
   };
@@ -3906,37 +3934,6 @@ function getResistanceSelectorOptions(key, attribute) {
   };
 }
 
-function getOpenResistanceSelectorApp(item, attribute) {
-  return Object.values(item?.apps ?? {}).find(
-    (app) => app?.constructor?.name === "DamageResistanceSelector" && app?.options?.name === attribute
-  );
-}
-
-function attachResistanceSelectorCloseHandler(app, item, state, key, attribute, renderTags, onChange) {
-  if (!app || app._nasGrantedDefenseCloseHook) return;
-  app._nasGrantedDefenseCloseHook = true;
-  if (typeof app._getUpdateData === "function") {
-    const originalGetUpdateData = app._getUpdateData.bind(app);
-    app._getUpdateData = (...args) => {
-      const updateData = originalGetUpdateData(...args);
-      app._nasGrantedDefenseLastValue = {
-        value: updateData?.[`${attribute}.value`] ?? state[key]?.value ?? [],
-        custom: updateData?.[`${attribute}.custom`] ?? state[key]?.custom ?? ""
-      };
-      return updateData;
-    };
-  }
-  const originalClose = app.close.bind(app);
-  app.close = async (...args) => {
-    const result = await originalClose(...args);
-    const next = normalizeGrantedDefenses({ [key]: app._nasGrantedDefenseLastValue ?? getReactiveFlags(item).grantedDefenses?.[key] });
-    state[key] = next[key];
-    renderTags();
-    onChange({ preserveResistanceState: true });
-    return result;
-  };
-}
-
 function attachGrantedDefenseResistanceField(section, item, state, key, onChange) {
   const tags = section.querySelector(`[data-nas-defense-tags="${key}"]`);
   const editBtn = section.querySelector(`[data-nas-defense-edit="${key}"]`);
@@ -3967,7 +3964,7 @@ function attachGrantedDefenseResistanceField(section, item, state, key, onChange
       li.querySelector("input")?.addEventListener("change", (event) => {
         excludeNasChangeFromParentForm(event);
         state[key].value[index].stackable = event.currentTarget.checked === true;
-        onChange();
+        onChange(key);
       });
     }
     if (custom) {
@@ -3979,72 +3976,36 @@ function attachGrantedDefenseResistanceField(section, item, state, key, onChange
   };
 
   const openPicker = async () => {
-    const Selector = pf1?.applications?.DamageResistanceSelector;
-    const bridge = item?.actor?.sheet?._onResistanceSelector;
     const attribute = `flags.${MODULE.ID}.${REACTIVE_FLAG_KEY}.grantedDefenses.${key}`;
     const resistance = normalizeGrantedDefenses({ [key]: foundry.utils.getProperty(item, attribute) ?? state[key] })[key];
-    if (!Array.isArray(resistance?.value)) {
-      resistance.value = [];
-    }
-    await item.update({ [attribute]: resistance }, { render: false });
-    state[key] = resistance;
+    const app = await openResistanceSelector(item, getResistanceSelectorOptions(key, attribute), resistance);
+    if (!app) ui.notifications?.warn?.("PF1 damage resistance selector is not available.");
 
-    const options = getResistanceSelectorOptions(key, attribute);
-    if (!Selector) {
-      if (typeof bridge === "function") {
-        bridge.call(
-          { actor: item },
-          {
-            preventDefault() {},
-            currentTarget: {
-              dataset: {
-                for: options.name,
-                fields: options.fields,
-                dtypes: options.dtypes,
-                options: options.options
-              },
-              innerText: options.title
-            }
-          }
-        );
-        attachResistanceSelectorCloseHandler(getOpenResistanceSelectorApp(item, attribute), item, state, key, attribute, renderTags, onChange);
-        return;
-      }
-      ui.notifications?.warn?.("PF1 damage resistance selector is not available.");
-      return;
-    }
-    const app = new Selector({
-      document: item,
-      ...options
-    });
-    attachResistanceSelectorCloseHandler(app, item, state, key, attribute, renderTags, onChange);
-    app.render(true);
   };
 
   editBtn.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
-    void openPicker();
+    void openPicker().catch((error) => ui.notifications?.error?.(error.message));
   });
   renderTags();
 }
 
 function makeGrantedDefenseWriteState(section, item, state, sheetAppId) {
-  return ({ preserveResistanceState = false } = {}) => {
+  return (key) => {
+    if (!item || isItemInLockedCompendium(item)) return;
     state.fortification = normalizeGrantedDefenses({
       fortification: section.querySelector('select[data-nas-key="fortification"]')?.value
     }).fortification;
     state.criticalImmunity = section.querySelector('input[data-nas-key="criticalImmunity"]')?.checked === true;
     ReactiveUiState.set(sheetAppId, "grantedDefenses", state);
     syncReactiveSectionCollapsedChrome(section, section.dataset.nasExpanded === "true");
-    scheduleFlagSave(item, "grantedDefenses", (flags) => {
-      const previous = normalizeGrantedDefenses(flags.grantedDefenses);
-      flags.grantedDefenses = {
-        ...toGrantedDefensesPayload(state),
-        ...(preserveResistanceState ? { dr: previous.dr, eres: previous.eres } : {})
-      };
-      return flags;
-    });
+
+    const attribute = `flags.${MODULE.ID}.${REACTIVE_FLAG_KEY}.grantedDefenses.${key}`;
+    const updateData = key === "dr" || key === "eres"
+      ? { [`${attribute}.value`]: deepClone(state[key].value) }
+      : { [attribute]: deepClone(state[key]) };
+    void item.update(updateData, { render: false }).catch((error) => ui.notifications?.error?.(error.message));
   };
 }
 
@@ -4117,11 +4078,11 @@ async function renderGrantedDefensesSection(sheet, root) {
 
   section.querySelector('select[data-nas-key="fortification"]')?.addEventListener("change", (event) => {
     excludeNasChangeFromParentForm(event);
-    writeState();
+    writeState("fortification");
   });
   section.querySelector('input[data-nas-key="criticalImmunity"]')?.addEventListener("change", (event) => {
     excludeNasChangeFromParentForm(event);
-    writeState();
+    writeState("criticalImmunity");
   });
   attachGrantedDefenseResistanceField(section, item, state, "dr", writeState);
   attachGrantedDefenseResistanceField(section, item, state, "eres", writeState);
@@ -4516,11 +4477,6 @@ async function renderTemporaryHpSection(sheet, root) {
   updateRows();
 }
 
-function selectedOptionLabel(optionList, selectedId, fallback) {
-  const id = String(selectedId ?? "").trim();
-  if (!id) return fallback;
-  return optionList.find((option) => option.id === id)?.label ?? id;
-}
 
 async function renderActionBuffAutomationControl(sheet, root) {
   if (!isItemActionSheetContext(sheet)) return;
@@ -4574,16 +4530,8 @@ async function renderActionBuffAutomationControl(sheet, root) {
   };
   const sync = () => {
     pickerRow.style.display = state.enabled ? "" : "none";
-    if (tags) {
-      const label = selectedOptionLabel(
-        buffOptions,
-        state.selectedBuffUuid,
-        game.i18n.localize("NAS.buffs.actionBuffAutomationLookup")
-      );
-      const placeholder = !state.selectedBuffUuid ? " placeholder" : "";
-      tags.innerHTML = `<li class="tag${placeholder}" inert>${escapeHtmlForSheet(label)}</li>`;
-    }
-    if (clear) clear.style.display = state.selectedBuffUuid ? "" : "none";
+    renderRuleTags(tags, buffOptions, state.selectedBuffUuids, "NAS.buffs.actionBuffAutomationLookup");
+    if (clear) clear.style.display = state.selectedBuffUuids.length ? "" : "none";
   };
 
   checkbox?.addEventListener("change", (event) => {
@@ -4605,10 +4553,10 @@ async function renderActionBuffAutomationControl(sheet, root) {
       rowId: `actionBuff-${state.actionId || createNasId()}`,
       choices,
       indexToId,
-      initialSelectedIds: state.selectedBuffUuid ? [state.selectedBuffUuid] : [],
+      initialSelectedIds: state.selectedBuffUuids,
       hasCustom: false,
       onCommit: (selectedIds) => {
-        state.selectedBuffUuid = String(selectedIds?.[0] ?? "").trim();
+        state.selectedBuffUuids = selectedIds;
         state.enabled = true;
         if (checkbox) checkbox.checked = true;
         sync();
@@ -4620,7 +4568,7 @@ async function renderActionBuffAutomationControl(sheet, root) {
   clear?.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
-    state.selectedBuffUuid = "";
+    state.selectedBuffUuids = [];
     sync();
     persist();
   });

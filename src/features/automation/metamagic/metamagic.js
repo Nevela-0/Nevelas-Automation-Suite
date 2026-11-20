@@ -11,6 +11,7 @@ import { METAMAGIC_DEFINITION as ReachSpell } from "./reachSpell.js";
 import { METAMAGIC_DEFINITION as SelectiveSpell } from "./selectiveSpell.js";
 import { METAMAGIC_DEFINITION as StillSpell } from "./stillSpell.js";
 import { METAMAGIC_DEFINITION as SilentSpell } from "./silentSpell.js";
+import { METAMAGIC_DEFINITION as WidenSpell } from "./widenSpell.js";
 
 export const METAMAGIC_DEFINITIONS = [
   DazingSpell,
@@ -26,6 +27,7 @@ export const METAMAGIC_DEFINITIONS = [
   SelectiveSpell,
   StillSpell,
   SilentSpell,
+  WidenSpell,
 ];
 
 const NAME_LOOKUP = new Map(
@@ -69,4 +71,8 @@ export function resolveMetamagicNameFromDatabase(name) {
   if (rodPrefix && PREFIX_LOOKUP.has(rodPrefix)) return PREFIX_LOOKUP.get(rodPrefix);
 
   return null;
+}
+
+export function initializeMetamagicAutomation() {
+
 }

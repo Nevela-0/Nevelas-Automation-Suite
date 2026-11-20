@@ -62,6 +62,7 @@ export async function applyDazingSpell(context, action, options = {}) {
   const hasFormula =
     Array.isArray(parts) &&
     parts.some((part) => typeof (part?.formula ?? part?.[0]) === "string");
+
   if (!hasDamage && !hasFormula) return false;
 
   if (!context.metamagic) {
@@ -74,6 +75,7 @@ export async function applyDazingSpell(context, action, options = {}) {
   }
 
   context.metamagic.dazing = true;
+
   const roundsRaw = options?.rounds;
   const roundsValue = Number.isFinite(roundsRaw) ? Math.max(0, Math.floor(roundsRaw)) : DAZING_FEAT_ROUNDS;
   context.metamagic.dazingRounds = roundsValue;

@@ -1,4 +1,8 @@
+
 import { MODULE } from '../common/module.js';
+
+import { attachActionSaveContext } from '../features/automation/utils/actionSaveContext.js';
+import { awaitActionTrackerUse, prepareSpringAttackUse, releaseSpringAttackUse } from '../features/actionTracker/index.js';
 import {
   attachPendingBuffAutomationToChatData,
   handleBuffAutomation,
@@ -6,9 +10,17 @@ import {
 } from '../features/automation/buffs/buffs.js';
 import { collectSpellActionData } from '../features/automation/utils/spellActionData.js';
 import { commitPersistentFeatureStatesFromOptions } from '../features/automation/utils/attackDialogControls.js';
-import { applyMetamagicSelections } from '../features/automation/metamagic/applyMetamagic.js';
+import {
+  applyMetamagicSelections,
+  consumePendingHigherSpellSlot,
+  resolvePendingSelectiveSpellExclusions
+} from '../features/automation/metamagic/applyMetamagic.js';
 import { METAMAGIC_DEFINITIONS } from '../features/automation/metamagic/metamagic.js';
-import { mergePreparedVariantMetamagicIntoContext } from '../features/automation/spellcasting/preparation/preparedVariantActionUse.js';
+import { updateWidenSpellChatArea } from '../features/automation/metamagic/widenSpell.js';
+import {
+  mergePreparedVariantMetamagicIntoContext,
+  normalizePreparedVariantRollData
+} from '../features/automation/spellcasting/preparation/preparedVariantActionUse.js';
 import { installPreparedVariantConsumptionOverrides } from '../features/automation/spellcasting/preparation/preparedVariantConsumption.js';
 import { isSpellbookPreparedVariantSupportEnabled } from '../features/automation/spellcasting/preparation/settings.js';
 import { applyActionUseOverrides } from '../features/automation/utils/actionUseOverrides.js';
@@ -19,7 +31,6 @@ import {
   prepareEldritchResearcherContext,
   prepareSpellPerfectionContext,
   prepareSpontaneousMetafocusContext,
-  prepareExtendedScryingContext,
   prepareMaskFocusContext
 } from '../features/automation/metamagic/feats/index.js';
 import {
@@ -133,6 +144,7 @@ const METAMAGIC_FIXED_SLOT_COST = new Map([
   ["Extend Spell", 1],
   ["Intensified Spell", 1],
   ["Maximize Spell", 3],
+  ["Widen Spell", 3],
   ["Persistent Spell", 2],
   ["Quicken Spell", 4],
   ["Selective Spell", 1],
@@ -140,8 +152,8 @@ const METAMAGIC_FIXED_SLOT_COST = new Map([
   ["Still Spell", 1],
 ]);
 
-const METAMAGIC_PREFIX_BY_NAME = new Map(
-  METAMAGIC_DEFINITIONS.map((definition) => [definition.name, definition.prefix]).filter(([, prefix]) => Boolean(prefix))
+const METAMAGIC_DEFINITION_BY_NAME = new Map(
+  METAMAGIC_DEFINITIONS.map((definition) => [definition.name, definition])
 );
 
 function getAppliedMetamagicNames(context) {
@@ -189,7 +201,7 @@ function maybeApplyMetamagicChatCardNamePrefix(actionUse, context) {
   context.metamagic ??= {};
   const cachedName = context.metamagic.chatCardPrefixSourceName;
   if (typeof cachedName === "string" && cachedName.length > 0) {
-    const cachedPrefix = METAMAGIC_PREFIX_BY_NAME.get(cachedName);
+    const cachedPrefix = METAMAGIC_DEFINITION_BY_NAME.get(cachedName)?.prefix;
     if (cachedPrefix) {
       const prefixed = `${cachedPrefix} `;
       if (!currentName.startsWith(prefixed)) {
@@ -217,7 +229,7 @@ function maybeApplyMetamagicChatCardNamePrefix(actionUse, context) {
   if (!candidates.length) return;
   const selectedName = candidates[Math.floor(Math.random() * candidates.length)];
   context.metamagic.chatCardPrefixSourceName = selectedName;
-  const prefix = METAMAGIC_PREFIX_BY_NAME.get(selectedName);
+  const prefix = METAMAGIC_DEFINITION_BY_NAME.get(selectedName)?.prefix;
   if (!prefix) return;
   if (!currentName.startsWith(`${prefix} `)) {
     actionUse.shared.templateData.name = `${prefix} ${currentName}`;
@@ -326,10 +338,6 @@ function updateChatInfoActivationLabel(templateData, beforeActivation, afterActi
 const EXTEND_SPELL_METAMAGIC_NAME = "Extend Spell";
 const MASK_FOCUS_PAREN_NOTE = "(mask focus)";
 
-/**
- * Append ", mask focus" inside existing focus/M/DF/DF parentheses on the Components line, or add
- * ", F (mask focus)" when none apply. Matches PF1 divineFocus: 1=DF, 2=MDF, 3=FDF (see item-spell.mjs).
- */
 function patchMaskFocusComponentsInDescription(html, item, context) {
   if (typeof html !== "string" || !html || !item) return { changed: false, html };
   if (context?.featEffects?.maskFocus?.active !== true) return { changed: false, html };
@@ -826,6 +834,39 @@ async function resolvePendingFeatureItem(actor, itemUuid) {
   }
 }
 
+async function consumePendingMetamagicRodUses(actionUse) {
+  const pending = actionUse?.shared?.nasPendingMetamagicRodUses;
+  if (!Array.isArray(pending) || !pending.length) return;
+  delete actionUse.shared.nasPendingMetamagicRodUses;
+
+  if (actionUse?.shared?.reject === true || actionUse?.shared?.scriptData?.reject === true) return;
+  const actor = actionUse?.actor ?? actionUse?.token?.actor ?? null;
+  if (!actor) return;
+
+  const unique = Array.from(new Map(pending.map((entry) => [entry?.itemUuid, entry])).values());
+  for (const entry of unique) {
+    const rod = await resolvePendingFeatureItem(actor, entry?.itemUuid);
+    if (!rod) continue;
+    const uses = rod.system?.uses;
+    if (uses?.per !== "day") continue;
+    const remaining = Number(uses.value ?? 0);
+    const debitRaw = Number(entry?.debitCount ?? 1);
+    const debitCount = Number.isFinite(debitRaw) && debitRaw > 0 ? Math.floor(debitRaw) : 1;
+    if (!Number.isFinite(remaining) || remaining < debitCount) continue;
+    try {
+
+      await rod.update({ "system.uses.value": remaining - debitCount });
+    } catch (error) {
+      console.warn("[NAS Metamagic] Failed to consume a metamagic rod use.", {
+        actorId: actor.id ?? "",
+        rodId: rod.id ?? "",
+        rodName: rod.name ?? "",
+        error
+      });
+    }
+  }
+}
+
 async function consumePendingTraitFeatureUses(actionUse) {
   const pending = actionUse?.shared?.nasPendingTraitUses;
   if (!Array.isArray(pending) || !pending.length) return;
@@ -844,7 +885,9 @@ async function consumePendingTraitFeatureUses(actionUse) {
     if ((entry?.mode ?? "use") === "displayCard") {
       try {
         await traitItem.displayCard?.({}, { token: tokenDocument });
-      } catch (_error) {}
+      } catch (_error) {
+
+      }
       continue;
     }
 
@@ -853,6 +896,7 @@ async function consumePendingTraitFeatureUses(actionUse) {
       try {
         await traitItem.displayCard?.({}, { token: tokenDocument });
       } catch (_error) {
+
       }
       continue;
     }
@@ -871,6 +915,28 @@ async function consumePendingTraitFeatureUses(actionUse) {
   }
 }
 
+function applyChatActivationOverride(actionUse, context) {
+  const activation = context?.activation, extraFullRound = context?.activationExtraFullRound;
+  if (!activation && !extraFullRound) return;
+  const shared = actionUse.shared;
+  shared.chatData.flags ??= {};
+  shared.chatData.flags[MODULE.ID] ??= {};
+  shared.chatData.flags[MODULE.ID].actionOverrides ??= {};
+  shared.chatData.flags[MODULE.ID].actionOverrides.activation = { activation, extraFullRound: Boolean(extraFullRound) };
+  if (activation) {
+    const actions = shared.templateData?.item?.system?.actions;
+    const index = Math.max(0, Array.isArray(actions) ? actions.findIndex(row => (row._id ?? row.id) === actionUse.action?.id) : 0);
+    const path = `templateData.item.system.actions.${index}.activation`;
+    for (const key of ['type', 'cost']) foundry.utils.setProperty(shared, `${path}.${key}`, activation[key]);
+    for (const key of ['type', 'cost']) if (activation.unchained?.[key] !== undefined) {
+      foundry.utils.setProperty(shared, `${path}.unchained.${key}`, activation.unchained[key]);
+    }
+  }
+  const label = updateChatInfoActivationLabel(shared.templateData, actionUse.action?.activation, activation);
+  const description = updateDescriptionActivationLabel(String(shared.templateData?.description ?? ''), label.beforeLabel, label.afterLabel);
+  if (description.changed) shared.templateData.description = description.html;
+}
+
 export function registerActionUseWrapper() {
   if (!game.modules.get("lib-wrapper")?.active) {
     ui.notifications.error(`${MODULE.NAME} requires the 'libWrapper' module. Please install and activate it.`);
@@ -883,6 +949,8 @@ export function registerActionUseWrapper() {
     async function (wrapped, ...args) {
       try {
         const result = await wrapped.apply(this, args);
+        await awaitActionTrackerUse(this);
+        if (result) await consumePendingMetamagicRodUses(this);
         await consumePendingMetamagicFeatureUse(this);
         await consumePendingPhrenicPoolSpend(this);
         await consumePendingArcaneReservoirSpend(this);
@@ -890,6 +958,7 @@ export function registerActionUseWrapper() {
         await consumePendingTraitFeatureUses(this);
         return result;
       } finally {
+        await releaseSpringAttackUse(this);
         const restore = this?.shared?.nasRestoreOverrides;
         if (typeof restore === "function") {
           restore();
@@ -900,19 +969,28 @@ export function registerActionUseWrapper() {
     "MIXED"
   );
 
+  libWrapper.register(MODULE.ID, "pf1.actionUse.ActionUse.prototype.checkAttackRequirements",
+    async function (wrapped, ...args) {
+      const result = await wrapped.apply(this, args);
+      if (result > 0) return result;
+
+      return await prepareSpringAttackUse(this) ? result : 1;
+    }, "MIXED");
+
   libWrapper.register(
     MODULE.ID,
     "pf1.actionUse.ActionUse.prototype.alterRollData",
     async function (wrapped, ...args) {
       const result = await wrapped.apply(this, args);
+
       if (!shouldHandleMetamagic(this)) return result;
       try {
+        if (isSpellbookPreparedVariantSupportEnabled()) normalizePreparedVariantRollData(this);
         this.shared.nasSpellContext = await collectSpellActionData(this);
         if (isSpellbookPreparedVariantSupportEnabled()) {
           mergePreparedVariantMetamagicIntoContext(this, this.shared.nasSpellContext);
         }
         commitPersistentFeatureStatesFromOptions(this?.actor ?? this?.token?.actor ?? null, this.shared.nasSpellContext?.metamagicOptions ?? {});
-        await prepareExtendedScryingContext(this, this.shared.nasSpellContext);
         await prepareMaleficiumContext(this, this.shared.nasSpellContext);
         await prepareEldritchResearcherContext(this, this.shared.nasSpellContext);
         await prepareSpellPerfectionContext(this, this.shared.nasSpellContext);
@@ -961,6 +1039,21 @@ export function registerActionUseWrapper() {
 
   libWrapper.register(
     MODULE.ID,
+    "pf1.actionUse.ActionUse.prototype.getTargets",
+    async function (wrapped, ...args) {
+
+      const result = await wrapped.apply(this, args);
+
+      if (!shouldHandleMetamagic(this)) return result;
+
+      await resolvePendingSelectiveSpellExclusions(this, this.shared?.nasSpellContext);
+      return result;
+    },
+    "MIXED"
+  );
+
+  libWrapper.register(
+    MODULE.ID,
     "pf1.actionUse.ActionUse.prototype.executeScriptCalls",
     async function (wrapped, category = "use", ...args) {
       if (category !== "use") {
@@ -977,7 +1070,9 @@ export function registerActionUseWrapper() {
         return;
       }
 
-      return wrapped.apply(this, [category, ...args]);
+      const result = await wrapped.apply(this, [category, ...args]);
+      await consumePendingHigherSpellSlot(this);
+      return result;
     },
     "MIXED"
   );
@@ -997,6 +1092,7 @@ export function registerActionUseWrapper() {
 
   Hooks.on("pf1PreDisplayActionUse", (actionUse) => {
     attachPendingBuffAutomationToChatData(actionUse);
+
     if (!shouldHandleMetamagic(actionUse)) return;
     const context = actionUse?.shared?.nasSpellContext;
     if (!context) return;
@@ -1090,56 +1186,8 @@ export function registerActionUseWrapper() {
           .filter(Boolean);
       }
 
-      const activationOverride = context.activation;
-      const extraFullRound = context.activationExtraFullRound;
-      if (activationOverride || extraFullRound) {
-        actionUse.shared.chatData.flags[MODULE.ID].actionOverrides.activation = {
-          activation: activationOverride,
-          extraFullRound: Boolean(extraFullRound)
-        };
-        if (activationOverride) {
-          foundry.utils.setProperty(
-            actionUse.shared,
-            "templateData.item.system.actions.0.activation.type",
-            activationOverride.type
-          );
-          foundry.utils.setProperty(
-            actionUse.shared,
-            "templateData.item.system.actions.0.activation.cost",
-            activationOverride.cost
-          );
-          const unchainedType = activationOverride?.unchained?.type;
-          const unchainedCost = activationOverride?.unchained?.cost;
-          if (unchainedType !== undefined) {
-            foundry.utils.setProperty(
-              actionUse.shared,
-              "templateData.item.system.actions.0.activation.unchained.type",
-              unchainedType
-            );
-          }
-          if (unchainedCost !== undefined) {
-            foundry.utils.setProperty(
-              actionUse.shared,
-              "templateData.item.system.actions.0.activation.unchained.cost",
-              unchainedCost
-            );
-          }
-        }
-        const originalActivation = actionUse?.action?.activation;
-        const activationLabelPatch = updateChatInfoActivationLabel(
-          actionUse?.shared?.templateData,
-          originalActivation,
-          activationOverride
-        );
-        const descriptionPatch = updateDescriptionActivationLabel(
-          String(actionUse?.shared?.templateData?.description ?? ""),
-          activationLabelPatch.beforeLabel,
-          activationLabelPatch.afterLabel
-        );
-        if (descriptionPatch.changed) {
-          actionUse.shared.templateData.description = descriptionPatch.html;
-        }
-      }
+      applyChatActivationOverride(actionUse, context);
+      if (context.measureTemplateOverrides?.size) updateWidenSpellChatArea(actionUse, context);
 
       const somaticLabel = game.i18n.localize(pf1?.config?.spellComponents?.somatic ?? "PF1.SpellComponents.Type.somatic.Abbr");
       const descriptionBeforeComponentsPatch = String(actionUse?.shared?.templateData?.description ?? "");
@@ -1211,6 +1259,8 @@ export function registerActionUseWrapper() {
       }
     }
   });
+
+  Hooks.on("pf1PreDisplayActionUse", (actionUse) => attachActionSaveContext(actionUse));
 
   libWrapper.register(
     MODULE.ID,

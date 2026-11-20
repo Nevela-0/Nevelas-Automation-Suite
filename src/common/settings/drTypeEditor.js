@@ -5,10 +5,10 @@ export class DRTypeEditor extends FormApplication {
         super();
         this.drTypes = drTypes;
         this.onSubmit = onSubmit;
-        this.materialTypes = pf1.registry.materialTypes;
+        this.materialTypes = pf1.registry.materials;
         this.damageResistances = pf1.config.damageResistances;
         this.availableTypes = ["Custom", ...this.materialTypes.map(m => m.name), ...Object.values(this.damageResistances).sort((a, b) => a.localeCompare(b))];
-        this.originalDrTypes = [...drTypes]; 
+        this.originalDrTypes = [...drTypes];  
     }
 
     static get defaultOptions() {
@@ -49,7 +49,7 @@ export class DRTypeEditor extends FormApplication {
             const customType = customTypeInput.value.trim();
             if (customType) {
                 this.drTypes.push(customType);
-                customTypeInput.value = ''; 
+                customTypeInput.value = '';  
             }
         }
         this.render(false);
@@ -99,18 +99,19 @@ export class DRTypeEditor extends FormApplication {
                 let value = formData[key].trim();
                 if (value) {
                     if (this.availableTypes.includes(value)) {
+
                         const material = this.materialTypes.find(m => m.name === value);
                         const resistanceKey = Object.keys(this.damageResistances).find(key => this.damageResistances[key] === value);
 
                         if (material) {
-                            updatedTypes.push(material.name); 
+                            updatedTypes.push(material.name);  
                         } else if (resistanceKey) {
-                            updatedTypes.push(this.damageResistances[resistanceKey]); 
+                            updatedTypes.push(this.damageResistances[resistanceKey]);  
                         } else {
-                            updatedTypes.push(value.capitalize()); 
+                            updatedTypes.push(value.capitalize());  
                         }
                     } else {
-                        updatedTypes.push(value.capitalize()); 
+                        updatedTypes.push(value.capitalize());  
                     }
                 }
             }
@@ -121,10 +122,10 @@ export class DRTypeEditor extends FormApplication {
     }
 
     close(options = {}) {
+
         if (!options.force && !options.submit) {
             this.drTypes.splice(0, this.drTypes.length, ...this.originalDrTypes);
         }
         super.close(options);
     }
 }
-

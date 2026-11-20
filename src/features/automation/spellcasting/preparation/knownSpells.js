@@ -1,3 +1,5 @@
+import { createNasId } from "../../utils/nasIds.js";
+import { clonePlainData } from "../../../../common/foundryCompat.js";
 import { MODULE } from "../../../../common/module.js";
 import { isGeneratedPreparedSpellItem } from "./preparedItems.js";
 
@@ -6,17 +8,6 @@ export const SPELLBOOK_KNOWN_SPELLS_VERSION = 1;
 
 function normalizeId(value) {
   return (value ?? "").toString().trim();
-}
-
-function cloneData(value) {
-  if (globalThis.foundry?.utils?.deepClone) return foundry.utils.deepClone(value);
-  return JSON.parse(JSON.stringify(value ?? null));
-}
-
-function randomId() {
-  return globalThis.foundry?.utils?.randomID?.()
-    ?? globalThis.crypto?.randomUUID?.()
-    ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 function nowMetadata() {
@@ -28,7 +19,7 @@ function nowMetadata() {
 }
 
 function getSpellItemData(item, bookId) {
-  const data = cloneData(item?.toObject?.() ?? item ?? {});
+  const data = clonePlainData(item?.toObject?.() ?? item ?? {});
   delete data._id;
 
   if (!data.system || typeof data.system !== "object") data.system = {};
@@ -71,7 +62,7 @@ function sortSpellItems(items) {
 
 function createKnownSpellEntry(item, bookId) {
   return {
-    id: `known-${randomId()}`,
+    id: `known-${createNasId()}`,
     sourceItemId: item?.id ?? "",
     sourceUuid: item?.uuid ?? "",
     spellbookId: bookId,
@@ -85,7 +76,7 @@ function createKnownSpellEntry(item, bookId) {
 
 function normalizeKnownSpellEntry(entry, bookId) {
   if (!entry || typeof entry !== "object") return null;
-  const id = normalizeId(entry.id) || `known-${randomId()}`;
+  const id = normalizeId(entry.id) || `known-${createNasId()}`;
   const spellbookId = normalizeId(entry.spellbookId) || bookId;
   return {
     id,
@@ -96,7 +87,7 @@ function normalizeKnownSpellEntry(entry, bookId) {
     img: entry.img || "icons/svg/book.svg",
     level: Number.isInteger(Number(entry.level)) ? Number(entry.level) : 99,
     sort: Number.isFinite(Number(entry.sort)) ? Number(entry.sort) : 0,
-    itemData: entry.itemData && typeof entry.itemData === "object" ? cloneData(entry.itemData) : {}
+    itemData: entry.itemData && typeof entry.itemData === "object" ? clonePlainData(entry.itemData) : {}
   };
 }
 

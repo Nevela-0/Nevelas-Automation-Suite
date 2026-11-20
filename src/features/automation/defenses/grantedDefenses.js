@@ -254,6 +254,14 @@ function applyResistanceGrant(trait, grant) {
   const before = actorResistanceEntry(trait.value[index]);
   const nextAmount = grant?.stackable === true ? before.amount + amount : Math.max(before.amount, amount);
   trait.value[index] = { ...before, amount: nextAmount };
+  if (grant?.nas?.source === "damageAbsorption") {
+    trait.value[index].nas = {
+      ...grant.nas,
+      ordinaryAmount: before.nas?.source === "damageAbsorption"
+        ? numberOrZero(before.nas.ordinaryAmount)
+        : before.amount
+    };
+  }
   trait.value = uniqueResistanceEntries(trait.value);
 }
 
@@ -277,8 +285,8 @@ function addTraitSetValue(trait, kind, id) {
   const value = String(id).trim();
   if (!value) return;
   if (knownTraitId(kind, value)) {
-    trait.standard?.add?.(value);
-    if (Array.isArray(trait.value) && !trait.value.includes(value)) trait.value.push(value);
+    if (typeof trait.standard?.add === 'function') trait.standard.add(value);
+    else if (Array.isArray(trait.value) && !trait.value.includes(value)) trait.value.push(value);
     return;
   }
   trait.custom?.add?.(value);

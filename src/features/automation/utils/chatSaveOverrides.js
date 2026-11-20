@@ -1,12 +1,12 @@
 import { MODULE } from "../../../common/module.js";
 import { elementFromHtmlLike, htmlElementFromRenderArg, onRenderChatMessageCompat } from "../../../common/foundryCompat.js";
 import { getDazingExtraRoundsForTarget } from "../metamagic/dazingSpell.js";
+import { actionCardSaveData, savedActionSaveTargets, validSaveType, saveRollTotal, saveRollDc } from "./actionSaveContext.js";
 
 const SAVE_BUTTON_SELECTOR = 'button[data-action="save"]';
 const LISTENER_FLAG = "nasPersistentSaveListener";
-const MESSAGE_HOOK_FLAG = "nasPersistentSaveHook";
 export const SAVE_TOKEN_FLAG = "nasSaveTokenInteraction";
-const PERSISTENT_SAVE_QUEUE = [];
+const ACTIVE_SAVE_CLICKS = new Set();
 let hooksRegistered = false;
 
 function getMessageFromEvent(event) {
@@ -15,32 +15,6 @@ function getMessageFromEvent(event) {
   const messageId = messageEl.dataset?.messageId;
   if (!messageId) return null;
   return game.messages?.get(messageId) ?? null;
-}
-
-function getTokenFromTarget(target) {
-  if (!target) return null;
-  if (target.object) return target.object;
-  if (target.document) return target.document;
-  return target;
-}
-
-function queuePersistentSave(entry) {
-  if (!entry?.actorId) return;
-  PERSISTENT_SAVE_QUEUE.push({
-    actorId: entry.actorId,
-    tokenUuid: entry.tokenUuid ?? null,
-    saveType: entry.saveType ?? null,
-    second: Boolean(entry.second),
-  });
-}
-
-function takePersistentSave({ actorId, saveType }) {
-  if (!actorId) return null;
-  const index = PERSISTENT_SAVE_QUEUE.findIndex(
-    (entry) => entry.actorId === actorId && (!saveType || entry.saveType === saveType)
-  );
-  if (index === -1) return null;
-  return PERSISTENT_SAVE_QUEUE.splice(index, 1)[0];
 }
 
 export function buildTokenHeaderHtml(tokenDoc, labelText) {
@@ -168,7 +142,8 @@ function registerPersistentSaveChatMessageHook() {
   hooksRegistered = true;
 
   Hooks.on("pf1ActorRollSave", async (actor, message, savingThrowId) => {
-    const entry = takePersistentSave({ actorId: actor?.id, saveType: savingThrowId });
+    const flags = message?.flags?.[MODULE.ID]?.metamagic;
+    const entry = flags?.persistentSave ? { tokenUuid: flags.tokenUuid, second: flags.persistentSecond } : null;
     if (!message || typeof message.update !== "function") return;
     const allowGlobal = game.settings.get(MODULE.ID, "saveRollTokenInteraction");
     const labelText = getPersistentLabel(entry?.second);
@@ -216,6 +191,8 @@ function registerPersistentSaveChatMessageHook() {
   });
 
   onRenderChatMessageCompat((message, html) => {
+
+    registerPersistentSpellSaveOverrides(html, message);
     if (canSuppressPrivateSaveOutcome(message)) suppressPrivateSaveOutcome(html);
 
     const allowGlobal = message?.flags?.[MODULE.ID]?.[SAVE_TOKEN_FLAG];
@@ -223,20 +200,20 @@ function registerPersistentSaveChatMessageHook() {
     if (!allowGlobal && !isPersistent) return;
     attachTokenImageInteractions(html);
   });
+  Hooks.on("updateChatMessage", (message, changes) => {
+    const completed = changes?.flags?.[MODULE.ID]?.saveResolutionComplete
+      ?? changes?.[`flags.${MODULE.ID}.saveResolutionComplete`];
+    if (completed === true) return recordCompletedPersistentSave(message).catch(error => console.error(`${MODULE.ID} | Save result update failed`, error));
+  });
 }
 
 function getSelectedTokens() {
   return Array.from(canvas?.tokens?.controlled ?? []);
 }
 
-async function resolveTargetsFromMessage(message) {
-  const uuids =
-    message?.flags?.[MODULE.ID]?.targets ??
-    message?.system?.targets ??
-    [];
-  if (!Array.isArray(uuids) || uuids.length === 0) return [];
+async function resolveTargetsFromMessage(uuids) {
   const resolved = await Promise.all(
-    uuids.map(async (uuid) => {
+    [...new Set(uuids)].map(async (uuid) => {
       try {
         return await fromUuid(uuid);
       } catch {
@@ -245,22 +222,6 @@ async function resolveTargetsFromMessage(message) {
     })
   );
   return resolved.filter(Boolean);
-}
-
-function getTargetsFromSetting(message) {
-  const mode = game.settings.get(MODULE.ID, "persistentSpellTargetMode");
-  if (mode === "message") {
-    return resolveTargetsFromMessage(message);
-  }
-  if (mode === "selected") {
-    return getSelectedTokens();
-  }
-  return Array.from(game.user?.targets ?? []);
-}
-
-function getNoTargetsMessage(mode) {
-  const key = `NAS.metamagic.PersistentNoTargets.${mode ?? "current"}`;
-  return game.i18n.localize(key);
 }
 
 async function applyDazedCondition(targetActor, rounds) {
@@ -275,122 +236,120 @@ async function applyDazedCondition(targetActor, rounds) {
   await targetActor.setCondition("dazed", { duration });
 }
 
-async function rollMetamagicSaveForTarget(target, saveType, dc, options) {
-  const token = getTokenFromTarget(target);
-  const tokenDoc = token?.document ?? token;
-  const actor = tokenDoc?.actor ?? token?.actor ?? null;
-  if (!actor) return;
+export async function recordCompletedPersistentSave(message) {
+  if (!game.users?.activeGM?.isSelf || message?.flags?.[MODULE.ID]?.saveResolutionComplete !== true) return;
+  const type = validSaveType(message?.system?.subject?.save);
+  const total = saveRollTotal(message);
+  if (!type || total == null || !message.system?.reference) return;
+  const card = await fromUuid(message.system.reference);
+  const token = game.scenes?.get(message.speaker?.scene)?.tokens?.get(message.speaker?.token);
+  if (!card || !token?.actor) return;
+  await card.setFlag("pf1", "targetDefense", { [token.uuid]: { save: { [type]: total } } });
+}
 
-  if (options?.persistent) {
-    queuePersistentSave({
-      actorId: actor.id,
-      tokenUuid: tokenDoc?.uuid,
-      saveType,
-      second: false,
-    });
-  }
-  const first = await actor.rollSavingThrow(saveType, {
-    skipDialog: true,
-    token: token?.object ?? token,
-    dc,
+async function rollMetamagicSaveForTarget(target, saveType, dc, options) {
+  const tokenDoc = target?.document ?? target;
+  const actor = tokenDoc?.actor ?? (typeof target?.rollSavingThrow === "function" ? target : null);
+  if (!actor) return;
+  const persistent = options?.persistent === true;
+
+  const saveSequence = persistent ? {} : null;
+  const rollOptions = (second, saveDc = dc) => ({
+    event: options.event,
+    noSound: options.noSound || second,
+
+    token: tokenDoc?.actor ? tokenDoc : undefined,
+
+    reference: persistent ? undefined : options.reference,
+
+    ...(typeof options.patternEffect === "boolean" ? { nasPatternEffect: options.patternEffect } : {}),
+    ...(persistent ? { nasSaveSequence: saveSequence, nasSaveSequenceStep: second ? 1 : 0 } : {}),
+    dc: saveDc,
+    ...(persistent ? { messageData: { flags: { [MODULE.ID]: { metamagic: {
+      persistentSave: true, persistentSecond: second, tokenUuid: tokenDoc?.actor ? tokenDoc.uuid : null
+    } } } } } : {})
   });
 
-  const firstRoll = first?.rolls?.[0];
-  const firstRollData =
-    typeof firstRoll === "string"
-      ? (() => {
-        try {
-          return JSON.parse(firstRoll);
-        } catch {
-          return null;
-        }
-      })()
-      : firstRoll ?? null;
-  const firstTotal = Number(firstRollData?.total ?? 0);
-  const firstSuccess = Number.isFinite(dc) ? firstTotal >= dc : false;
-  if (!firstSuccess) {
-    if (options?.dazing) {
-      const extraRounds = getDazingExtraRoundsForTarget(options?.dazingSpellName, actor);
-      const totalRounds = (options?.dazingRounds ?? 1) + extraRounds;
-      await applyDazedCondition(actor, totalRounds);
-    }
-    return;
+  const first = await actor.rollSavingThrow(saveType, rollOptions(false));
+  const firstTotal = saveRollTotal(first);
+  if (firstTotal == null) return;  
+  let final = first;
+  let total = firstTotal;
+  let effectiveDc = saveRollDc(first, dc);
+  if (persistent && firstTotal >= effectiveDc) {
+    final = await actor.rollSavingThrow(saveType, rollOptions(true, effectiveDc));
+    total = saveRollTotal(final);
+    if (total == null) return;
+    effectiveDc = saveRollDc(final, effectiveDc);
   }
-
-  if (options?.persistent) {
-    queuePersistentSave({
-      actorId: actor.id,
-      tokenUuid: tokenDoc?.uuid,
-      saveType,
-      second: true,
+  if (persistent) {
+    if (final !== first) await first.update({ "system.reference": options.reference });
+    await final.update({
+      "system.reference": options.reference,
+      [`flags.${MODULE.ID}.saveResolutionComplete`]: true
     });
-    const second = await actor.rollSavingThrow(saveType, {
-      skipDialog: true,
-      token: token?.object ?? token,
-      dc,
-    });
-
-    const secondRoll = second?.rolls?.[0];
-    const secondRollData =
-      typeof secondRoll === "string"
-        ? (() => {
-          try {
-            return JSON.parse(secondRoll);
-          } catch {
-            return null;
-          }
-        })()
-        : secondRoll ?? null;
-    const secondTotal = Number(secondRollData?.total ?? 0);
-    const secondSuccess = Number.isFinite(dc) ? secondTotal >= dc : false;
-    if (options?.dazing && !secondSuccess) {
-      const extraRounds = getDazingExtraRoundsForTarget(options?.dazingSpellName, actor);
-      const totalRounds = (options?.dazingRounds ?? 1) + extraRounds;
-      await applyDazedCondition(actor, totalRounds);
-    }
+  }
+  if (options.dazing && total < effectiveDc) {
+    const extraRounds = getDazingExtraRoundsForTarget(options.dazingSpellName, actor);
+    await applyDazedCondition(actor, (options.dazingRounds ?? 1) + extraRounds);
   }
 }
 
-export function registerPersistentSpellSaveOverrides(html) {
+export function registerPersistentSpellSaveOverrides(html, renderedMessage = null) {
   const root = elementFromHtmlLike(html);
   if (!root || root.dataset?.[LISTENER_FLAG]) return;
   root.dataset[LISTENER_FLAG] = "true";
   registerPersistentSaveChatMessageHook();
 
-  root.addEventListener(
-    "click",
-    async (event) => {
-      if (!game.settings.get(MODULE.ID, "enableMetamagicAutomation")) return;
-      const button = event.target?.closest?.(SAVE_BUTTON_SELECTOR);
-      if (!button) return;
-      const message = getMessageFromEvent(event);
-      if (!message) return;
-      const metamagicFlags = message.flags?.[MODULE.ID]?.metamagic ?? {};
-      if (!metamagicFlags.persistent && !metamagicFlags.dazing) return;
+  root.addEventListener("click", async event => {
+    const button = event.target?.closest?.(SAVE_BUTTON_SELECTOR);
+    if (!button || button.dataset?.as === "speaker") return;
+    const message = getMessageFromEvent(event) ?? renderedMessage;
+    if (!message) return;
+    const save = actionCardSaveData(message, button);
+    if (!save) return;  
+    const metamagic = game.settings.get(MODULE.ID, "enableMetamagicAutomation")
+      ? message.flags?.[MODULE.ID]?.metamagic ?? {} : {};
+    const selected = getSelectedTokens();
+    const stored = savedActionSaveTargets(message);
+    const hasMetamagic = metamagic.persistent || metamagic.dazing;
 
-      const saveType = button.dataset?.save;
-      const dc = Number(button.dataset?.dc ?? 0);
-      if (!saveType || !Number.isFinite(dc)) return;
+    if (!selected.length && stored === null && !hasMetamagic) return;
 
-      event.preventDefault();
-      event.stopImmediatePropagation();
-
-      const targets = await getTargetsFromSetting(message);
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const key = message.uuid ?? message.id;
+    if (ACTIVE_SAVE_CLICKS.has(key)) return;
+    ACTIVE_SAVE_CLICKS.add(key);
+    const wasDisabled = button.disabled;
+    button.disabled = true;
+    try {
+      const targets = selected.length ? selected : stored !== null
+        ? await resolveTargetsFromMessage(stored)
+        : game.user?.character ? [game.user.character] : [];
       if (!targets.length) {
-        const mode = game.settings.get(MODULE.ID, "persistentSpellTargetMode");
-        ui.notifications.warn(getNoTargetsMessage(mode));
+        ui.notifications.warn(game.i18n.localize("NAS.chatSaves.NoEligibleTargets"));
         return;
       }
-
+      let noSound = false;
       for (const target of targets) {
-        await rollMetamagicSaveForTarget(target, saveType, dc, {
-          persistent: Boolean(metamagicFlags.persistent),
-          dazing: Boolean(metamagicFlags.dazing),
-          dazingRounds: metamagicFlags.dazingRounds,
-          dazingSpellName: metamagicFlags.dazingSpellName,
-        });
+        try {
+          await rollMetamagicSaveForTarget(target, save.type, save.dc, {
+            event, noSound, reference: message.uuid,
+            patternEffect: message.flags?.[MODULE.ID]?.patternEffect?.version === 1
+              ? message.flags[MODULE.ID].patternEffect.pattern : undefined,
+            persistent: Boolean(metamagic.persistent), dazing: Boolean(metamagic.dazing),
+            dazingRounds: metamagic.dazingRounds, dazingSpellName: metamagic.dazingSpellName
+          });
+        } catch (error) {
+          console.error(`${MODULE.ID} | Failed to roll action save`, error);
+          ui.notifications.error(game.i18n.localize("PF1.Error.NoSave"));
+        }
+        noSound = true;
       }
-    },
-    true
-  );
+    } finally {
+      button.disabled = wasDisabled;
+      ACTIVE_SAVE_CLICKS.delete(key);
+    }
+  }, true);
 }

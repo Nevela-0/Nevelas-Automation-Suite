@@ -4,6 +4,15 @@ import {
   rollDataWithRuntimeLevels,
 } from "./spellLevels.js";
 
+export function refreshSpellSaveDc(action, context) {
+  if (!Number.isFinite(context?.save?.nativeDc) || typeof action?.action?.getDC !== "function") return;
+  const dc = action.action.getDC(action.shared?.rollData ?? {});
+  if (!Number.isFinite(dc)) return;
+  context.save.dc += dc - context.save.nativeDc;
+  context.save.nativeDc = dc;
+  context.save.evaluated = { raw: context.save.dc, total: context.save.dc };
+}
+
 async function evaluateFormula(rawValue, rollData) {
   const value = rawValue ?? "";
   if (value === "" || value === null || value === undefined) {
@@ -87,6 +96,22 @@ function parseMetamagicNames(formData) {
   }
 }
 
+function parseMetamagicSources(formData) {
+  const raw = formData?.metamagicSources;
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((source) => ({
+      type: (source?.type ?? "").toString(),
+      itemUuid: (source?.itemUuid ?? "").toString(),
+      metamagicName: (source?.metamagicName ?? "").toString()
+    })).filter((source) => source.metamagicName);
+  } catch {
+    return [];
+  }
+}
+
 function parseMetamagicOptions(formData) {
   const raw = formData?.metamagicOptions;
   if (!raw) return {};
@@ -120,6 +145,34 @@ function parseFeatOptions(formData) {
   }
 }
 
+export async function refreshSpellCasterLevelData(action, context) {
+  if (!context) return false;
+  const casterLevel = getRuntimeCasterLevel(action);
+  if (context.casterLevel === casterLevel) return false;
+  const rollData = rollDataWithRuntimeLevels(action.shared?.rollData ?? {}, {
+    casterLevel,
+    spellLevel: context.spellLevel?.effective ?? getRuntimeSpellLevel(action),
+  });
+  context.casterLevel = casterLevel;
+
+  const dependsOnCl = value => typeof value === "string" && /@cl\b/.test(value);
+  if (dependsOnCl(context.duration?.value)) {
+    context.duration.evaluated = await evaluateFormula(context.duration.value, rollData);
+  }
+  for (const key of ["value", "minValue"]) {
+    const formula = context.range?.range?.[key];
+    if (!dependsOnCl(formula)) continue;
+    context.range.evaluated ??= {};
+    context.range.evaluated[key] = await evaluateFormula(formula, rollData);
+  }
+  if (Number.isFinite(context.save?.nativeDc)) {
+    refreshSpellSaveDc(action, context);
+  } else if (dependsOnCl(context.save?.dc)) {
+    context.save.evaluated = await evaluateFormula(context.save.dc, rollData);
+  }
+  return true;
+}
+
 export async function collectSpellActionData(action) {
   const casterLevel = getRuntimeCasterLevel(action);
   const effectiveSpellLevel = getRuntimeSpellLevel(action);
@@ -127,7 +180,7 @@ export async function collectSpellActionData(action) {
     casterLevel,
     spellLevel: effectiveSpellLevel,
   });
-  const duration = action.action?.duration ?? action.item?.system?.duration ?? {};
+  const duration = (action.action?.duration ?? action.item?.system?.duration ?? {});
   const durationEval = await evaluateFormula(duration.value, rollData);
 
   const range = action.action?.range ?? action.item?.system?.range ?? {};
@@ -135,7 +188,12 @@ export async function collectSpellActionData(action) {
   const rangeMinValueEval = await evaluateFormula(range.minValue, rollData);
 
   const save = action.action?.save ?? action.item?.system?.save ?? {};
-  const saveDcEval = await evaluateFormula(save.dc, rollData);
+
+  const nativeDc = typeof action.action?.getDC === "function" ? action.action.getDC(rollData) : null;
+  const saveDc = Number.isFinite(nativeDc) ? nativeDc : save.dc ?? "";
+  const saveDcEval = Number.isFinite(nativeDc)
+    ? { raw: saveDc, total: saveDc }
+    : await evaluateFormula(saveDc, rollData);
 
   const areaString = action.action?.area;
   const measureTemplateEnabled = action.formData && action.formData["measure-template"];
@@ -143,13 +201,14 @@ export async function collectSpellActionData(action) {
   const isAreaOfEffect = !!areaString || (measureTemplateEnabled && templateSize > 5);
 
   const metamagicNames = parseMetamagicNames(action.formData);
+  const metamagicSources = parseMetamagicSources(action.formData);
   const metamagicOptions = parseMetamagicOptions(action.formData);
-
   return {
     actor: action.actor ?? action.token?.actor ?? null,
     item: action.item ?? null,
     formData: action.formData ?? {},
     metamagicNames,
+    metamagicSources,
     metamagicOptions,
     traitOptions: parseTraitOptions(action.formData),
     featOptions: parseFeatOptions(action.formData),
@@ -184,7 +243,8 @@ export async function collectSpellActionData(action) {
       },
     },
     save: {
-      dc: save.dc ?? "",
+      dc: saveDc,
+      nativeDc,
       type: save.type ?? "",
       description: save.description ?? "",
       harmless: Boolean(save.harmless),
@@ -202,6 +262,10 @@ export async function collectSpellActionData(action) {
       measureTemplateEnabled: Boolean(measureTemplateEnabled),
       templateSize,
       isAreaOfEffect,
+    },
+    measureTemplate: {
+      type: action.action?.measureTemplate?.type ?? "",
+      size: action.action?.measureTemplate?.size ?? "",
     },
     attacks: {
       hasAttack: Boolean(action.item?.hasAttack),

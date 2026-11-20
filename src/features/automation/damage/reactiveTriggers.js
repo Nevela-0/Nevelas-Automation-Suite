@@ -3,6 +3,7 @@ import { getStoredBuffCasterLevel } from "../utils/spellLevels.js";
 import { createNasId } from "../utils/nasIds.js";
 import { chatMessageStyle } from "../../../common/foundryCompat.js";
 import { toDamagePartModel } from "./instances.js";
+
 import { applyReactiveDamageToActor, toggleReactiveBuff, toggleReactiveCondition } from "../../../integration/moduleSockets.js";
 import { actorUsesWoundsVigor, isWvNoWoundsActor } from "../utils/woundsVigor.js";
 import {
@@ -10,7 +11,7 @@ import {
   getCreatureTypeState,
   normalizeAlignmentRequirementKind
 } from "../utils/creatureTypeUtils.js";
-import { grantNasTemporaryHp } from "../buffs/temporaryHpPools.js";
+import { DEFAULT_TEMP_HP_BUFF_UUID, grantNasTemporaryHp } from "../buffs/temporaryHpPools.js";
 import {
   isNasFeatureLikeItem,
   isNasFeatureLikeItemActive,
@@ -31,12 +32,10 @@ import {
 
 const REACTIVE_FLAG_KEY = "itemReactiveEffects";
 const ON_STRUCK_POOL_KEY = "onStruckPool";
-const DEFAULT_TEMP_HP_BUFF_UUID = "Compendium.nevelas-automation-suite.Buffs.Item.ZlhaaFOfhZ3v2ct1";
 
 function localize(path) {
   return game.i18n.localize(`NAS.reactive.${path}`);
 }
-
 
 function escHtml(value) {
   return foundry.utils.escapeHTML(String(value ?? ""));
@@ -407,12 +406,12 @@ function buildReactiveLineHtml({ effect, magnitude, affectedActor, triggerKind: 
 
   if (effectType === "healAttacker") {
     if (effect?.asTemporaryHp === true) {
-      return game.i18n.format("NAS.reactive.chatSummary.lineTemporaryHp", { actor, amount: magnitude });
+      return game.i18n.format(actorUsesWoundsVigor(affectedActor) ? "NAS.reactive.chatSummary.lineTemporaryVigor" : "NAS.reactive.chatSummary.lineTemporaryHp", { actor, amount: magnitude });
     }
     return game.i18n.format("NAS.reactive.chatSummary.lineHeal", { actor, amount: magnitude });
   }
   if (effectType === "grantTemporaryHp") {
-    return game.i18n.format("NAS.reactive.chatSummary.lineTemporaryHp", { actor, amount: magnitude });
+    return game.i18n.format(actorUsesWoundsVigor(affectedActor) ? "NAS.reactive.chatSummary.lineTemporaryVigor" : "NAS.reactive.chatSummary.lineTemporaryHp", { actor, amount: magnitude });
   }
   if (effectType === "damageAttacker") {
     const types = escHtml(formatDamageTypeNames(effect?.damageTypes));
@@ -1140,18 +1139,18 @@ async function updateOnStruckPool(item, remaining, pool) {
 
 async function applyOnStruckDamageRules({ sourceActor, targetActor, entry, finalDamage, options, triggerMeta }) {
   const rules = entry?.rules ?? [];
-  if (!rules.length) return [];
+  const eligible = rule => rule?.enabled !== false
+    && (!rule.onlyIfDamaged || Math.max(0, Number(finalDamage) || 0) > 0)
+    && sourceMatchesOnStruckRule(rule, options) && creatureMatchesOnStruckRule(rule, sourceActor)
+    && alignmentMatchesOnStruckRule(rule, sourceActor);
+  if (!rules.some(eligible)) return [];
+
   const lineHtmls = [];
   const rollData = buildRollData({ sourceActor, targetActor, ownerItem: triggerMeta.ownerItem, finalDamage });
   const pool = entry.pool ?? {};
 
   for (const rule of rules) {
-    if (rule?.enabled === false) continue;
-    if (rule.onlyIfDamaged && Math.max(0, Number(finalDamage) || 0) <= 0) continue;
-    if (!sourceMatchesOnStruckRule(rule, options)) continue;
-    if (!creatureMatchesOnStruckRule(rule, sourceActor)) continue;
-    if (!alignmentMatchesOnStruckRule(rule, sourceActor)) continue;
-
+    if (!eligible(rule)) continue;
     let magnitude = await evaluateMagnitude({ ...rule, type: "damageAttacker" }, { finalDamage, rollData });
     if (magnitude <= 0) continue;
     const saveResult = await resolveSavingThrowResult(rule, sourceActor, { rollData }, options);

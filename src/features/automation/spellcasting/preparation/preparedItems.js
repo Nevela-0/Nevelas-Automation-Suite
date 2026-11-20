@@ -1,4 +1,7 @@
+import { createNasId } from "../../utils/nasIds.js";
+import { clonePlainData } from "../../../../common/foundryCompat.js";
 import { MODULE } from "../../../../common/module.js";
+import { isSpellbookManagementEnabled } from "./preferences.js";
 import {
   AUTO_SUFFIX_MODE,
   MANUAL_SUFFIX_MODE,
@@ -23,21 +26,10 @@ function normalizeId(value) {
   return (value ?? "").toString().trim();
 }
 
-function cloneData(value) {
-  if (globalThis.foundry?.utils?.deepClone) return foundry.utils.deepClone(value);
-  return JSON.parse(JSON.stringify(value ?? null));
-}
-
 function coerceNonNegativeInteger(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return 0;
   return Math.max(0, Math.trunc(number));
-}
-
-function randomId() {
-  return globalThis.foundry?.utils?.randomID?.()
-    ?? globalThis.crypto?.randomUUID?.()
-    ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 function getActorItems(actor) {
@@ -89,7 +81,7 @@ function normalizePreparedSpellbook(book) {
 
 function normalizeCustomPreparedEntry(entry) {
   if (!entry || typeof entry !== "object") return null;
-  const id = normalizeId(entry.id) || `entry-${randomId()}`;
+  const id = normalizeId(entry.id) || `entry-${createNasId()}`;
   const knownSpellId = normalizeId(entry.knownSpellId);
   if (!knownSpellId) return null;
 
@@ -184,12 +176,14 @@ function makePreparedItemFlag(bookId, knownSpell, sourceItem, {
   };
 }
 
-function makeGeneratedPreparedItemData(bookId, knownSpell, preparedEntry, sourceItem, count, mode) {
-  const data = cloneData(sourceItem?.toObject?.() ?? sourceItem ?? {});
+export function makeGeneratedPreparedItemData(bookId, knownSpell, preparedEntry, sourceItem, count, mode) {
+  const data = clonePlainData(sourceItem?.toObject?.() ?? sourceItem ?? {});
   const preparedFlag = makePreparedItemFlag(bookId, knownSpell, sourceItem, {
     preparedEntry
   });
   delete data._id;
+
+  delete data.ownership;
 
   data.type = "spell";
   data.name = buildPreparedEntryDisplayName(sourceItem?.name || knownSpell?.name || data.name || "", preparedEntry)
@@ -204,6 +198,8 @@ function makeGeneratedPreparedItemData(bookId, knownSpell, preparedEntry, source
 
   if (mode === "hybrid") {
     data.system.preparation.value = count > 0 ? 1 : 0;
+
+    data.system.preparation.max = data.system.preparation.value;
   } else {
     data.system.preparation.value = count;
     data.system.preparation.max = count;
@@ -222,7 +218,7 @@ function buildGeneratedPreparedItemUpdate(item, bookId, knownSpell, preparedEntr
   return data;
 }
 
-function getSourceItemForKnownSpell(actor, bookId, knownSpell) {
+export function getSourceItemForKnownSpell(actor, bookId, knownSpell) {
   const source = getActorItem(actor, knownSpell?.sourceItemId);
   return isLiveSourceSpell(source, bookId) ? source : null;
 }
@@ -256,7 +252,8 @@ export function getPreparedSpellbook(actor, bookId) {
 export function isSpellbookPreparedItemsManaged(actor, bookId) {
   const normalizedBookId = normalizeId(bookId);
   if (!normalizedBookId) return false;
-  return getPreparedSpellbooksFlag(actor).books[normalizedBookId]?.managed === true;
+  return isSpellbookManagementEnabled(actor, normalizedBookId)
+    && getPreparedSpellbooksFlag(actor).books[normalizedBookId]?.managed === true;
 }
 
 export function getCustomPreparedSpellEntries(actor, bookId) {
@@ -309,7 +306,7 @@ export async function addPreparedSpellVariant(actor, bookId, knownSpell, { suffi
   const maxSort = existingForSpell.reduce((max, entry) => Math.max(max, Number(entry.sort) || 0), -1);
   const originalSpellLevel = getSpellLevel({ level: knownSpell?.level }, 0);
   const entry = normalizeCustomPreparedEntry({
-    id: `entry-${randomId()}`,
+    id: `entry-${createNasId()}`,
     knownSpellId,
     variant: CUSTOM_PREPARED_VARIANT,
     suffix,
@@ -520,6 +517,9 @@ export async function clearSourceSpellPreparationCounts(actor, bookId) {
 export async function syncGeneratedPreparedSpellItems(actor, bookId, knownSpells, preparedEntries, desiredById, mode) {
   const normalizedBookId = normalizeId(bookId);
   if (!normalizedBookId) return { created: 0, updated: 0, deleted: 0 };
+  if (!isSpellbookManagementEnabled(actor, normalizedBookId)) {
+    throw new Error("NAS management is disabled for this spellbook. Enable it in the spellbook options before applying preparation.");
+  }
 
   const knownSpellMap = new Map((knownSpells ?? [])
     .map((knownSpell) => [normalizeId(knownSpell?.id), knownSpell])

@@ -1,6 +1,7 @@
 import { MODULE } from "../common/module.js";
 import { applyMetamagicDamageTransforms } from "../features/automation/metamagic/metamagicDamageTransforms.js";
 import { GRAPPLE_CMB_MARKER } from "../features/automation/conditions/grappled/grappled.js";
+import { getPreparedVariantPreviewSpellLevel } from "../features/automation/spellcasting/preparation/preparedVariantActionUse.js";
 
 function getManeuverActionType(itemAction) {
   const actionType = itemAction?.actionType;
@@ -36,6 +37,21 @@ export function registerItemActionWrappers() {
     }));
     return;
   }
+
+  libWrapper.register(
+    MODULE.ID,
+    "pf1.components.ItemAction.prototype.getRollData",
+    function (wrapped, ...args) {
+      const rollData = wrapped.apply(this, args);
+      const spellLevel = getPreparedVariantPreviewSpellLevel(this.item);
+      if (spellLevel === null || !rollData) return rollData;
+
+      const previewData = { ...rollData, sl: spellLevel };
+      if (this.hasSave) previewData.dc = this.getDC(previewData);
+      return previewData;
+    },
+    "WRAPPER"
+  );
 
   libWrapper.register(
     MODULE.ID,
@@ -116,6 +132,7 @@ export function registerItemActionWrappers() {
             this.item.system.masterwork = false;
             didOverrideMasterwork = true;
           } catch (_err) {
+
           }
         }
 
@@ -136,8 +153,7 @@ export function registerItemActionWrappers() {
         if (didOverrideMasterwork && this.item?.system && this.item.system.masterwork !== undefined) {
           try {
             this.item.system.masterwork = originalMasterwork;
-          } catch (_err) {
-          }
+          } catch (_err) {}
         }
       }
     },

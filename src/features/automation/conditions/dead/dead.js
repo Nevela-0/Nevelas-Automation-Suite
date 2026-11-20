@@ -1,3 +1,4 @@
+import { setHealthCondition } from '../healthConditions.js';
 import { MODULE } from '../../../../common/module.js';
 import { getPrimaryHealthValue, hasPrimaryHealthUpdate } from '../../utils/healthUpdates.js';
 import { isWoundsVigorActive } from '../../utils/woundsVigor.js';
@@ -10,9 +11,9 @@ export async function handleDeadOnUpdate(actorDocument, change) {
     const newHealth = getPrimaryHealthValue(actorDocument, change);
     const conScore = actorDocument.system.abilities.con.total;
     const isNPC = actorDocument.type === 'npc';
-    
+
     let shouldApply = false;
-    
+
     if (deadConditionSetting === 'everyone') {
       shouldApply = isWv ? newHealth <= 0 : newHealth <= -conScore;
     } else if (deadConditionSetting === 'npc' && isNPC) {
@@ -26,13 +27,15 @@ export async function handleDeadOnUpdate(actorDocument, change) {
         shouldApply = isWv ? newHealth <= 0 : newHealth <= -conScore;
       }
     }
-    
+
     if (shouldApply) {
       await actorDocument.setCondition('dead', {overlay: true});
-      await actorDocument.setCondition('prone', true); 
-      await actorDocument.setCondition('dying', false);
-      await actorDocument.setCondition('staggered', false);
-      await actorDocument.setCondition('unconscious', true);
+      await actorDocument.setCondition('prone', true);  
+
+      await setHealthCondition(actorDocument, 'dying', false);
+      await setHealthCondition(actorDocument, 'stable', false);
+      await setHealthCondition(actorDocument, 'staggered', false);
+      await setHealthCondition(actorDocument, 'unconscious', true);
     }
   }
 
@@ -53,6 +56,3 @@ export async function handleDeadOnUpdate(actorDocument, change) {
     }
   }
 }
-
-
-

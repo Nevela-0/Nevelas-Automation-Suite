@@ -4,10 +4,6 @@ function normalizeSaveTypeToken(raw) {
   return (raw ?? "").toString().trim().toLowerCase();
 }
 
-/**
- * True when the spell/action exposes a saving throw (fort/ref/will, etc.).
- * PF1 omits or clears `save.type` when the spell does not allow a save.
- */
 export function contextHasSavingThrow(context, action) {
   const candidates = [
     context?.save?.type,
@@ -22,10 +18,6 @@ export function contextHasSavingThrow(context, action) {
   return false;
 }
 
-/**
- * Snapshot pre-modifier DC for chat "Base DC" when no metamagic selections run
- * (early return) or other paths skip the main baseDc assignment.
- */
 export function ensureSpellSaveBaseDcSnapshot(action, context) {
   if (action?.item?.type !== "spell") return;
   if (!contextHasSavingThrow(context, action)) return;
@@ -39,11 +31,6 @@ export function ensureSpellSaveBaseDcSnapshot(action, context) {
   context.metamagic.baseSaveDc = v;
 }
 
-/**
- * Numeric save DC for feat bonuses (Maleficium, Eldritch Researcher, etc.).
- * `context.save.dc` from collectSpellActionData is the raw item field (often a formula
- * or empty). Coercing it with Number() yields 0 or NaN; use evaluated roll + getDC first.
- */
 export function resolveFeatSaveDcBase(action, context) {
   const contextDcNum = context?.save?.dc;
   if (typeof contextDcNum === "number" && Number.isFinite(contextDcNum)) {

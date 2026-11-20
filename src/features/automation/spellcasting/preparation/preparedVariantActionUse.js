@@ -1,5 +1,7 @@
+import { clonePlainData } from "../../../../common/foundryCompat.js";
 import { resolveMetamagicNameFromDatabase } from "../../metamagic/metamagic.js";
 import {
+  HEIGHTEN_SPELL_KEY,
   buildMetamagicOptionsFromSelections,
   calculatePreparedSlotIncrease,
   normalizeMetamagicOptions,
@@ -15,11 +17,6 @@ const MAX_SPELL_LEVEL = 9;
 
 function normalizeId(value) {
   return (value ?? "").toString().trim();
-}
-
-function cloneData(value) {
-  if (globalThis.foundry?.utils?.deepClone) return foundry.utils.deepClone(value);
-  return JSON.parse(JSON.stringify(value ?? null));
 }
 
 function getSpellLevel(value, fallback = 0) {
@@ -88,13 +85,27 @@ function buildPreparedMetamagicOptions(selections, flagOptions, originalSpellLev
 function buildPreparedSpellContextFlag(flag, selections, metamagicOptions, originalSpellLevel) {
   const preparedSlotLevel = getSpellLevel(flag?.preparedSlotLevel, originalSpellLevel);
   return {
-    ...cloneData(flag),
+    ...clonePlainData(flag),
     originalSpellLevel,
     preparedSlotLevel,
     preparedSlotIncrease: getPreparedSlotIncrease(originalSpellLevel, preparedSlotLevel, selections),
     metamagic: selections,
     metamagicOptions
   };
+}
+
+export function normalizePreparedVariantRollData(actionUse) {
+  if (!actionUse || typeof actionUse !== "object") return;
+  const item = actionUse.item;
+  if (!isGeneratedPreparedSpellItem(item)) return;
+  const flag = getGeneratedPreparedSpellItemFlag(item);
+  if (flag?.generated !== true) return;
+
+  const originalSpellLevel = getSpellLevel(flag.originalSpellLevel, item?.system?.level ?? 0);
+  const offset = Number.parseInt(actionUse.formData?.["sl-offset"] ?? actionUse.shared?.formData?.["sl-offset"] ?? 0);
+  actionUse.shared ??= {};
+  actionUse.shared.rollData ??= {};
+  actionUse.shared.rollData.sl = originalSpellLevel + (Number.isFinite(offset) ? offset : 0);
 }
 
 export function getPreparedVariantDialogState(item) {
@@ -160,7 +171,7 @@ export function getPreparedVariantDialogState(item) {
   return {
     active: true,
     generated: true,
-    flag: cloneData(flag),
+    flag: clonePlainData(flag),
     originalSpellLevel,
     preparedSlotLevel,
     preparedSlotIncrease: getPreparedSlotIncrease(originalSpellLevel, preparedSlotLevel, preparedSelections),
@@ -169,6 +180,15 @@ export function getPreparedVariantDialogState(item) {
     preparedMetamagicNames,
     preparedMetamagicKeys
   };
+}
+
+export function getPreparedVariantPreviewSpellLevel(item) {
+  const state = getPreparedVariantDialogState(item);
+  if (!state.active) return null;
+  const heightened = state.metamagic.some((selection) => selection.key === HEIGHTEN_SPELL_KEY);
+  return heightened
+    ? getSpellLevel(state.metamagicOptions.heightenSpellLevel, state.originalSpellLevel)
+    : state.originalSpellLevel;
 }
 
 export function mergePreparedVariantMetamagicIntoContext(actionUse, context) {

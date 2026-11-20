@@ -1,5 +1,6 @@
 import { MODULE } from "../../../common/module.js";
-import { chatMessageStyle } from "../../../common/foundryCompat.js";
+import { chatMessageStyle, escapeHtmlForSheet } from "../../../common/foundryCompat.js";
+
 import {
   canUserSeeTokenEffectBadge,
   refreshTokenEffectBadgesForActor,
@@ -14,7 +15,7 @@ import {
   normalizeAbsorptionPresetEnergyType,
   normalizeAbsorptionPresetId
 } from "./damageAbsorptionPresets.js";
-import { getNasTemporaryHpTotal, hpBarDataWithNasTemporaryHp } from "./temporaryHpPools.js";
+import { hpBarDataWithNasTemporaryHp } from "./temporaryHpPools.js";
 
 const REACTIVE_FLAG_KEY = "itemReactiveEffects";
 const GRANTED_DEFENSE_FLAG = "grantedDefenses";
@@ -334,7 +335,8 @@ function rollDataForAbsorption(actor, item, context = {}) {
     nas: {
       ...(actorData?.nas ?? {}),
       incomingDamage: Math.max(0, Number(context.incomingDamage) || 0),
-      finalDamage: Math.max(0, Number(context.finalDamage) || 0)
+      finalDamage: Math.max(0, Number(context.finalDamage) || 0),
+      matchingDamage: Math.max(0, Number(context.matchingDamage) || 0)
     }
   };
   return rollData;
@@ -365,12 +367,7 @@ function typeValuesFrom(value) {
 function damageTypesFromOptions(sourceOptions = {}, applyDamageOptions = {}) {
   const ids = new Set();
   for (const instance of sourceOptions?.instances ?? applyDamageOptions?.instances ?? []) {
-    for (const key of ["typeIds", "types", "type", "damageType", "damageTypes"]) {
-      for (const id of typeValuesFrom(instance?.[key])) {
-        const normalized = normalizePriorityType(id);
-        if (normalized) ids.add(normalized);
-      }
-    }
+    for (const id of normalizedDamageAbsorptionTypesForInstance(instance)) ids.add(id);
   }
   return [...ids];
 }
@@ -405,7 +402,9 @@ function isAbsorptionRawConfigured(raw = {}) {
 
 function normalizedDamageAbsorptionTypesForInstance(instance) {
   const typeIds = new Set();
-  for (const key of ["typeIds", "types", "type", "damageType", "damageTypes"]) {
+  const keys = ["typeIds", "types", "damageType", "damageTypes"];
+  if (instance?.typeIds == null && instance?.types == null) keys.push("type");
+  for (const key of keys) {
     for (const id of typeValuesFrom(instance?.[key])) {
       const normalized = normalizePriorityType(id);
       if (normalized) typeIds.add(normalized);
@@ -438,6 +437,7 @@ function preferredDamageAbsorptionInstances(sourceOptions = {}, applyDamageOptio
 }
 
 function buildDamageAbsorptionBuckets(sourceOptions = {}, applyDamageOptions = {}, incoming = 0) {
+  if (incoming <= 0) return [];
   const instances = preferredDamageAbsorptionInstances(sourceOptions, applyDamageOptions)
     .map((instance, index) => ({
       index,
@@ -448,22 +448,47 @@ function buildDamageAbsorptionBuckets(sourceOptions = {}, applyDamageOptions = {
   const total = instances.reduce((sum, instance) => sum + instance.value, 0);
   if (total <= 0) return [];
   const scale = incoming > 0 && total !== incoming ? incoming / total : 1;
-  return instances.map((instance) => ({
+  const buckets = instances.map((instance) => ({
     ...instance,
     originalValue: instance.value,
-    value: Math.max(0, Math.floor(instance.value * scale))
-  })).filter((instance) => instance.value > 0);
+    value: Math.max(0, Math.floor(instance.value * scale)),
+    drReduction: 0,
+    erReduction: 0
+  }));
+  return buckets.filter((bucket) => bucket.value > 0)
+    .map((bucket) => ({ ...bucket, remainingValue: bucket.value }));
+}
+
+function damageAbsorptionInstanceResult(damageBuckets, value) {
+  const remainingInstances = damageBuckets.filter((bucket) => bucket.remainingValue > 0)
+    .map((bucket) => ({ value: bucket.remainingValue, types: [...bucket.typeIds] }));
+
+  const untyped = value - remainingInstances.reduce((sum, instance) => sum + instance.value, 0);
+  if (untyped > 0) remainingInstances.push({ value: untyped, types: ["untyped"] });
+  return {
+    remainingInstances,
+    absorbedInstances: damageBuckets.map((bucket) => ({
+      types: [...bucket.typeIds], drReduction: bucket.drReduction, erReduction: bucket.erReduction
+    }))
+  };
 }
 
 function matchingDamageRemainingForRule(rule, damageBuckets = []) {
-  if (!damageBuckets.length) return null;
+  if (!damageBuckets.length) {
+
+    const hasTypedFilter = (rule?.damageTypeIds ?? []).some((type) => {
+      const id = normalizePriorityType(type);
+      return id && id !== "untyped";
+    });
+    return hasTypedFilter ? 0 : null;
+  }
   return damageBuckets.reduce((total, bucket) => {
     if (!absorptionRuleMatchesDamageTypeSet(rule, bucket.typeIds)) return total;
     return total + Math.max(0, Number(bucket.value) || 0);
   }, 0);
 }
 
-function spendMatchingDamageForRule(rule, damageBuckets = [], amount = 0) {
+function spendMatchingDamageForRule(rule, damageBuckets = [], amount = 0, removeDamage = true) {
   let remaining = Math.max(0, Number(amount) || 0);
   let spent = 0;
   if (!damageBuckets.length || remaining <= 0) return spent;
@@ -472,6 +497,10 @@ function spendMatchingDamageForRule(rule, damageBuckets = [], amount = 0) {
     if (!absorptionRuleMatchesDamageTypeSet(rule, bucket.typeIds)) continue;
     const spend = Math.min(Math.max(0, Number(bucket.value) || 0), remaining);
     bucket.value = Math.max(0, Number(bucket.value) || 0) - spend;
+    if (removeDamage) bucket.remainingValue -= spend;
+    if (rule.action === "reduce") {
+      bucket[rule.defenseKind === "er" ? "erReduction" : "drReduction"] += spend;
+    }
     remaining -= spend;
     spent += spend;
   }
@@ -691,7 +720,7 @@ export async function resetDamageAbsorptionBuff(item) {
   return true;
 }
 
-async function updateAbsorptionBuff(item, remaining, { dischargeAtZero = true } = {}) {
+async function updateAbsorptionBuff(item, remaining, { dischargeAtZero = true, damageOptions = {} } = {}) {
   const updates = {
     [`flags.${MODULE.ID}.${REACTIVE_FLAG_KEY}.absorption.remaining`]: Math.max(0, Math.floor(Number(remaining) || 0))
   };
@@ -716,7 +745,7 @@ function hpBarAbsorptionValue(token, data) {
 function drawHpBarWithAbsorption(token, number, bar, data, absorption = 0) {
   const absorptionValue = Math.max(0, Number(absorption) || 0);
   const dataTemp = Math.max(0, Number(data?.temp) || 0);
-  if (absorptionValue <= 0 && dataTemp <= 0 && getNasTemporaryHpTotal(token?.actor) <= 0) return;
+  if (absorptionValue <= 0 && dataTemp <= 0) return;
   const w = Number(token.w) || Number(token.document?.width) || Number(data.max) || 0;
   if (w <= 0) return;
 
@@ -724,8 +753,8 @@ function drawHpBarWithAbsorption(token, number, bar, data, absorption = 0) {
   const underline = token._getBarUnderline?.(data);
   const boostlessMax = Math.max(0, Number(data.max) || 0);
   const value = Number(data.value);
-  const nasTempHp = getNasTemporaryHpTotal(token?.actor);
-  const boostValue = Math.max(0, Number(boost?.value) || 0, dataTemp, nasTempHp);
+
+  const boostValue = Math.max(0, Number(boost?.value) || 0, dataTemp);
   const protectedValue = value + absorptionValue;
   const visualMax = Math.max(boostlessMax, value + boostValue + absorptionValue);
   if (visualMax <= 0) return;
@@ -807,14 +836,15 @@ export async function applyDamageAbsorption({
   sourceOptions = {}
 } = {}) {
   const incoming = Math.max(0, Math.floor(Number(value) || 0));
+  const damageBuckets = buildDamageAbsorptionBuckets(sourceOptions, applyDamageOptions, incoming);
   if (!actor || incoming <= 0) {
-    return { value: incoming, convertedNonlethal: 0, nonlethalReduction: 0, damageReduction: 0, drReduction: 0, erReduction: 0, convertedDamage: [], changed: false };
+    return { value: incoming, convertedNonlethal: 0, nonlethalReduction: 0, damageReduction: 0, drReduction: 0, erReduction: 0, convertedDamage: [], changed: false, ...damageAbsorptionInstanceResult(damageBuckets, incoming) };
   }
 
   const buffs = getAbsorptionBuffs(actor);
   const isNonlethal = Boolean(sourceOptions?.asNonlethal || applyDamageOptions?.asNonlethal);
   if (!buffs.length) {
-    return { value: incoming, convertedNonlethal: 0, nonlethalReduction: 0, damageReduction: 0, drReduction: 0, erReduction: 0, convertedDamage: [], changed: false };
+    return { value: incoming, convertedNonlethal: 0, nonlethalReduction: 0, damageReduction: 0, drReduction: 0, erReduction: 0, convertedDamage: [], changed: false, ...damageAbsorptionInstanceResult(damageBuckets, incoming) };
   }
 
   let valueOut = incoming;
@@ -826,7 +856,6 @@ export async function applyDamageAbsorption({
   let dischargeSpent = 0;
   const convertedDamage = [];
   const events = [];
-  const damageBuckets = buildDamageAbsorptionBuckets(sourceOptions, applyDamageOptions, incoming);
 
   for (const buff of buffs) {
     const config = absorptionConfig(buff);
@@ -855,10 +884,13 @@ export async function applyDamageAbsorption({
         continue;
       }
 
-
+      const matchingDamageRemaining = matchingDamageRemainingForRule(rule, damageBuckets);
+      const eligibleDamage = matchingDamageRemaining == null ? valueOut : Math.min(valueOut, matchingDamageRemaining);
+      if (eligibleDamage <= 0) continue;
       const amount = await evaluateFormula(rule.amountFormula, actor, buff, {
         incomingDamage: valueOut,
-        finalDamage: valueOut
+        finalDamage: valueOut,
+        matchingDamage: eligibleDamage
       });
       if (amount <= 0) continue;
 
@@ -867,9 +899,6 @@ export async function applyDamageAbsorption({
         remaining = await remainingFor(buff, config, actor, valueOut);
         if (remaining <= 0) continue;
       }
-      const matchingDamageRemaining = matchingDamageRemainingForRule(rule, damageBuckets);
-      const eligibleDamage = matchingDamageRemaining == null ? valueOut : Math.min(valueOut, matchingDamageRemaining);
-      if (eligibleDamage <= 0) continue;
 
       if (rule.action === "reduce") {
         const reduced = Math.min(valueOut, eligibleDamage, amount, rule.spendPool ? remaining : valueOut);
@@ -882,7 +911,7 @@ export async function applyDamageAbsorption({
         if (reductionKind === "er") erReduction += reduced;
         else drReduction += reduced;
         if (rule.spendPool) {
-          await updateAbsorptionBuff(buff, remaining - reduced, { dischargeAtZero: config.dischargeAtZero });
+          await updateAbsorptionBuff(buff, remaining - reduced, { dischargeAtZero: config.dischargeAtZero, damageOptions: sourceOptions });
         }
         if (config.message) {
           events.push({
@@ -903,7 +932,7 @@ export async function applyDamageAbsorption({
         spendMatchingDamageForRule(rule, damageBuckets, converted);
         convertedNonlethal += converted;
         if (rule.spendPool) {
-          await updateAbsorptionBuff(buff, remaining - converted, { dischargeAtZero: config.dischargeAtZero });
+          await updateAbsorptionBuff(buff, remaining - converted, { dischargeAtZero: config.dischargeAtZero, damageOptions: sourceOptions });
         }
         if (config.message) {
           events.push({
@@ -919,9 +948,9 @@ export async function applyDamageAbsorption({
         const spent = Math.min(valueOut, eligibleDamage, amount, rule.spendPool ? remaining : valueOut);
         if (spent <= 0) continue;
         dischargeSpent += rule.spendPool ? spent : 0;
-        spendMatchingDamageForRule(rule, damageBuckets, spent);
+        spendMatchingDamageForRule(rule, damageBuckets, spent, false);
         if (rule.spendPool) {
-          await updateAbsorptionBuff(buff, remaining - spent, { dischargeAtZero: config.dischargeAtZero });
+          await updateAbsorptionBuff(buff, remaining - spent, { dischargeAtZero: config.dischargeAtZero, damageOptions: sourceOptions });
         }
         if (config.message) {
           events.push({
@@ -941,7 +970,7 @@ export async function applyDamageAbsorption({
         spendMatchingDamageForRule(rule, damageBuckets, converted);
         convertedNonlethal += converted;
         if (rule.spendPool) {
-          await updateAbsorptionBuff(buff, remaining - converted, { dischargeAtZero: config.dischargeAtZero });
+          await updateAbsorptionBuff(buff, remaining - converted, { dischargeAtZero: config.dischargeAtZero, damageOptions: sourceOptions });
         }
         if (config.message) {
           events.push({
@@ -957,9 +986,9 @@ export async function applyDamageAbsorption({
         const spent = Math.min(valueOut, eligibleDamage, amount, rule.spendPool ? remaining : valueOut);
         if (spent <= 0) continue;
         dischargeSpent += rule.spendPool ? spent : 0;
-        spendMatchingDamageForRule(rule, damageBuckets, spent);
+        spendMatchingDamageForRule(rule, damageBuckets, spent, false);
         if (rule.spendPool) {
-          await updateAbsorptionBuff(buff, remaining - spent, { dischargeAtZero: config.dischargeAtZero });
+          await updateAbsorptionBuff(buff, remaining - spent, { dischargeAtZero: config.dischargeAtZero, damageOptions: sourceOptions });
         }
         if (config.message) {
           events.push({
@@ -979,7 +1008,7 @@ export async function applyDamageAbsorption({
         spendMatchingDamageForRule(rule, damageBuckets, converted);
         convertedDamage.push({ amount: converted, damageType: rule.convertToDamageType });
         if (rule.spendPool) {
-          await updateAbsorptionBuff(buff, remaining - converted, { dischargeAtZero: config.dischargeAtZero });
+          await updateAbsorptionBuff(buff, remaining - converted, { dischargeAtZero: config.dischargeAtZero, damageOptions: sourceOptions });
         }
         if (config.message) {
           events.push({
@@ -995,6 +1024,7 @@ export async function applyDamageAbsorption({
   }
 
   const result = {
+    ...damageAbsorptionInstanceResult(damageBuckets, valueOut),
     value: Math.max(0, valueOut),
     convertedNonlethal,
     nonlethalReduction,
@@ -1008,16 +1038,12 @@ export async function applyDamageAbsorption({
   return result;
 }
 
-function escHtml(value) {
-  return foundry.utils.escapeHTML(String(value ?? ""));
-}
-
 function actorChatName(actor) {
   return actor?.name ?? game.i18n.localize("NAS.common.labels.target");
 }
 
 function absorptionLineHtml(event) {
-  const item = escHtml(event?.itemName ?? game.i18n.localize("NAS.reactive.chatSummary.unknownBuff"));
+  const item = escapeHtmlForSheet(event?.itemName ?? game.i18n.localize("NAS.reactive.chatSummary.unknownBuff"));
   const amount = Math.max(0, Math.floor(Number(event?.amount) || 0));
   if (amount <= 0) return null;
   if (event?.type === "convertedNonlethal") {
@@ -1031,7 +1057,7 @@ function absorptionLineHtml(event) {
     return game.i18n.format("NAS.reactive.chatSummary.lineAbsorptionConvertDamage", {
       item,
       amount,
-      type: escHtml(event?.damageType ?? "untyped")
+      type: escapeHtmlForSheet(event?.damageType ?? "untyped")
     });
   }
   if (event?.type === "dischargeSpent") {
@@ -1057,10 +1083,10 @@ export function postDamageAbsorptionChatSummary({
   if (!lineHtmls.length) return false;
 
   const title = game.i18n.format("NAS.reactive.chatSummary.absorptionTitle", {
-    actor: escHtml(actorChatName(actor))
+    actor: escapeHtmlForSheet(actorChatName(actor))
   });
   const subtitle = game.i18n.format("NAS.reactive.chatSummary.absorptionSubtitle", {
-    other: escHtml(actorChatName(otherActor)),
+    other: escapeHtmlForSheet(actorChatName(otherActor)),
     incomingDamage: String(Math.max(0, Math.floor(Number(incomingDamage) || 0)))
   });
   const content = [

@@ -673,7 +673,7 @@
     border-left: 3px solid royalblue;
 } 
 
-/* NAS reactive (On Hit / On Struck) function row: label + arrow + select */
+
 .nas-onhit-effects .nas-rx-function-row,
 .nas-onstruck-effects .nas-rx-function-row {
     display: flex;

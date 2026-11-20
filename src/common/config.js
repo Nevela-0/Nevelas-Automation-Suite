@@ -1,4 +1,5 @@
 import { MODULE } from "./module.js";
+import { registerActionTrackerSettings } from "../features/actionTracker/settings.js";
 import { checkboxChecked, elementFromHtmlLike, insertNasSettingsSectionsContainer, setElementVisible } from "./foundryCompat.js";
 import { DamagePriorityForm } from "./settings/damagePriorityForm.js";
 import { DamageTypeFormApplication } from "./settings/damageTypeForm.js";
@@ -13,6 +14,7 @@ import {
   SPELLBOOK_ANIMATION_MODES,
   SPELLBOOK_PREPARATION_MODES,
   SPELLBOOK_PREPARATION_SETTING_KEYS,
+  getLegacySpellbookRestMode,
   getSpellbookPersonalSettingScope
 } from "../features/automation/spellcasting/preparation/settings.js";
 
@@ -23,6 +25,9 @@ export const damageConfig = {
 
 const NAS_BUFF_COMPENDIUM = `${MODULE.ID}.Buffs`;
 
+function notifySpellbookSettingsChanged(key) {
+  globalThis.Hooks?.callAll?.("nasSpellbookSettingsChanged", key);
+}
 
 function registerSettings() {
     Handlebars.registerHelper('colorStyle', function(color) {
@@ -72,7 +77,8 @@ function registerSettings() {
         name: game.i18n.localize("NAS.settings.persistentSpellTargetMode.name"),
         hint: game.i18n.localize("NAS.settings.persistentSpellTargetMode.hint"),
         scope: "world",
-        config: true,
+
+        config: false,
         type: String,
         choices: {
             current: game.i18n.localize("NAS.settings.persistentSpellTargetMode.choices.current"),
@@ -209,7 +215,7 @@ function registerSettings() {
         config: false,
         type: Array,
         default: [],
-        requiresReload: true 
+        requiresReload: true  
     });
 
     game.settings.register(MODULE.ID, "translations", {
@@ -243,7 +249,7 @@ function registerSettings() {
         type: TranslationForm,
         restricted: true
     });
-    
+
     if (!game.settings.settings.has(`${MODULE.ID}.migrationVersion`)) {
         game.settings.register(MODULE.ID, "migrationVersion", {
             name: game.i18n.localize("NAS.settings.migrationVersion.name"),
@@ -307,7 +313,7 @@ export function populateDefaultTypes() {
                 2: [],
                 3: [],
                 4: [],
-                5: alignments.map(key => pf1.config.damageResistances[key]), 
+                5: alignments.map(key => pf1.config.damageResistances[key]),  
                 6: []
             };
 
@@ -348,13 +354,13 @@ export function populateDefaultTypes() {
                     }
                 }
 
-                if (targetArray && !targetArray.includes(material.name)) { 
+                if (targetArray && !targetArray.includes(material.name)) {  
                     targetArray.push(material.name);
                 }
             });
 
             damageConfig.weaponDamageTypes = [
-                [], 
+                [],  
                 ...Object.values(priorityLevels)
             ];
 
@@ -368,7 +374,8 @@ export function populateDefaultTypes() {
 }
 
 async function handleReadyHook() {
-  await ensureDefaultBuffCompendiaSelected();
+    await ensureDefaultBuffCompendiaSelected();
+
     const migrationKey = `migrationVersion`;
     const currentVersion = game.modules.get(MODULE.ID).version;
     let previousMigrationVersion;
@@ -376,16 +383,17 @@ async function handleReadyHook() {
     try {
         previousMigrationVersion = game.settings.get(MODULE.ID, migrationKey);
     } catch (e) {
+
         previousMigrationVersion = "0.0.0";
     }
 
     if (compareVersions(currentVersion, previousMigrationVersion) > 0) {
-        await performMigration(); 
-        await game.settings.set(MODULE.ID, migrationKey, currentVersion); 
+        await performMigration();  
+        await game.settings.set(MODULE.ID, migrationKey, currentVersion);  
     }
-    
+
     const customDamageTypes = game.settings.get(MODULE.ID, "customDamageTypes");
-    
+
     customDamageTypes.forEach(damageType => {
         const { value } = damageType;
 
@@ -396,7 +404,7 @@ async function handleReadyHook() {
             }
 
             const capitalizedCategory = value.category
-                .split(/[\s-]/) 
+                .split(/[\s-]/)  
                 .map(word => word.charAt(0).toUpperCase() + word.slice(1))
                 .join(' ')
                 .replace(/\b([A-Za-z]+)-([A-Za-z]+)\b/g, (match, p1, p2) => `${p1}-${p2.charAt(0).toUpperCase()}${p2.slice(1)}`);
@@ -446,19 +454,21 @@ function compareVersions(v1, v2) {
     if (patch1 > patch2) return 1;
     if (patch1 < patch2) return -1;
 
-    return 0; 
+    return 0;  
 }
 
 async function performMigration() {
     const customDamageTypes = game.settings.get(MODULE.ID, "customDamageTypes");
 
     if (Array.isArray(customDamageTypes) && customDamageTypes.length > 0) {
+
         const damageTypesToReRegister = [];
 
         customDamageTypes.forEach(damageType => {
             const flags = damageType.value.flags[MODULE.ID];
 
             if (typeof flags.abilities === "object") {
+
                 damageTypesToReRegister.push(damageType);
 
                 const abilityKeys = Object.keys(flags.abilities);
@@ -485,10 +495,9 @@ function unregisterDamageTypes(damageTypesToUnregister) {
 
     damageTypesToUnregister.forEach(damageType => {
         const { key } = damageType;
-        registry.unregister(MODULE.ID, key); 
+        registry.unregister(MODULE.ID, key);  
     });
 
-    console.log("Unregistered damage types:", damageTypesToUnregister.map(dt => dt.key));
 }
 
 function reRegisterDamageTypes(damageTypesToReRegister) {
@@ -496,12 +505,10 @@ function reRegisterDamageTypes(damageTypesToReRegister) {
 
     damageTypesToReRegister.forEach(damageType => {
         const { key, value } = damageType;
-        registry.register(MODULE.ID, key, value); 
+        registry.register(MODULE.ID, key, value);  
     });
 
-    console.log("Re-registered damage types:", damageTypesToReRegister.map(dt => dt.key));
 }
-
 
 export const moduleConfig = {
     damageConfig,
@@ -514,15 +521,12 @@ export const moduleConfig = {
     populateDefaultTypes
 };
 
-  
-
-
-
 let _nasSettingsRegistered = false;
 
 export function registerNasSettings() {
   if (_nasSettingsRegistered) return;
   _nasSettingsRegistered = true;
+  registerActionTrackerSettings();
 
   game.settings.register(MODULE.ID, 'reorderAllConditions', {
     name: game.i18n.localize("NAS.settings.reorderAllConditions.name"),
@@ -591,11 +595,11 @@ export function registerNasSettings() {
 
   game.settings.register(MODULE.ID, 'enableMetamagicAutomation', {
     name: game.i18n.localize("NAS.settings.enableMetamagicAutomation.name"),
-    hint: game.i18n.localize("NAS.settings.enableMetamagicAutomation.hint"),
     scope: "world",
     config: true,
     type: Boolean,
     default: true,
+    onChange: () => notifySpellbookSettingsChanged("enableMetamagicAutomation")
   });
 
   game.settings.register(MODULE.ID, "homebrewEnlargeSpellNumericRanges", {
@@ -609,7 +613,6 @@ export function registerNasSettings() {
 
   game.settings.register(MODULE.ID, SPELLBOOK_PREPARATION_SETTING_KEYS.MODE, {
     name: game.i18n.localize("NAS.settings.spellbookPreparationMode.name"),
-    hint: game.i18n.localize("NAS.settings.spellbookPreparationMode.hint"),
     scope: "world",
     config: true,
     type: String,
@@ -618,7 +621,8 @@ export function registerNasSettings() {
       [SPELLBOOK_PREPARATION_MODES.VARIANTS_ONLY]: game.i18n.localize("NAS.settings.spellbookPreparationMode.choices.variantsOnly"),
       [SPELLBOOK_PREPARATION_MODES.FULL]: game.i18n.localize("NAS.settings.spellbookPreparationMode.choices.full")
     },
-    default: SPELLBOOK_PREPARATION_MODES.FULL
+    default: SPELLBOOK_PREPARATION_MODES.FULL,
+    onChange: () => notifySpellbookSettingsChanged(SPELLBOOK_PREPARATION_SETTING_KEYS.MODE)
   });
 
   game.settings.register(MODULE.ID, SPELLBOOK_PREPARATION_SETTING_KEYS.ALLOW_EXTRA_CAST_TIME_METAMAGIC, {
@@ -634,14 +638,27 @@ export function registerNasSettings() {
     name: game.i18n.localize("NAS.settings.spellbookRestReset.name"),
     hint: game.i18n.localize("NAS.settings.spellbookRestReset.hint"),
     scope: "world",
-    config: true,
+
+    config: false,
     type: Boolean,
     default: true
   });
 
+  game.settings.register(MODULE.ID, SPELLBOOK_PREPARATION_SETTING_KEYS.DEFAULT_REST_MODE, {
+    name: game.i18n.localize("NAS.settings.spellbookDefaultRestMode.name"),
+    scope: "world",
+    config: true,
+    type: String,
+    choices: {
+      retain: game.i18n.localize("NAS.settings.spellbookDefaultRestMode.choices.retain"),
+      reselect: game.i18n.localize("NAS.settings.spellbookDefaultRestMode.choices.reselect"),
+      random: game.i18n.localize("NAS.settings.spellbookDefaultRestMode.choices.random")
+    },
+    default: getLegacySpellbookRestMode()
+  });
+
   game.settings.register(MODULE.ID, SPELLBOOK_PREPARATION_SETTING_KEYS.HIDE_SOURCE_SPELLS, {
     name: game.i18n.localize("NAS.settings.spellbookHideSourceSpells.name"),
-    hint: game.i18n.localize("NAS.settings.spellbookHideSourceSpells.hint"),
     scope: "world",
     config: true,
     type: Boolean,
@@ -652,7 +669,6 @@ export function registerNasSettings() {
 
   game.settings.register(MODULE.ID, SPELLBOOK_PREPARATION_SETTING_KEYS.AUTO_OPEN_AFTER_REST, {
     name: game.i18n.localize("NAS.settings.spellbookAutoOpenAfterRest.name"),
-    hint: game.i18n.localize("NAS.settings.spellbookAutoOpenAfterRest.hint"),
     scope: spellbookPersonalSettingScope,
     config: true,
     type: Boolean,
@@ -661,7 +677,6 @@ export function registerNasSettings() {
 
   game.settings.register(MODULE.ID, SPELLBOOK_PREPARATION_SETTING_KEYS.SHOW_ACTOR_SHEET_PREPARE_CONTROL, {
     name: game.i18n.localize("NAS.settings.spellbookShowActorSheetPrepareControl.name"),
-    hint: game.i18n.localize("NAS.settings.spellbookShowActorSheetPrepareControl.hint"),
     scope: spellbookPersonalSettingScope,
     config: true,
     type: Boolean,
@@ -679,7 +694,6 @@ export function registerNasSettings() {
 
   game.settings.register(MODULE.ID, SPELLBOOK_PREPARATION_SETTING_KEYS.ANIMATION_MODE, {
     name: game.i18n.localize("NAS.settings.spellbookAnimationMode.name"),
-    hint: game.i18n.localize("NAS.settings.spellbookAnimationMode.hint"),
     scope: spellbookPersonalSettingScope,
     config: true,
     type: String,
@@ -688,7 +702,8 @@ export function registerNasSettings() {
       [SPELLBOOK_ANIMATION_MODES.REDUCED]: game.i18n.localize("NAS.settings.spellbookAnimationMode.choices.reduced"),
       [SPELLBOOK_ANIMATION_MODES.OFF]: game.i18n.localize("NAS.settings.spellbookAnimationMode.choices.off")
     },
-    default: SPELLBOOK_ANIMATION_MODES.FULL
+    default: SPELLBOOK_ANIMATION_MODES.FULL,
+    onChange: () => notifySpellbookSettingsChanged(SPELLBOOK_PREPARATION_SETTING_KEYS.ANIMATION_MODE)
   });
 
   game.settings.register(MODULE.ID, "enforceSpellAbilityMinimum", {
@@ -708,7 +723,7 @@ export function registerNasSettings() {
     type: Boolean,
     default: true
   });
-  
+
   game.settings.register(MODULE.ID, 'buffAutomationMode', {
     name: game.i18n.localize("NAS.settings.buffAutomationMode.name"),
     hint: game.i18n.localize("NAS.settings.buffAutomationMode.hint"),
@@ -744,7 +759,7 @@ export function registerNasSettings() {
     type: Boolean,
     default: true
   });
-  
+
   game.settings.register(MODULE.ID, 'buffTargetFiltering', {
     name: game.i18n.localize("NAS.settings.buffTargetFiltering.name"),
     hint: game.i18n.localize("NAS.settings.buffTargetFiltering.hint"),
@@ -758,7 +773,7 @@ export function registerNasSettings() {
     },
     default: "byDisposition"
   });
-  
+
   game.settings.registerMenu(MODULE.ID, 'buffCompendiaSelector', {
     name: game.i18n.localize("NAS.forms.buffCompendiaSelector.title"),
     label: game.i18n.localize("NAS.settings.buffCompendiaSelector.label"),
@@ -893,7 +908,7 @@ export function registerNasSettings() {
     },
     default: "strict"
   });  
-  
+
   game.settings.register(MODULE.ID, 'nauseatedHandling', {
     name: game.i18n.localize("NAS.settings.nauseatedHandling.name"),
     hint: game.i18n.localize("NAS.settings.nauseatedHandling.hint"),
@@ -916,7 +931,7 @@ export function registerNasSettings() {
     type: Boolean,
     default: true
   });
-  
+
   game.settings.register(MODULE.ID, 'squeezedHandling', {
     name: game.i18n.localize("NAS.settings.squeezedHandling.name"),
     hint: game.i18n.localize("NAS.settings.squeezedHandling.hint"),
@@ -1034,7 +1049,7 @@ export function registerNasSettings() {
   const isMonksCombatDetailsActive = game.modules.get('monks-combat-details')?.active;
   const monksAutoDefeatedSetting = isMonksCombatDetailsActive ? game.settings.get('monks-combat-details', 'auto-defeated') : 'none';
   const defaultApplyDeadCondition = monksAutoDefeatedSetting !== 'none' ? false : true;
-  
+
   game.settings.register(MODULE.ID, 'applyDeadCondition', {
     name: game.i18n.localize("NAS.settings.applyDeadCondition.name"),
     hint: game.i18n.format("NAS.settings.applyDeadCondition.hint", {
@@ -1109,16 +1124,8 @@ export function registerNasSettings() {
     scope: 'world',
     config: false,
     type: Object,
-    default: {
-      lesser: game.i18n.localize("NAS.forms.modifierNames.labels.lesser"),
-      minor: game.i18n.localize("NAS.forms.modifierNames.labels.minor"),
-      improved: game.i18n.localize("NAS.forms.modifierNames.labels.improved"),
-      greater: game.i18n.localize("NAS.forms.modifierNames.labels.greater"),
-      major: game.i18n.localize("NAS.forms.modifierNames.labels.major"),
-      supreme: game.i18n.localize("NAS.forms.modifierNames.labels.supreme"),
-      mass: game.i18n.localize("NAS.forms.modifierNames.labels.mass"),
-      communal: game.i18n.localize("NAS.forms.modifierNames.labels.communal")
-    }
+
+    default: {}
   });
 
   game.settings.register(MODULE.ID, 'communalHandling', {
@@ -1159,7 +1166,7 @@ export function registerNasSettings() {
     },
     default: 'hint'
   });
-  
+
   game.settings.register(MODULE.ID, 'pairedBuffMappings', {
     name: game.i18n.localize("NAS.settings.pairedBuffMappings.name"),
     hint: game.i18n.localize("NAS.settings.pairedBuffMappings.hint"),
@@ -1184,6 +1191,7 @@ function registerNasSettingsUi() {
       const scheme = uiConfig?.colorScheme?.applications;
       if (scheme === "light") applicationsScheme = "light";
     } catch (_err) {
+
     }
     return applicationsScheme;
   }
@@ -1272,7 +1280,7 @@ function registerNasSettingsUi() {
 
     const caret = document.createElement("span");
     caret.classList.add("nas-settings-section-caret");
-    caret.innerHTML = "&#9654;"; 
+    caret.innerHTML = "&#9654;";  
 
     summary.appendChild(titleSpan);
     summary.appendChild(caret);
@@ -1307,6 +1315,20 @@ function registerNasSettingsUi() {
         () => getSettingRow("cinematicCombatTextPreset"),
         () => getSettingRow("reorderAllConditions"),
         () => getMenuRow("migrationTool")
+      ]
+    },
+    {
+      id: "actionTracker",
+      title: game.i18n.localize("NAS.settings.sections.actionTracker"),
+      open: false,
+      rows: [
+        () => getSettingRow("actionTrackerInterface"),
+        () => getSettingRow("automaticActionTracking"),
+        () => getSettingRow("actionTrackerMovement"),
+        () => getSettingRow("automaticMovementSpending"),
+        () => getSettingRow("actionTrackerMovementMarkers"),
+        () => getSettingRow("actionTrackerVisibility"),
+        () => getSettingRow("actionTrackerShowFree")
       ]
     },
     {
@@ -1375,18 +1397,25 @@ function registerNasSettingsUi() {
         () => getSettingRow("enforceSpellAbilityMinimum"),
         () => getSettingRow("enableMetamagicAutomation"),
         () => getSettingRow("homebrewEnlargeSpellNumericRanges"),
-        () => getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.MODE),
-        () => getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.ALLOW_EXTRA_CAST_TIME_METAMAGIC),
-        () => getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.REST_RESET),
-        () => getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.HIDE_SOURCE_SPELLS),
-        () => getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.AUTO_OPEN_AFTER_REST),
-        () => getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.SHOW_ACTOR_SHEET_PREPARE_CONTROL),
-        () => getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.SHOW_CAST_DIALOG_PREPARED_PREVIEW),
-        () => getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.ANIMATION_MODE),
         () => getSettingRow("metamagicCastTimeRule"),
         () => getSettingRow("persistentSpellTargetMode"),
         () => getSettingRow("metamagicChatCardNameMode"),
         () => getSettingRow("metamagicPreviewMode")
+      ]
+    },
+    {
+      id: "spellbook",
+      title: game.i18n.localize("NAS.settings.sections.spellbook"),
+      open: false,
+      rows: [
+        () => getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.MODE),
+        () => getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.DEFAULT_REST_MODE),
+        () => getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.HIDE_SOURCE_SPELLS),
+        () => getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.ALLOW_EXTRA_CAST_TIME_METAMAGIC),
+        () => getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.AUTO_OPEN_AFTER_REST),
+        () => getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.SHOW_ACTOR_SHEET_PREPARE_CONTROL),
+        () => getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.SHOW_CAST_DIALOG_PREPARED_PREVIEW),
+        () => getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.ANIMATION_MODE)
       ]
     },
     {
@@ -1408,10 +1437,10 @@ function registerNasSettingsUi() {
       const created = createSection(spec);
       details = created.details;
       body = created.body;
-      container.appendChild(details);
     } else {
       body = details.querySelector(":scope > .nas-settings-section-body");
     }
+    container.appendChild(details);
 
     for (const getRow of spec.rows) {
       const row = getRow();
@@ -1600,27 +1629,11 @@ function registerNasSettingsUi() {
   const persistentSpellTargetModeRow = getSettingRow("persistentSpellTargetMode");
   const metamagicChatCardNameModeRow = getSettingRow("metamagicChatCardNameMode");
   const metamagicPreviewModeRow = getSettingRow("metamagicPreviewMode");
-  const spellbookPreparationModeRow = getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.MODE);
-  const spellbookAllowExtraCastTimeMetamagicRow = getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.ALLOW_EXTRA_CAST_TIME_METAMAGIC);
-  const spellbookRestResetRow = getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.REST_RESET);
-  const spellbookHideSourceSpellsRow = getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.HIDE_SOURCE_SPELLS);
-  const spellbookAutoOpenAfterRestRow = getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.AUTO_OPEN_AFTER_REST);
-  const spellbookShowActorSheetPrepareControlRow = getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.SHOW_ACTOR_SHEET_PREPARE_CONTROL);
-  const spellbookShowCastDialogPreparedPreviewRow = getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.SHOW_CAST_DIALOG_PREPARED_PREVIEW);
-  const spellbookAnimationModeRow = getSettingRow(SPELLBOOK_PREPARATION_SETTING_KEYS.ANIMATION_MODE);
 
   const enableMetamagicAutomationCheckbox = enableMetamagicAutomationRow?.querySelector?.("input");
 
   const metamagicDependentRows = [
     homebrewEnlargeSpellNumericRangesRow,
-    spellbookPreparationModeRow,
-    spellbookAllowExtraCastTimeMetamagicRow,
-    spellbookRestResetRow,
-    spellbookHideSourceSpellsRow,
-    spellbookAutoOpenAfterRestRow,
-    spellbookShowActorSheetPrepareControlRow,
-    spellbookShowCastDialogPreparedPreviewRow,
-    spellbookAnimationModeRow,
     metamagicCastTimeRuleRow,
     persistentSpellTargetModeRow,
     metamagicChatCardNameModeRow,

@@ -1,0 +1,1794 @@
+.nas-spellbook-prototype-app {
+  min-width: 720px;
+  max-height: calc(100vh - 12px);
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  pointer-events: none;
+}
+
+.nas-spellbook-prototype-app > .window-header,
+.nas-spellbook-prototype-app > .window-resizable-handle {
+  display: none;
+}
+
+.nas-spellbook-prototype-app .window-content {
+  padding: 0;
+  overflow: visible;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  pointer-events: none;
+}
+
+.nas-proto-root {
+  --nas-proto-ink: #30271e;
+  --nas-proto-muted-ink: #6c5b48;
+  --nas-proto-parchment: #eee2c8;
+  --nas-proto-parchment-light: #f7edda;
+  --nas-proto-parchment-dark: #c5ad84;
+  --nas-proto-leather: #422b23;
+  --nas-proto-leather-dark: #20150f;
+  --nas-proto-gold: #b1955d;
+  --nas-proto-book-font: Georgia, "Times New Roman", serif;
+  --nas-proto-book-progress: 0;
+  --nas-proto-left-depth: 0px;
+  --nas-proto-right-depth: 6px;
+  --nas-proto-page-top: 31px;
+  --nas-proto-page-bottom: 52px;
+  --nas-proto-page-inset: 4%;
+  --nas-proto-cover-top: 22px;
+  --nas-proto-cover-bottom: 42px;
+  --nas-proto-cover-inset: 2.5%;
+  min-width: 0;
+  margin: 0;
+  pointer-events: none;
+  color: #eadbbd;
+  font-family: var(--font-primary, "Signika", sans-serif);
+}
+
+.nas-proto-root *,
+.nas-proto-root *::before,
+.nas-proto-root *::after {
+  box-sizing: border-box;
+}
+
+.nas-proto-workbench {
+  min-width: 0;
+  pointer-events: none;
+}
+
+.nas-proto-book-workspace {
+  display: flex;
+  justify-content: center;
+  min-width: 0;
+  padding: 0 12px;
+  overflow: visible;
+  pointer-events: none;
+}
+
+
+.nas-proto-rear-cover,
+.nas-proto-canonical > .nas-proto-face:not([hidden]),
+.nas-proto-cover-front,
+.nas-proto-cover-inside,
+.nas-proto-bookmarks,
+.nas-proto-corner-controls > button:not(:disabled),
+.nas-proto-book-tools,
+.nas-proto-settings-bookmark,
+.nas-proto-search-box,
+.nas-proto-book-commit,
+.nas-proto-drag-grip,
+.nas-proto-resize-grip {
+  pointer-events: auto;
+}
+
+.nas-proto-setup-page {
+  height: 100%;
+  padding: 5px 8px 24px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #ae9365 transparent;
+  color: var(--nas-proto-ink);
+  cursor: auto;
+  touch-action: pan-y;
+  font: 12px/1.4 var(--nas-proto-book-font);
+}
+
+.nas-proto-setup-heading {
+  margin: 0 0 15px;
+  padding: 0 5px 12px;
+  border-bottom: 1px solid rgba(110, 81, 40, 0.35);
+  text-align: center;
+}
+
+.nas-proto-setup-heading h3 {
+  margin: 3px 0 5px;
+  border: 0;
+  color: #493824;
+  font: 400 27px/1.15 var(--nas-proto-book-font);
+  overflow-wrap: anywhere;
+}
+
+.nas-proto-setup-heading p,
+.nas-proto-setup-page p {
+  margin: 0;
+  color: #756044;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.nas-proto-setup-heading p {
+  font-style: italic;
+}
+
+.nas-proto-setup-fields {
+  display: grid;
+  gap: 10px;
+}
+
+.nas-proto-setup-fields label,
+.nas-proto-setup-fields fieldset {
+  min-width: 0;
+}
+
+.nas-proto-setup-fields label:not(.nas-proto-check) {
+  display: grid;
+  gap: 3px;
+  color: #735636;
+  font-size: 11px;
+}
+
+.nas-proto-setup-fields select,
+.nas-proto-setup-fields input[type="range"] {
+  width: 100%;
+  max-width: 100%;
+}
+
+.nas-proto-setup-fields select {
+  height: 28px;
+  min-height: 28px;
+  padding: 1px 22px 1px 5px;
+  border: 0;
+  border-bottom: 1px solid rgba(119, 86, 45, 0.36);
+  border-radius: 0;
+  background-color: rgba(255, 248, 224, 0.24);
+  color: #392d20;
+  font: 12px var(--nas-proto-book-font);
+  box-shadow: none;
+}
+
+.nas-proto-setup-fields option {
+  background: #eee2c8;
+  color: #392d20;
+}
+
+.nas-proto-setup-fields button {
+  min-height: 27px;
+  padding: 3px 7px;
+  border: 1px solid rgba(120, 83, 41, 0.35);
+  border-radius: 3px;
+  background: rgba(176, 137, 75, 0.08);
+  color: #604325;
+  font: 11px var(--nas-proto-book-font);
+  box-shadow: none;
+}
+
+.nas-proto-setup-fields button:hover,
+.nas-proto-setup-fields button:focus-visible {
+  background: rgba(176, 137, 75, 0.2);
+  border-color: #91683c;
+}
+
+.nas-proto-setup-page :is(select, input, summary, button):focus-visible {
+  outline: 2px solid #79592e;
+  outline-offset: 1px;
+}
+
+.nas-proto-setup-pair,
+.nas-proto-setup-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.nas-proto-setup-actions-stacked {
+  grid-template-columns: 1fr;
+}
+
+.nas-proto-catalogue-setup,
+.nas-proto-catalogue-import {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.nas-proto-catalogue-setup {
+  padding: 9px 10px;
+  border-block: 1px solid rgba(124, 91, 47, 0.25);
+  background: rgba(176, 137, 75, 0.045);
+}
+
+.nas-proto-catalogue-setup h4 {
+  margin: 0;
+  border: 0;
+  color: #604325;
+  font: 400 14px/1.25 var(--nas-proto-book-font);
+}
+
+.nas-proto-actor-sheet-action {
+  justify-self: start;
+  min-width: 110px;
+}
+
+.nas-proto-setup-page details {
+  padding-top: 8px;
+  border-top: 1px solid rgba(124, 91, 47, 0.25);
+}
+
+.nas-proto-setup-page summary {
+  color: #6c4c2b;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.nas-proto-setup-page details[open] > summary {
+  margin-bottom: 9px;
+}
+
+.nas-proto-setup-page fieldset {
+  min-inline-size: 0;
+  margin-block: 10px;
+  padding: 8px;
+  border: 1px solid rgba(124, 91, 47, 0.25);
+}
+
+.nas-proto-setup-page legend {
+  padding-inline: 3px;
+  color: #765531;
+  font-size: 10px;
+}
+
+.nas-proto-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.nas-proto-setup-page .nas-proto-check {
+  font-size: 11px;
+  color: #604b31;
+}
+
+.nas-proto-setup-page input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: #8a6034;
+}
+
+.nas-proto-check-pass { color: #3e6e37; }
+.nas-proto-check-fail { color: #9c3f2e; }
+
+.nas-proto-book-stage {
+  position: relative;
+  width: 100%;
+  height: min(620px, calc(100dvh - 12px));
+  flex: 0 0 auto;
+  perspective: 1800px;
+  perspective-origin: 50% 46%;
+  isolation: isolate;
+  outline: none;
+  user-select: none;
+  filter: drop-shadow(0 16px 20px rgba(0, 0, 0, 0.42));
+}
+
+.nas-proto-book-stage:focus-visible {
+  outline: none;
+}
+
+
+.nas-proto-book-stage:not([data-cover="open"]) .nas-proto-rear-cover {
+  left: 50%;
+  border-radius: 5px 15px 15px 5px;
+}
+
+.nas-proto-book-stage:not([data-cover="open"]) .nas-proto-canonical .nas-proto-face-left,
+.nas-proto-book-stage:not([data-cover="open"]) .nas-proto-page-stack-left,
+.nas-proto-book-stage:not([data-cover="open"]) .nas-proto-bookmarks {
+  visibility: hidden;
+}
+
+.nas-proto-book-stage:not([data-cover="open"]) .nas-proto-canonical .nas-proto-face-left,
+.nas-proto-book-stage[data-cover="closed"] .nas-proto-canonical,
+.nas-proto-book-stage:not([data-cover="moving"]) .nas-proto-cover-inside {
+  display: none !important;
+}
+
+.nas-proto-book-stage[data-cover="closed"] .nas-proto-canonical {
+  visibility: hidden;
+}
+
+.nas-proto-book-stage[data-cover="closed"] .nas-proto-spine,
+.nas-proto-book-stage[data-cover="closed"] .nas-proto-gutter-shadow {
+  visibility: hidden;
+}
+
+
+.nas-proto-book-stage[data-cover="moving"] .nas-proto-spine,
+.nas-proto-book-stage[data-cover="moving"] .nas-proto-gutter-shadow {
+  clip-path: inset(0 0 0 50%);
+}
+
+.nas-proto-rear-cover {
+  position: absolute;
+  inset: var(--nas-proto-cover-top) var(--nas-proto-cover-inset) var(--nas-proto-cover-bottom);
+  z-index: 0;
+  border: 4px solid #20150f;
+  border-radius: 12px 15px 15px 12px;
+  background:
+    url("./assets/leather-grain.svg") 0 0 / 192px 192px repeat,
+    linear-gradient(90deg, rgba(222, 189, 129, 0.12), transparent 8%, transparent 92%, rgba(222, 189, 129, 0.1)),
+    radial-gradient(ellipse at 45% 12%, #5c4032, #3d271f 62%, #281b15);
+  box-shadow:
+    inset 0 0 0 1px rgba(202, 173, 117, 0.4),
+    inset 0 0 28px rgba(0, 0, 0, 0.46),
+    0 7px 0 #17100c,
+    0 14px 24px rgba(0, 0, 0, 0.46);
+}
+
+.nas-proto-page-stack {
+  --nas-proto-stack-depth: 0px;
+  position: absolute;
+  top: calc(31px + var(--nas-proto-stack-depth) * 0.2);
+  bottom: calc(52px - var(--nas-proto-stack-depth) * 0.35);
+  z-index: 1;
+  
+  width: min(calc(46% - 13px + var(--nas-proto-stack-depth)), calc(47.5% - 18px));
+  overflow: hidden;
+  border: 1px solid rgba(104, 82, 48, 0.26);
+  border-radius: 8px;
+  background:
+    url("./assets/parchment-grain.svg") 0 0 / 256px 256px repeat,
+    linear-gradient(180deg, rgba(255, 250, 231, 0.34), transparent 12% 86%, rgba(121, 95, 52, 0.12)),
+    #e2d5b8;
+  box-shadow: 0 1px 2px rgba(41, 29, 15, 0.22);
+  pointer-events: none;
+}
+
+.nas-proto-page-stack[hidden] {
+  display: none;
+}
+
+
+.nas-proto-page-stack::before,
+.nas-proto-page-stack::after {
+  content: "";
+  position: absolute;
+  border: 1px solid rgba(113, 92, 57, 0.16);
+  border-radius: inherit;
+}
+
+.nas-proto-page-stack::before {
+  inset: 1px calc(var(--nas-proto-stack-depth) * 0.33);
+}
+
+.nas-proto-page-stack::after {
+  inset: 2px calc(var(--nas-proto-stack-depth) * 0.68);
+}
+
+.nas-proto-page-stack-left {
+  --nas-proto-stack-depth: var(--nas-proto-left-depth);
+  left: max(calc(4% - var(--nas-proto-left-depth)), calc(2.5% + 5px));
+}
+
+.nas-proto-page-stack-right {
+  --nas-proto-stack-depth: var(--nas-proto-right-depth);
+  right: max(calc(4% - var(--nas-proto-right-depth)), calc(2.5% + 5px));
+}
+
+.nas-proto-spine,
+.nas-proto-cover-binding-paper {
+  position: absolute;
+  top: 31px;
+  bottom: 52px;
+  left: 50%;
+  z-index: 2;
+  width: 26px;
+  transform: translateX(-50%);
+  
+  background:
+    linear-gradient(
+      90deg,
+      #d9c8a6,
+      #d3bf99 28%,
+      #c4ac85 45%,
+      #bca27b 50%,
+      #cdb691 68%,
+      #e0d1b1
+    );
+  pointer-events: none;
+}
+
+.nas-proto-spine::before,
+.nas-proto-spine::after,
+.nas-proto-cover-binding-paper::before,
+.nas-proto-cover-binding-paper::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  width: 10px;
+  height: 5px;
+  background:
+    linear-gradient(24deg, transparent 45%, rgba(92, 68, 39, 0.3) 48% 54%, transparent 57%) left / 50% 100% no-repeat,
+    linear-gradient(-24deg, transparent 45%, rgba(92, 68, 39, 0.3) 48% 54%, transparent 57%) right / 50% 100% no-repeat;
+}
+
+.nas-proto-spine::before,
+.nas-proto-cover-binding-paper::before {
+  top: 0;
+}
+
+.nas-proto-spine::after,
+.nas-proto-cover-binding-paper::after {
+  bottom: 0;
+  transform: scaleY(-1);
+}
+
+.nas-proto-gutter-shadow,
+.nas-proto-cover-binding-shadow {
+  position: absolute;
+  top: 31px;
+  bottom: 52px;
+  left: 50%;
+  z-index: 8;
+  width: 64px;
+  transform: translateX(-50%);
+  background:
+    linear-gradient(
+      90deg,
+      transparent,
+      rgba(80, 57, 30, 0.02) 18%,
+      rgba(80, 57, 30, 0.08) 37%,
+      rgba(56, 39, 22, 0.17) 46%,
+      rgba(50, 34, 19, 0.45) 48%,
+      rgba(38, 26, 15, 0.76) 48.5% 51.5%,
+      rgba(82, 58, 32, 0.25) 54%,
+      rgba(249, 238, 209, 0.15) 56%,
+      rgba(80, 57, 30, 0.06) 69%,
+      transparent
+    );
+  pointer-events: none;
+}
+
+.nas-proto-canonical,
+.nas-proto-corner-controls {
+  position: absolute;
+  inset: var(--nas-proto-page-top) var(--nas-proto-page-inset) var(--nas-proto-page-bottom);
+}
+
+.nas-proto-canonical {
+  z-index: 3;
+  pointer-events: none;
+}
+
+.nas-proto-face {
+  position: absolute;
+  top: 0;
+  width: calc(50% - 13px);
+  height: 100%;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid rgba(86, 55, 32, 0.32);
+  color: var(--nas-proto-ink);
+  background:
+    url("./assets/parchment-grain.svg") 0 0 / 256px 256px repeat,
+    radial-gradient(ellipse at 26% 12%, rgba(255, 255, 255, 0.5), transparent 65%),
+    linear-gradient(90deg, rgba(122, 86, 41, 0.07), transparent 7%, transparent 94%, rgba(122, 86, 41, 0.1)),
+    var(--nas-proto-parchment);
+  box-shadow:
+    inset 0 0 28px rgba(102, 63, 32, 0.12),
+    0 2px 4px rgba(0, 0, 0, 0.24);
+  pointer-events: auto;
+  user-select: text;
+}
+
+.nas-proto-face[hidden] {
+  display: none;
+}
+
+.nas-proto-face-left {
+  left: 0;
+  padding: 14px 20px 24px 15px;
+  border-radius: 7px 1px 1px 7px;
+  box-shadow:
+    inset -12px 0 18px rgba(75, 55, 27, 0.09),
+    inset -1px 0 rgba(255, 246, 222, 0.28),
+    inset 0 0 28px rgba(102, 63, 32, 0.1),
+    -2px 2px 5px rgba(0, 0, 0, 0.22);
+}
+
+.nas-proto-face-right {
+  right: 0;
+  padding: 14px 15px 24px 20px;
+  border-radius: 1px 7px 7px 1px;
+  box-shadow:
+    inset 14px 0 22px rgba(75, 55, 27, 0.12),
+    inset 1px 0 rgba(255, 246, 222, 0.18),
+    inset 0 0 28px rgba(102, 63, 32, 0.1),
+    2px 2px 5px rgba(0, 0, 0, 0.22);
+}
+
+.nas-proto-layout-single {
+  --nas-proto-page-inset: 16%;
+  --nas-proto-cover-inset: 14%;
+}
+
+.nas-proto-layout-single .nas-proto-book-stage:not([data-cover="open"]) .nas-proto-rear-cover {
+  left: var(--nas-proto-cover-inset);
+  border-radius: 5px 15px 15px 5px;
+}
+
+.nas-proto-layout-single .nas-proto-face {
+  left: 0;
+  right: 0;
+  width: 100%;
+  padding: 14px 18px 24px;
+  border-radius: 7px;
+  box-shadow:
+    inset 0 0 28px rgba(102, 63, 32, 0.12),
+    0 2px 5px rgba(0, 0, 0, 0.24);
+}
+
+.nas-proto-layout-single .nas-proto-spine,
+.nas-proto-layout-single .nas-proto-gutter-shadow,
+.nas-proto-layout-single .nas-proto-cover-binding-paper,
+.nas-proto-layout-single .nas-proto-cover-binding-shadow {
+  display: none;
+}
+
+.nas-proto-layout-single .nas-proto-page-stack-left {
+  left: calc(16% - var(--nas-proto-left-depth));
+}
+
+.nas-proto-layout-single .nas-proto-page-stack-right {
+  right: calc(16% - var(--nas-proto-right-depth));
+}
+
+.nas-proto-layout-single .nas-proto-page-stack {
+  width: calc(68% + var(--nas-proto-stack-depth));
+}
+
+.nas-proto-face-insideFront,
+.nas-proto-face-insideBack,
+.nas-proto-face-blank {
+  background:
+    url("./assets/parchment-grain.svg") 0 0 / 256px 256px repeat,
+    radial-gradient(ellipse at 45% 35%, rgba(255, 247, 219, 0.4), transparent 66%),
+    linear-gradient(90deg, rgba(108, 76, 36, 0.09), transparent 10%, transparent 92%, rgba(108, 76, 36, 0.12)),
+    #e0cfaa;
+}
+
+.nas-proto-page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 9px;
+  min-height: 62px;
+  padding: 0 2px 7px;
+  border-bottom: 1px solid rgba(99, 73, 42, 0.48);
+  font-family: var(--nas-proto-book-font);
+}
+
+.nas-proto-page-header > div:first-child {
+  min-width: 0;
+}
+
+.nas-proto-page-kicker {
+  display: block;
+  color: #86563b;
+  font-size: 9px;
+  font-weight: 400;
+  letter-spacing: 0.16em;
+  line-height: 1.5;
+  text-transform: uppercase;
+}
+
+.nas-proto-page-header h3 {
+  margin: 0;
+  overflow: hidden;
+  border: 0;
+  color: #3d3024;
+  font-family: var(--nas-proto-book-font);
+  font-size: 23px;
+  font-weight: 400;
+  line-height: 1.1;
+  letter-spacing: -0.035em;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nas-proto-page-header small {
+  color: var(--nas-proto-muted-ink);
+  font: italic 9px/1.5 var(--nas-proto-book-font);
+}
+
+.nas-proto-slot-ink {
+  display: grid;
+  justify-items: end;
+  flex: 0 0 auto;
+  padding-top: 4px;
+  color: #6c5840;
+  font: italic 10px/1.15 Georgia, serif;
+}
+
+.nas-proto-slot-ink strong {
+  margin-top: 3px;
+  color: #463829;
+  font-size: 15px;
+  font-weight: 400;
+  font-variant-numeric: lining-nums tabular-nums;
+  font-style: normal;
+}
+
+.nas-proto-page-header.nas-proto-over-limit .nas-proto-slot-ink strong {
+  color: #9d2d25;
+}
+
+.nas-proto-spell-list {
+  display: grid;
+  grid-auto-rows: 41px;
+  margin: 0;
+  padding: 3px 0 0;
+  list-style: none;
+}
+
+.nas-proto-spell-row {
+  display: grid;
+  grid-template-columns: 23px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  border-bottom: 1px solid rgba(105, 83, 52, 0.14);
+}
+
+.nas-proto-spell-row:hover,
+.nas-proto-spell-row:focus-within {
+  background: linear-gradient(90deg, transparent, rgba(173, 133, 69, 0.065) 15% 85%, transparent);
+}
+
+.nas-proto-school-rune {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 21px;
+  height: 25px;
+  border: 0;
+  color: #87573a;
+  font: italic 17px/1 var(--nas-proto-book-font);
+}
+
+.nas-proto-spell-copy {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  line-height: 1.12;
+  font-family: var(--nas-proto-book-font);
+}
+
+.nas-proto-spell-copy strong,
+.nas-proto-spell-name {
+  overflow: hidden;
+  color: #352b22;
+  font-size: 12.5px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nas-proto-spell-name {
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font-family: inherit;
+  line-height: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nas-proto-spell-name:hover {
+  background: transparent;
+  box-shadow: none;
+  text-decoration: underline;
+  text-decoration-color: #a58b60;
+  text-underline-offset: 3px;
+}
+
+.nas-proto-spell-name:focus-visible {
+  outline: 1px solid #a58b60;
+  outline-offset: 2px;
+}
+
+.nas-proto-motion-source .nas-proto-spell-name:disabled {
+  opacity: 1;
+  color: #352b22;
+  -webkit-text-fill-color: currentColor;
+}
+
+.nas-proto-at-will {
+  min-width: 64px;
+  text-align: right;
+  color: #6d5d48;
+  font: italic 10px var(--nas-proto-book-font);
+}
+
+.nas-proto-policy-preview {
+  min-inline-size: 0;
+  margin-top: 14px;
+  padding: 9px;
+  border: 1px solid rgba(206, 163, 88, 0.25);
+}
+
+.nas-proto-setup-page .nas-proto-policy-preview .nas-proto-check {
+  display: flex;
+  align-items: center;
+}
+
+.nas-proto-context-status {
+  padding: 7px 0;
+  border-block: 1px solid rgba(206, 163, 88, 0.14);
+}
+
+.nas-proto-search-box {
+  position: absolute;
+  top: 48px;
+  right: 5%;
+  z-index: 80;
+  display: grid;
+  gap: 5px;
+  width: min(360px, 80%);
+  padding: 13px;
+  border: 1px solid #977547;
+  border-radius: 3px;
+  background: #eee2c8;
+  box-shadow: 0 5px 18px rgba(30, 18, 8, 0.35);
+  color: #755637;
+  font: 11px var(--nas-proto-book-font);
+}
+
+.nas-proto-search-box[hidden],
+.nas-proto-search-results[hidden] { display: none; }
+
+.nas-proto-search-box input {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 4px 6px;
+  border: 0;
+  border-bottom: 1px solid #ae8d5a;
+  border-radius: 0;
+  background: rgba(255, 250, 233, 0.45);
+  color: #3d3024;
+  font: 12px var(--nas-proto-book-font);
+}
+
+.nas-proto-search-results {
+  max-height: 245px;
+  overflow: auto;
+  color: #3d3024;
+}
+
+.nas-proto-search-results p {
+  margin: 5px 0;
+  font-size: 10px;
+}
+
+.nas-proto-search-results button {
+  display: block;
+  width: 100%;
+  min-height: 30px;
+  margin: 0;
+  padding: 6px 5px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font: 12px var(--nas-proto-book-font);
+}
+
+.nas-proto-search-results button:hover,
+.nas-proto-search-results button:focus-visible {
+  background: rgba(126, 88, 40, 0.12);
+}
+
+.nas-proto-spell-copy small {
+  overflow: hidden;
+  color: #6d5d48;
+  font-size: 9.5px;
+  font-style: italic;
+  text-overflow: ellipsis;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.nas-proto-slot-warning {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  width: fit-content;
+  min-width: 0;
+  max-width: 100%;
+  color: #8b4930;
+  font: italic 8.5px/1.15 var(--nas-proto-book-font);
+  cursor: help;
+}
+
+.nas-proto-spell-copy:has(.nas-proto-slot-warning:not([hidden])) {
+  gap: 1px;
+}
+
+.nas-proto-slot-warning[hidden] {
+  display: none;
+}
+
+.nas-proto-slot-warning[data-state="unknown"] {
+  color: #79643b;
+}
+
+.nas-proto-slot-warning-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nas-proto-slot-warning:focus-visible {
+  outline: 1px solid #95663e;
+  outline-offset: 2px;
+}
+
+.nas-proto-slot-tooltip {
+  position: absolute;
+  z-index: 20;
+  bottom: calc(100% + 4px);
+  left: -26px;
+  width: min(250px, calc(100% + 82px));
+  padding: 7px 9px;
+  border: 1px solid #a4875b;
+  border-radius: 3px;
+  background: #f3e8cf;
+  color: #473726;
+  font: 10px/1.35 var(--nas-proto-book-font);
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: break-word;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.nas-proto-spell-row:nth-child(-n + 3) .nas-proto-slot-tooltip {
+  top: calc(100% + 4px);
+  bottom: auto;
+}
+
+.nas-proto-slot-warning:hover .nas-proto-slot-tooltip,
+.nas-proto-slot-warning:focus .nas-proto-slot-tooltip {
+  visibility: visible;
+}
+
+.nas-proto-spell-tools,
+.nas-proto-count-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.nas-proto-spell-tools button,
+.nas-proto-count-control input {
+  min-height: 22px;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: transparent;
+  box-shadow: none;
+  color: #746048;
+  opacity: 1;
+  text-shadow: none;
+}
+
+.nas-proto-spell-tools button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  margin: 0;
+  font: 18px/1 var(--nas-proto-book-font);
+  transition: color 120ms ease, background-color 120ms ease, border-color 120ms ease;
+}
+
+.nas-proto-ink-glyph {
+  width: 19px;
+  height: 19px;
+  pointer-events: none;
+}
+
+.nas-proto-spell-row:hover .nas-proto-spell-tools button,
+.nas-proto-spell-row:focus-within .nas-proto-spell-tools button {
+  border-color: rgba(111, 82, 45, 0.24);
+  color: #4b3926;
+}
+
+.nas-proto-spell-tools button:hover,
+.nas-proto-spell-tools button:focus-visible {
+  border-color: #95663e;
+  background: rgba(183, 143, 77, 0.14);
+  color: #38281a;
+}
+
+.nas-proto-spell-tools button:focus-visible,
+.nas-proto-count-control input:focus-visible {
+  outline: 2px solid #95663e;
+  outline-offset: 1px;
+}
+
+.nas-proto-count-control input {
+  width: 28px;
+  height: 22px;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  border-bottom: 1px solid rgba(107, 78, 42, 0.42);
+  border-radius: 0;
+  color: #3b2e20;
+  font: italic 15px/1 var(--nas-proto-book-font);
+  font-variant-numeric: lining-nums tabular-nums;
+  appearance: textfield;
+  text-align: center;
+}
+
+.nas-proto-count-control input::-webkit-inner-spin-button,
+.nas-proto-count-control input::-webkit-outer-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
+}
+
+.nas-proto-motion-source .nas-proto-spell-tools button:disabled,
+.nas-proto-motion-source .nas-proto-count-control input:disabled {
+  opacity: 1;
+  -webkit-text-fill-color: currentColor;
+}
+
+.nas-proto-folio {
+  position: absolute;
+  right: 13px;
+  bottom: 7px;
+  color: #7b6850;
+  font: italic 10px/1 var(--nas-proto-book-font);
+}
+
+.nas-proto-face-left .nas-proto-folio {
+  right: auto;
+  left: 13px;
+}
+
+.nas-proto-endpaper {
+  position: absolute;
+  inset: 28px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  border: 1px solid rgba(101, 76, 42, 0.3);
+  font-family: var(--nas-proto-book-font);
+  text-align: center;
+}
+
+.nas-proto-endpaper::before,
+.nas-proto-endpaper::after {
+  content: "";
+  position: absolute;
+  inset: 5px;
+  border: 1px solid rgba(115, 85, 44, 0.13);
+  pointer-events: none;
+}
+
+.nas-proto-endpaper::after {
+  inset: 12px;
+  border: 0;
+  background:
+    linear-gradient(#97764b, #97764b) left top / 18px 1px no-repeat,
+    linear-gradient(#97764b, #97764b) left top / 1px 18px no-repeat,
+    linear-gradient(#97764b, #97764b) right bottom / 18px 1px no-repeat,
+    linear-gradient(#97764b, #97764b) right bottom / 1px 18px no-repeat;
+  opacity: 0.45;
+}
+
+.nas-proto-endpaper h3 {
+  max-width: 100%;
+  margin: 13px 0 10px;
+  border: 0;
+  color: #4b3a27;
+  font: 400 25px/1.2 var(--nas-proto-book-font);
+  letter-spacing: -0.025em;
+  text-decoration: none;
+  text-wrap: balance;
+}
+
+.nas-proto-endpaper p {
+  margin: 0;
+  color: #735e43;
+  font: italic 11px/1.5 var(--nas-proto-book-font);
+}
+
+.nas-proto-endpaper-kicker {
+  margin-bottom: 15px;
+  color: #7d5e38;
+  font: 10px/1 var(--nas-proto-book-font);
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+}
+
+.nas-proto-bookplate {
+  display: block;
+  flex: 0 0 auto;
+  width: 104px;
+  height: 104px;
+  background: url("./assets/bookplate.svg") center / contain no-repeat;
+}
+
+.nas-proto-title-flourish {
+  position: relative;
+  margin-bottom: 21px;
+  color: #87653e;
+  font: 18px/1 var(--nas-proto-book-font);
+}
+
+.nas-proto-title-flourish::before,
+.nas-proto-title-flourish::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 35px;
+  height: 1px;
+  background: rgba(133, 100, 59, 0.45);
+}
+
+.nas-proto-title-flourish::before {
+  right: calc(100% + 12px);
+}
+
+.nas-proto-title-flourish::after {
+  left: calc(100% + 12px);
+}
+
+.nas-proto-cover-leaf {
+  position: absolute;
+  top: var(--nas-proto-cover-top);
+  left: 50%;
+  z-index: 20;
+  width: calc(50% - var(--nas-proto-cover-inset));
+  height: calc(100% - var(--nas-proto-cover-top) - var(--nas-proto-cover-bottom));
+  transform: rotateY(0deg);
+  transform-style: preserve-3d;
+  transform-origin: left center;
+  will-change: transform;
+}
+
+.nas-proto-layout-single .nas-proto-cover-leaf {
+  left: var(--nas-proto-cover-inset);
+  width: calc(100% - var(--nas-proto-cover-inset) * 2);
+  transform-origin: left center;
+}
+
+.nas-proto-book-stage[data-cover="open"] .nas-proto-cover-leaf {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.nas-proto-cover-face {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 34px;
+  overflow: hidden;
+  border: 4px solid #20150f;
+  border-radius: 5px 14px 14px 5px;
+  backface-visibility: hidden;
+  transform-style: preserve-3d;
+}
+
+.nas-proto-cover-front {
+  appearance: none;
+  background:
+    url("./assets/leather-grain.svg") 0 0 / 192px 192px repeat,
+    radial-gradient(ellipse at 40% 20%, rgba(223, 189, 128, 0.06), transparent 62%),
+    linear-gradient(90deg, #281c15, #4d3429 8%, #3e291f 52%, #2b1e17);
+  box-shadow:
+    inset 0 0 0 1px rgba(191, 159, 98, 0.46),
+    inset 0 0 0 8px rgba(24, 8, 7, 0.34),
+    inset 0 0 32px rgba(0, 0, 0, 0.55),
+    4px 6px 0 #19110d,
+    9px 12px 20px rgba(0, 0, 0, 0.5);
+  color: #e4c77f;
+  cursor: grab;
+}
+
+.nas-proto-cover-front:active {
+  cursor: grabbing;
+}
+
+.nas-proto-cover-front:focus-visible::before {
+  outline: 2px solid #d9b56c;
+  outline-offset: -3px;
+}
+
+.nas-proto-cover-front:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.nas-proto-cover-front::before {
+  content: "";
+  position: absolute;
+  inset: 24px;
+  border: 1px solid rgba(193, 161, 103, 0.48);
+  border-radius: 2px 10px 10px 2px;
+  box-shadow:
+    inset 0 0 0 4px rgba(25, 8, 7, 0.24),
+    0 0 0 1px rgba(255, 223, 135, 0.08);
+}
+
+.nas-proto-cover-inside {
+  padding: 0;
+  border: 0;
+  border-radius: 14px 5px 5px 14px;
+  background:
+    url("./assets/leather-grain.svg") 0 0 / 192px 192px repeat,
+    radial-gradient(ellipse at 45% 12%, #5c4032, #3d271f 62%, #281b15);
+  box-shadow: inset 0 0 0 4px #20150f, inset 0 0 0 5px rgba(202, 173, 117, 0.4);
+  color: #634124;
+  transform: rotateY(180deg);
+}
+
+.nas-proto-cover-inside .nas-proto-cover-endpaper {
+  top: 9px;
+  bottom: 10px;
+  
+  left: calc(100% * 1.5 / 47.5);
+  right: 13px;
+  width: auto;
+  height: auto;
+  pointer-events: none;
+}
+
+
+.nas-proto-cover-inside .nas-proto-cover-binding-paper,
+.nas-proto-cover-inside .nas-proto-cover-binding-shadow {
+  top: 9px;
+  bottom: 10px;
+  left: auto;
+  transform: none;
+}
+
+.nas-proto-cover-inside .nas-proto-cover-binding-paper {
+  right: -13px;
+  z-index: 1;
+}
+
+.nas-proto-cover-inside .nas-proto-cover-binding-shadow {
+  right: -32px;
+  z-index: 2;
+}
+
+.nas-proto-layout-single .nas-proto-cover-inside .nas-proto-cover-endpaper {
+  left: calc(100% * 2 / 72);
+  right: calc(100% * 2 / 72);
+  padding: 14px 18px 24px;
+  border-radius: 7px;
+}
+
+.nas-proto-canonical .nas-proto-face-insideFront {
+  cursor: grab;
+  touch-action: none;
+}
+
+.nas-proto-canonical .nas-proto-face-insideFront:active {
+  cursor: grabbing;
+}
+
+.nas-proto-cover-corner {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  color: rgba(193, 161, 103, 0.62);
+  pointer-events: none;
+}
+
+.nas-proto-cover-corner-tl {
+  top: 15px;
+  left: 15px;
+  border-top: 1px solid;
+  border-left: 1px solid;
+}
+
+.nas-proto-cover-corner-tr {
+  top: 15px;
+  right: 15px;
+  border-top: 1px solid;
+  border-right: 1px solid;
+}
+
+.nas-proto-cover-corner-bl {
+  bottom: 15px;
+  left: 15px;
+  border-bottom: 1px solid;
+  border-left: 1px solid;
+}
+
+.nas-proto-cover-corner-br {
+  right: 15px;
+  bottom: 15px;
+  border-right: 1px solid;
+  border-bottom: 1px solid;
+}
+
+
+.nas-proto-corner-controls {
+  z-index: 30;
+  overflow: hidden;
+  border-radius: 7px;
+  pointer-events: none;
+}
+
+.nas-proto-book-stage[data-cover="closed"] .nas-proto-corner-controls {
+  inset: var(--nas-proto-cover-top) var(--nas-proto-cover-inset) var(--nas-proto-cover-bottom) 50%;
+  border-radius: 5px 14px 14px 5px;
+}
+
+.nas-proto-layout-single .nas-proto-book-stage[data-cover="closed"] .nas-proto-corner-controls {
+  left: var(--nas-proto-cover-inset);
+}
+
+.nas-proto-turn-corner {
+  appearance: none;
+  position: absolute;
+  bottom: 0;
+  z-index: 30;
+  width: 74px;
+  height: 66px;
+  min-height: 66px;
+  padding: 0;
+  overflow: visible;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  box-shadow: none;
+  color: transparent;
+  clip-path: polygon(0 100%, 100% 0, 100% 100%);
+  cursor: grab;
+  touch-action: none;
+  pointer-events: auto;
+}
+
+.nas-proto-turn-corner:active {
+  cursor: grabbing;
+}
+
+.nas-proto-turn-previous {
+  left: 0;
+  transform: scaleX(-1);
+}
+
+.nas-proto-turn-next {
+  right: 0;
+}
+
+.nas-proto-turn-corner:disabled {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.nas-proto-turn-corner:focus-visible {
+  outline: 2px solid rgba(221, 169, 83, 0.88);
+  outline-offset: -8px;
+}
+
+.nas-proto-bookmarks {
+  position: absolute;
+  top: 58px;
+  right: 0;
+  z-index: 31;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.nas-proto-layout-single .nas-proto-bookmarks {
+  right: 11.5%;
+}
+
+.nas-proto-bookmark {
+  width: 29px;
+  height: 27px;
+  min-height: 27px;
+  padding: 0 2px 0 0;
+  border: 1px solid #61331f;
+  border-right: 0;
+  border-radius: 8px 0 0 8px;
+  background:
+    linear-gradient(90deg, #eedb9d, #b56e35);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 245, 196, 0.3),
+    -2px 2px 4px rgba(0, 0, 0, 0.28);
+  color: #3d2115;
+  font: 700 11px/1 Georgia, serif;
+  transition: transform 150ms ease, filter 150ms ease;
+}
+
+.nas-proto-bookmark:hover,
+.nas-proto-bookmark:focus-visible {
+  filter: brightness(1.14);
+  transform: translateX(-5px);
+}
+
+.nas-proto-bookmark-active {
+  background: linear-gradient(90deg, #ffe7a4, #a7492d);
+  transform: translateX(-7px);
+}
+
+.nas-proto-view-status {
+  display: none;
+}
+
+.nas-proto-book-tools {
+  position: absolute;
+  top: 20px;
+  right: 3%;
+  z-index: 65;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.nas-proto-book-tools button,
+.nas-proto-drag-grip,
+.nas-proto-resize-grip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 21px;
+  height: 21px;
+  min-height: 21px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid rgba(177, 144, 87, 0.55);
+  border-radius: 4px;
+  background: linear-gradient(#624732, #352319);
+  box-shadow: inset 0 0 0 1px rgba(236, 201, 135, 0.07), 0 1px 2px rgba(0, 0, 0, 0.35);
+  color: #d5b77c;
+  text-shadow: none;
+}
+
+.nas-proto-book-tools button:hover,
+.nas-proto-book-tools button:focus-visible,
+.nas-proto-resize-grip:hover,
+.nas-proto-resize-grip:focus-visible {
+  color: #f8dfa7;
+  border-color: #d6af6a;
+}
+
+.nas-proto-book-tools svg,
+.nas-proto-settings-bookmark svg,
+.nas-proto-resize-grip svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.nas-proto-drag-grip {
+  position: absolute;
+  top: 22px;
+  left: 56%;
+  z-index: 64;
+  width: 25%;
+  height: 10px;
+  min-height: 10px;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  box-shadow: none;
+  color: rgba(219, 185, 118, 0.65);
+  cursor: grab;
+  touch-action: none;
+  font: 14px/0.6 Georgia, serif;
+}
+
+.nas-proto-drag-grip:active { cursor: grabbing; }
+
+.nas-proto-drag-grip:hover,
+.nas-proto-drag-grip:focus-visible {
+  background: rgba(220, 180, 105, 0.12);
+  color: #e5c58c;
+}
+
+.nas-proto-settings-bookmark {
+  position: absolute;
+  top: 40px;
+  left: 1%;
+  z-index: 34;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 30px;
+  min-height: 30px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid #765036;
+  border-radius: 0 7px 7px 0;
+  background: linear-gradient(90deg, #976f46, #e6d096);
+  box-shadow: 1px 2px 3px rgba(0, 0, 0, 0.28);
+  color: #563920;
+}
+
+.nas-proto-settings-bookmark:hover,
+.nas-proto-settings-bookmark:focus-visible {
+  background: linear-gradient(90deg, #aa8050, #fae6aa);
+}
+
+.nas-proto-book-stage:not([data-cover="open"]) [data-proto-open-only] {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.nas-proto-root[data-dismiss="true"] [data-proto-open-only],
+.nas-proto-root [data-proto-open-only][hidden] {
+  display: none !important;
+}
+
+.nas-proto-book-tools [data-proto-popin] svg { transform: rotate(180deg); }
+
+.nas-proto-resize-grip {
+  position: absolute;
+  right: calc(50% - 9px);
+  top: 20px;
+  z-index: 64;
+  width: 19px;
+  height: 19px;
+  min-height: 19px;
+  border-radius: 2px;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.nas-proto-book-commit {
+  position: absolute;
+  right: 8%;
+  bottom: 25px;
+  left: 8%;
+  z-index: 35;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.nas-proto-rest-requests {
+  display: flex;
+  flex: 1 0 100%;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 4px 7px;
+  border: 1px solid #8d6f43;
+  background: #e7d8b4;
+  color: #51351e;
+  font: 11px var(--nas-proto-book-font);
+}
+
+.nas-proto-rest-requests[hidden] { display: none !important; }
+.nas-proto-rest-requests > span { flex: 0 0 auto; }
+.nas-proto-rest-request-list { display: flex; gap: 5px; overflow-x: auto; min-width: 0; }
+.nas-proto-rest-request-list button { flex: 0 0 auto; max-width: 270px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nas-proto-rest-request-list button[aria-current="true"] { opacity: 1; font-weight: bold; border-color: #51351e; }
+
+.nas-proto-draft-status {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 3px 7px;
+  overflow: hidden;
+  border: 1px solid rgba(141, 111, 67, 0.65);
+  border-radius: 1px;
+  background: #dcccaa;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  color: #665031;
+  font: italic 10px/1.3 var(--nas-proto-book-font);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nas-proto-draft-status:empty {
+  visibility: hidden;
+}
+
+.nas-proto-apply-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 7px;
+}
+
+.nas-proto-book-commit button {
+  width: auto;
+  height: 28px;
+  min-height: 28px;
+  margin: 0;
+  padding: 0 12px;
+  border: 1px solid #745436;
+  border-radius: 2px 2px 5px 5px;
+  background: linear-gradient(#eadab1, #cfb584);
+  box-shadow: 0 2px 3px rgba(25, 13, 5, 0.38), inset 0 0 0 1px rgba(255, 242, 200, 0.28);
+  color: #51351e;
+  font: 11px var(--nas-proto-book-font);
+  text-shadow: none;
+}
+
+.nas-proto-book-commit button:hover,
+.nas-proto-book-commit button:focus-visible {
+  background: linear-gradient(#f5e5bc, #dfc593);
+}
+
+.nas-proto-book-stage:not([data-cover="open"]) .nas-proto-book-commit {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.nas-proto-layout-single .nas-proto-book-tools { right: 14.5%; }
+.nas-proto-layout-single .nas-proto-settings-bookmark,
+.nas-proto-layout-single .nas-proto-book-stage:not([data-cover="open"]) .nas-proto-settings-bookmark { left: 12%; }
+.nas-proto-layout-single .nas-proto-drag-grip { left: 20%; width: 45%; }
+.nas-proto-layout-single .nas-proto-book-commit { left: 17%; right: 18%; gap: 7px; }
+.nas-proto-layout-single .nas-proto-book-commit button { padding-inline: 10px; }
+
+.nas-proto-cover-snapshot,
+.nas-proto-cover-snapshot * {
+  pointer-events: none !important;
+  transition: none !important;
+  animation: none !important;
+}
+
+.nas-proto-cover-snapshot .nas-proto-setup-fields select:disabled,
+.nas-proto-cover-snapshot .nas-proto-setup-fields button:disabled {
+  opacity: 1;
+  -webkit-text-fill-color: currentColor;
+}
+
+.nas-proto-live-region {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.nas-proto-motion-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 18;
+  overflow: visible;
+  pointer-events: none;
+  transform-style: preserve-3d;
+}
+
+.nas-proto-motion-layer[hidden] {
+  display: none;
+}
+
+.nas-proto-motion-leaf {
+  --nas-proto-fold-shadow-opacity: 0;
+  --nas-proto-fold-shadow-width: 0px;
+  position: absolute;
+  pointer-events: none;
+}
+
+.nas-proto-motion-hard {
+  transform: rotateY(0deg);
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+
+.nas-proto-motion-face {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: 6px;
+  backface-visibility: hidden;
+  box-shadow:
+    0 6px 20px rgba(36, 20, 11, 0.22),
+    inset 0 0 20px rgba(83, 50, 26, 0.12);
+}
+
+.nas-proto-motion-back {
+  transform: rotateY(180deg);
+}
+
+.nas-proto-motion-source {
+  position: absolute !important;
+  inset: 0 !important;
+  display: block !important;
+  box-sizing: border-box !important;
+  width: 100% !important;
+  height: 100% !important;
+  margin: 0 !important;
+  pointer-events: none !important;
+  user-select: none !important;
+}
+
+.nas-proto-motion-source,
+.nas-proto-motion-source * {
+  transition: none !important;
+}
+
+.nas-proto-fold-front,
+.nas-proto-fold-back,
+.nas-proto-fold-back-content {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.nas-proto-fold-front {
+  z-index: 1;
+  will-change: clip-path;
+}
+
+.nas-proto-fold-back {
+  z-index: 3;
+  transform-origin: 0 0;
+  filter: drop-shadow(
+    0
+    7px
+    10px
+    rgba(36, 20, 11, var(--nas-proto-fold-shadow-opacity))
+  );
+  will-change: clip-path, transform;
+}
+
+.nas-proto-fold-back-content {
+  transform: scaleX(-1);
+  transform-origin: center;
+}
+
+.nas-proto-fold-back-shade {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  opacity: var(--nas-proto-fold-shadow-opacity);
+  background:
+    linear-gradient(
+      90deg,
+      rgba(50, 27, 13, 0.58),
+      transparent 32%,
+      rgba(255, 246, 214, 0.22)
+    );
+  pointer-events: none;
+}
+
+.nas-proto-fold-crease-shadow,
+.nas-proto-fold-crease-highlight {
+  position: absolute;
+  z-index: 5;
+  height: var(--nas-proto-fold-shadow-width);
+  border-radius: 50%;
+  transform-origin: center;
+  pointer-events: none;
+  will-change: left, top, width, transform;
+}
+
+.nas-proto-fold-crease-shadow {
+  opacity: var(--nas-proto-fold-shadow-opacity);
+  background:
+    linear-gradient(
+      180deg,
+      transparent,
+      rgba(45, 24, 12, 0.62) 45%,
+      rgba(45, 24, 12, 0.16) 62%,
+      transparent
+    );
+  filter: blur(3px);
+}
+
+.nas-proto-fold-crease-highlight {
+  height: 3px;
+  opacity: var(--nas-proto-fold-shadow-opacity);
+  background:
+    linear-gradient(
+      90deg,
+      transparent,
+      rgba(255, 245, 213, 0.72) 12% 88%,
+      transparent
+    );
+  filter: blur(0.35px);
+}
+
+.nas-proto-motion-shadow {
+  position: absolute;
+  top: 35px;
+  bottom: 54px;
+  left: 50%;
+  width: 34px;
+  opacity: 0;
+  background:
+    radial-gradient(ellipse at center, rgba(28, 14, 8, 0.58), transparent 69%);
+  filter: blur(5px);
+  transform: translateX(-50%);
+}
+
+.nas-proto-motion-hard .nas-proto-motion-face {
+  border: 0;
+  border-radius: 0;
+  box-shadow:
+    0 9px 24px rgba(20, 8, 6, 0.54),
+    inset 0 0 24px rgba(0, 0, 0, 0.34);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nas-proto-root *,
+  .nas-proto-root *::before,
+  .nas-proto-root *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 1ms !important;
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+@media (max-width: 860px) {
+  .nas-proto-book-workspace { padding-inline: 7px; }
+  .nas-proto-spell-row { grid-template-columns: 24px minmax(0, 1fr) auto; gap: 4px; }
+}
+
+@media (max-height: 631px) {
+  .nas-proto-face-content { display: flex; flex-direction: column; }
+  .nas-proto-page-header { flex: 0 0 auto; }
+  .nas-proto-spell-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    grid-auto-rows: auto;
+    grid-template-rows: repeat(10, minmax(38px, 1fr));
+  }
+}

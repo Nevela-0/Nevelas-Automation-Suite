@@ -1,7 +1,10 @@
 import { MODULE } from '../common/module.js';
+import { registerActionTrackerSocket } from '../features/actionTracker/index.js';
+
 import { chatMessageStyle } from '../common/foundryCompat.js';
 import { applyBuffToTargets } from '../features/automation/buffs/buffs.js';
 import { buildTokenHeaderHtml, SAVE_TOKEN_FLAG } from '../features/automation/utils/chatSaveOverrides.js';
+import { saveRollDc } from '../features/automation/utils/actionSaveContext.js';
 import {
     applyMirrorImageStateSocket,
     undoMirrorImageOperationSocket
@@ -44,15 +47,17 @@ async function applyPlayerDamageWithAutomation(actor, value, options = {}) {
 }
 
 export function initializeSockets() {
+
     if (!game.modules.get("socketlib")?.active) {
         if (game.settings.get(MODULE.ID, "massiveDamage")) {
             ui.notifications.warn(localizeSockets("warnings.socketLibRequired"));
         }
         return;
     }
-    
+
     socket = socketlib.registerModule(MODULE.ID);
-    
+    registerActionTrackerSocket(socket);
+
     socket.register("rollMassiveDamageSave", rollMassiveDamageSave);
     socket.register("applyImmobilize", applyImmobilize);
     socket.register("sendNotification", sendNotification);
@@ -176,7 +181,9 @@ export function getPreferredOwnerUserId(actor) {
         const activeOwners = ownerUsers.filter(u => u.active);
         if (activeOwners.length > 0) return activeOwners[0].id;
     } catch (_err) {
+
     }
+
     const activeGm = game.users.find(u => u.active && u.isGM);
     return activeGm?.id ?? null;
 }
@@ -189,7 +196,9 @@ async function resolveActorByUuid(actorUuid) {
             if (actorDoc) return actorDoc;
         }
     } catch (_err) {
+
     }
+
     if (String(actorUuid).includes(".Token.")) {
         return null;
     }
@@ -395,17 +404,19 @@ async function rollMassiveDamageSave(actorId, damageAmount, threshold) {
     }
 
     const roll = await actor.rollSavingThrow("fort", { dc: 15 });
-    
+
     let total = 0;
     if (roll.rolls && roll.rolls.length > 0) {
         total = roll.rolls[0].total || 0;
     }
+
     const success = total >= 15;
-    
+
     if (!success) {
+
         await actor.setCondition('dead', {overlay: true});
     }
-    
+
     let content = formatSockets("chat.massiveDamageSummary", {
         name: actor.name,
         damage: damageAmount,
@@ -414,14 +425,14 @@ async function rollMassiveDamageSave(actorId, damageAmount, threshold) {
     content += success
         ? formatSockets("chat.fortitudeSuccess", { name: actor.name, total })
         : formatSockets("chat.fortitudeFailure", { name: actor.name, total });
-    
+
     ChatMessage.create({
         ...chatMessageStyle("OTHER"),
         user: game.user.id,
         speaker: ChatMessage.getSpeaker({actor}),
         content: content
     });
-    
+
     return { 
         name: actor.name, 
         total: total, 
@@ -432,17 +443,20 @@ async function rollMassiveDamageSave(actorId, damageAmount, threshold) {
 }
 
 export function checkMassiveDamage(damage, maxHP, token) {
+
     const massiveDamageEnabled = game.settings.get(MODULE.ID, "massiveDamage");
     if (!massiveDamageEnabled) return;
-    
+
     const damageThreshold = Math.max(Math.floor(maxHP / 2), 50);
-    
+
     if (damage >= damageThreshold) {
+
         if (!game.modules.get("socketlib")?.active) {
             ui.notifications.warn(formatSockets("warnings.massiveDamageNoSocketLib", {
                 name: token.name,
                 damage
             }));
+
             if (game.user.isGM) {
                 const actor = token.actor;
                 ChatMessage.create({
@@ -455,41 +469,49 @@ export function checkMassiveDamage(damage, maxHP, token) {
             }
             return;
         }
-        
+
         if (typeof socketlib === 'undefined' || !socket) {
             ui.notifications.warn(formatSockets("warnings.massiveDamageSocketUninitialized", {
                 name: token.name,
                 damage
             }));
+
             if (typeof socketlib !== 'undefined' && !socket) {
                 initializeSockets();
             }
             return;
         }
-        
+
         const actorId = token.actor.id;
-        
+
         const nonGmOwners = Object.entries(token.actor.ownership)
             .filter(([userId, level]) => level >= CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER && 
                     userId !== "default" && 
                     game.users.get(userId)?.active && 
                     !game.users.get(userId)?.isGM);
-        
+
         if (nonGmOwners.length > 0) {
+
             const targetUserId = nonGmOwners[0][0];
             socket.executeAsUser("rollMassiveDamageSave", targetUserId, actorId, damage, damageThreshold)
+                .then(result => {
+
+                })
                 .catch(error => {
                     console.error("Error rolling massive damage save:", error);
+
                     const activeGm = game.users.find(u => u.active && u.isGM);
                     if (activeGm) {
                         socket.executeAsUser("rollMassiveDamageSave", activeGm.id, actorId, damage, damageThreshold);
                     }
                 });
         } else {
+
             const activeGm = game.users.find(u => u.active && u.isGM);
             if (activeGm) {
                 socket.executeAsUser("rollMassiveDamageSave", activeGm.id, actorId, damage, damageThreshold);
             } else {
+
                 ui.notifications.warn(formatSockets("warnings.massiveDamageNoUser", {
                     name: token.name,
                     damage
@@ -501,6 +523,7 @@ export function checkMassiveDamage(damage, maxHP, token) {
 let immobileConditionIds = new Set();
 
 export function initializeConditionIds() {
+
     const immobileConditions = ["anchored", "cowering", "dazed", "grappled", "helpless", "paralyzed", "petrified", "pinned"];
 
     pf1.registry.conditions.forEach(condition => {
@@ -511,33 +534,8 @@ export function initializeConditionIds() {
 }
 
 function hasImmobileCondition(token) {
-    return token.actor.statuses?.some(status => immobileConditionIds.has(status)) ?? false;
-}
 
-function getActorSpeedFromSystemData(actor, movementType = "walk") {
-    const speedData = actor?.system?.attributes?.speed ?? {};
-    const normalized = String(movementType ?? "walk").toLowerCase();
-    const mappedKey = normalized === "walk" ? "land" : normalized;
-    const speedValue = Number(speedData?.[mappedKey]?.total ?? speedData?.[mappedKey]);
-    return Number.isFinite(speedValue) && speedValue > 0 ? speedValue : 0;
-}
-
-function getActorMovementSpeed(actor, movementType = "walk") {
-    const normalized = String(movementType ?? "walk").toLowerCase();
-    const movementInfo = actor?.getMovement?.(normalized);
-    const movementSpeed = Number(movementInfo?.speed);
-    if (Number.isFinite(movementSpeed) && movementSpeed > 0) return movementSpeed;
-    return getActorSpeedFromSystemData(actor, normalized);
-}
-
-function getLegacySpeedOptions(actor) {
-    const speedData = actor?.system?.attributes?.speed ?? {};
-    return Object.entries(speedData)
-        .map(([speedType, data]) => ({
-            speedType,
-            total: Number(data?.total ?? data)
-        }))
-        .filter(({ total }) => Number.isFinite(total) && total > 0);
+    return [...token.actor?.statuses ?? []].some(status => immobileConditionIds.has(status));
 }
 
 async function applyImmobilize(tokenId, limit) {
@@ -553,10 +551,12 @@ async function applyImmobilize(tokenId, limit) {
     const currentLimit = token.document.getFlag(MODULE.ID, 'immobilized');
 
     if (currentLimit !== undefined) {
+
         await token.document.unsetFlag(MODULE.ID, 'immobilized');
         sendNotificationToOwners(token, "info", game.i18n.localize('NAS.conditions.sockets.MovementRestrictionRemoved'));
     } else {
-        await token.document.setFlag(MODULE.ID, 'immobilized', limit);  
+
+        await token.document.setFlag(MODULE.ID, 'immobilized', limit);   
         sendNotificationToOwners(token, "info", game.i18n.localize('NAS.conditions.sockets.MovementRestrictionApplied'));
     }
 }
@@ -630,6 +630,7 @@ async function useHtkItem(actorId, itemUuid, tokenUuid = null) {
     if (item.actor?.uuid && actor.uuid && item.actor.uuid !== actor.uuid) return false;
 
     try {
+
         await item.use?.({ skipDialog: true, chatMessage: false, token: tokenDocument });
 
         await item.displayCard?.({ whisper, rollMode: "gmroll" }, { token: tokenDocument });
@@ -639,20 +640,19 @@ async function useHtkItem(actorId, itemUuid, tokenUuid = null) {
     }
 }
 
-let updatingToken = false;
-
-const BLIND_MOVEMENT_ACROBATICS_DC = 10;
-
 Hooks.on('preUpdateToken', (tokenDocument, updateData, options, userId) => {
     if (!isConditionAutomationEnabled()) return true;
-    if (updatingToken) return true; 
 
     if (!globalThis.game?.settings?.settings?.has?.(`${MODULE.ID}.restrictMovement`)) {
         return true;
     }
     const restrictSetting = game.settings.get(MODULE.ID, 'restrictMovement');
-    const limit = tokenDocument.getFlag(MODULE.ID, 'immobilized');
-    if (limit !== undefined || hasImmobileCondition(tokenDocument)) {
+
+    const manualLimit = tokenDocument.getFlag(MODULE.ID, 'immobilized');
+
+    const limit = hasImmobileCondition(tokenDocument) ? 0
+        : Number.isFinite(manualLimit) && manualLimit >= 0 ? manualLimit : undefined;
+    if (limit !== undefined) {
         const currentX = tokenDocument.x;
         const currentY = tokenDocument.y;
         const newX = updateData.x !== undefined ? updateData.x : currentX;
@@ -663,7 +663,10 @@ Hooks.on('preUpdateToken', (tokenDocument, updateData, options, userId) => {
         const gridSize = canvas.grid.size;
         const maxMove = gridSize * limit;
 
-        if (deltaX > maxMove || deltaY > maxMove) {
+        const deltaElevation = Math.abs((updateData.elevation ?? tokenDocument.elevation) - tokenDocument.elevation);
+        const maxElevation = tokenDocument.parent?.grid?.distance * limit;
+        if (deltaX > maxMove || deltaY > maxMove || deltaElevation > maxElevation) {
+
             if (restrictSetting === "all" || (restrictSetting === "players" && !game.user.isGM)) {
                 if (game.user.id === userId) {
                     const limitFeet = limit * 5;
@@ -671,136 +674,9 @@ Hooks.on('preUpdateToken', (tokenDocument, updateData, options, userId) => {
                 }
                 return false;
             }
+
         }
     }
-
-    if (game.settings.get(MODULE.ID, 'blindMovementCheck')) {
-        const token = canvas.tokens.get(tokenDocument.id);
-        if (!token) return true;
-    
-        const hasBlindCondition = token.actor.statuses?.some(status => status === "blind") ?? false;
-    
-        if (hasBlindCondition && (updateData.x !== undefined || updateData.y !== undefined)) {
-            if (options) options.cancelled = true;
-            const currentX = tokenDocument.x;
-            const currentY = tokenDocument.y;
-            const newX = updateData.x ?? currentX;
-            const newY = updateData.y ?? currentY;
-
-            const gridSize = canvas.grid?.size || 1;
-            const gridDistance = canvas.dimensions?.distance ?? canvas.scene?.grid?.distance ?? 5;
-            const distanceMoved = (Math.hypot(newX - currentX, newY - currentY) / gridSize) * gridDistance;
-
-            if (distanceMoved === 0) return true;
-
-            const moveToken = async () => {
-                updatingToken = true;
-                await token.document.update(updateData);
-                updatingToken = false;
-            };
-
-            const promptAcrobatics = () => {
-                new Dialog({
-                    title: game.i18n.localize('NAS.conditions.sockets.BlindMovementCheckTitle'),
-                    content: `<p>${game.i18n.format('NAS.conditions.sockets.BlindMovementCheckPrompt', { name: token.name })}</p>`,
-                    buttons: {
-                        roll: {
-                            label: game.i18n.localize('NAS.conditions.sockets.RollAcrobatics'),
-                            callback: async () => {
-                                const roll = await token.actor.rollSkill("acr", {
-                                    dc: BLIND_MOVEMENT_ACROBATICS_DC,
-                                    reason: "blindMovement"
-                                });
-                                const total =
-                                    roll?.rolls?.[0]?.total
-                                    ?? roll?.total
-                                    ?? 0;
-                                if (total >= BLIND_MOVEMENT_ACROBATICS_DC) {
-                                    await moveToken();
-                                } else {
-                                    token.actor.setCondition("prone", true);
-                                    return false;
-                                }
-                            }
-                        },
-                        cancel: {
-                            label: game.i18n.localize('NAS.common.buttons.cancel'),
-                            callback: () => {
-                            }
-                        }
-                    },
-                    default: "roll"
-                }).render(true);
-            };
-
-            const handleSpeedSelection = async (speedTotal) => {
-                if (distanceMoved <= speedTotal / 2) {
-                    await moveToken();
-                    return;
-                }
-                promptAcrobatics();
-            };
-
-            const currentMovementType = tokenDocument.movementAction;
-            const hasTokenMovementMode = typeof currentMovementType === "string" && currentMovementType.length > 0;
-            if (hasTokenMovementMode) {
-                const speedTotal = getActorMovementSpeed(token.actor, currentMovementType);
-                if (speedTotal > 0) {
-                    void handleSpeedSelection(speedTotal);
-                    return false; 
-                }
-            }
-
-            const availableSpeeds = getLegacySpeedOptions(token.actor);
-            if (!availableSpeeds.length) return true;
-
-            const defaultSpeedTotal = availableSpeeds[0].total;
-            const speedOptions = availableSpeeds.map(({ speedType, total }, index) => {
-                const label = `${speedType.charAt(0).toUpperCase()}${speedType.slice(1)} (${total})`;
-                const checked = index === 0 ? "checked" : "";
-                return `<label><input type="radio" name="blind-speed-type" value="${speedType}" data-total="${total}" ${checked}/> ${label}</label>`;
-            }).join("<br/>");
-
-            const dialogContent = `
-                <p>${game.i18n.localize('NAS.conditions.sockets.BlindMovementSpeedPrompt')}</p>
-                <p class="blind-move-info">${game.i18n.format('NAS.conditions.sockets.BlindMovementSpeedInfo', { halfSpeed: defaultSpeedTotal / 2 })}</p>
-                <form class="blind-move-speed-form">
-                    ${speedOptions}
-                </form>
-            `;
-
-            new Dialog({
-                title: game.i18n.localize('NAS.conditions.sockets.BlindMovementSpeedTitle'),
-                content: dialogContent,
-                buttons: {
-                    confirm: {
-                        label: game.i18n.localize('NAS.common.labels.confirm') ?? "Confirm",
-                        callback: async (html) => {
-                            const selected = html.find('input[name="blind-speed-type"]:checked');
-                            const speedTotal = Number(selected.data("total"));
-                            await handleSpeedSelection(speedTotal);
-                        }
-                    },
-                    cancel: {
-                        label: game.i18n.localize('NAS.common.buttons.cancel'),
-                        callback: () => {
-                        }
-                    }
-                },
-                default: "confirm",
-                render: (html) => {
-                    html.find('input[name="blind-speed-type"]').on('change', ev => {
-                        const speedTotal = Number(ev.currentTarget.dataset.total);
-                        html.find('.blind-move-info').text(
-                            game.i18n.format('NAS.conditions.sockets.BlindMovementSpeedInfo', { halfSpeed: speedTotal / 2 })
-                        );
-                    });
-                }
-            }).render(true);
-
-            return false; 
-        };
-    };
 
     return true;
 });
@@ -822,6 +698,7 @@ function socketParseRollJson(value) {
             if (roll) return roll;
         }
     } catch (_err) {
+
     }
     try {
         return JSON.parse(value);
@@ -877,14 +754,14 @@ async function rollNasBuffSaveSocket(targetRef, saveType, dc, options = {}) {
         dc,
         skipDialog: true,
         fastForward: true,
-        token: token ?? tokenDocument?.object,
+        token: tokenDocument ?? token?.document ?? token,
         chatMessage: hiddenMessage ? false : true,
         rollMode: hiddenMessage ? undefined : (privateRoll ? "gmroll" : undefined),
         noSound: hiddenMessage === true
     });
     const total = socketExtractRollTotal(result);
     if (hiddenMessage) await createGmOnlyBuffSaveMessage(result, tokenDocument);
-    return { total, created: hiddenMessage ? true : Boolean(result?.id ?? result?._id) };
+    return { total, dc: saveRollDc(result, dc), created: hiddenMessage ? true : Boolean(result?.id ?? result?._id) };
 }
 
 function sendNotificationToOwners(token, type, message) {
@@ -902,59 +779,51 @@ function sendNotificationToOwners(token, type, message) {
     }
 }
 
-Hooks.on('pf1ToggleActorCondition', async (actor, condition, enabled) => {
-    if (!isConditionAutomationEnabled()) return;
-    if (immobileConditionIds.has(condition)) {
-        const tokens = actor.getActiveTokens();
-        for (const token of tokens) {
-            await socket.executeAsGM("applyImmobilize", token.id, enabled ? 0 : null);
-        }
-    }
-});
-
 async function handleFlatFootedRemoval(tokenId, round, turn) {
   const token = canvas.tokens.get(tokenId);
   if (!token || !token.actor) return;
-  
+
   const actor = token.actor;
-  
+
   if (!actor.statuses.has("flatFooted")) return;
-  
+
   const combat = game.combat;
   if (!combat) return;
-  
+
   const ffTracker = combat.getFlag(MODULE.ID, "flatFootedTracker") || {};
   const trackerData = ffTracker[tokenId];
-  
+
   if (trackerData) {
     const targetRemovalRound = trackerData.targetRemovalRound || 1;
-    
+
     if (round >= targetRemovalRound) {
       try {
+
         const isBeingProcessed = combat.getFlag(MODULE.ID, "processingFlatFooted") || {};
-        
+
         if (isBeingProcessed[tokenId]) return;
-        
+
         isBeingProcessed[tokenId] = true;
         await combat.setFlag(MODULE.ID, "processingFlatFooted", isBeingProcessed);
-        
+
         if (actor.statuses.has("flatFooted")) {
           await actor.setCondition("flatFooted", false);
         }
-        
+
         trackerData.removalInfo = {
           removedOnRound: round,
           removedOnTurn: turn
         };
         trackerData.wasFlatFooted = false;
-        
+
         ffTracker[tokenId] = trackerData;
         await combat.setFlag(MODULE.ID, "flatFootedTracker", ffTracker);
-        
+
         isBeingProcessed[tokenId] = false;
         await combat.setFlag(MODULE.ID, "processingFlatFooted", isBeingProcessed);
       } catch (error) {
         console.error("Error in handleFlatFootedRemoval:", error);
+
         const isBeingProcessed = combat.getFlag(MODULE.ID, "processingFlatFooted") || {};
         isBeingProcessed[tokenId] = false;
         await combat.setFlag(MODULE.ID, "processingFlatFooted", isBeingProcessed);
@@ -964,6 +833,7 @@ async function handleFlatFootedRemoval(tokenId, round, turn) {
 }
 
 async function applyBuffToTargetsSocket(buffData, targetIds, duration, casterLevel, options = {}) {
+
     let buffDoc = null;
     if (buffData.pack) {
         const pack = game.packs.get(buffData.pack);
@@ -973,7 +843,9 @@ async function applyBuffToTargetsSocket(buffData, targetIds, duration, casterLev
         buffDoc = game.items.get(buffData.id);
     }
     if (!buffDoc) return;
+
     const targets = targetIds.map(id => canvas.tokens.get(id)).filter(Boolean);
+
     await applyBuffToTargets({ ...buffData, document: buffDoc }, targets, duration, casterLevel, options);
 }
 

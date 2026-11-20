@@ -1,3 +1,4 @@
+import { setHealthCondition } from '../healthConditions.js';
 import { MODULE } from '../../../../common/module.js';
 import { hasWvHealthUpdate, isWoundsVigorActive, isWvNoWoundsActor, shouldBeStaggeredFromWv } from '../../utils/woundsVigor.js';
 
@@ -6,6 +7,7 @@ const WV_STAGGERED_FLAG = 'wvThresholdStaggered';
 export async function handleWoundsVigorThresholdSync(actorDocument, change) {
   if (!actorDocument?.isOwner) return;
   if (!isWoundsVigorActive(actorDocument)) return;
+
   if (isWvNoWoundsActor(actorDocument)) return;
   if (!hasWvHealthUpdate(change)) return;
 
@@ -19,7 +21,7 @@ export async function handleWoundsVigorThresholdSync(actorDocument, change) {
 
   if (shouldStagger) {
     if (!hasStaggered) {
-      await actorDocument.setCondition('staggered', true);
+      await setHealthCondition(actorDocument, 'staggered', true);
     }
     if (!wasFromWv) {
       await actorDocument.setFlag(MODULE.ID, WV_STAGGERED_FLAG, true);
@@ -28,7 +30,7 @@ export async function handleWoundsVigorThresholdSync(actorDocument, change) {
   }
 
   if (wasFromWv && hasStaggered) {
-    await actorDocument.setCondition('staggered', false);
+    await setHealthCondition(actorDocument, 'staggered', false);
   }
   if (wasFromWv) {
     await actorDocument.unsetFlag(MODULE.ID, WV_STAGGERED_FLAG);

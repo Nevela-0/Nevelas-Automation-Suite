@@ -333,7 +333,7 @@
                                     {{/if}}
                                     {{/if}}
                                 {{else}}
-                                    {{!-- Show only All tag if all types are selected --}}
+                                    
                                     {{#if (and (includes this.immunity.bypass.types "all") (eq this.immunity.bypass.types.length ../damageTypesImmunity.length))}}
                                         <div class="multiselect-tag" data-value="all">
                                             <span>{{localize "NAS.forms.damageUi.all"}}</span>

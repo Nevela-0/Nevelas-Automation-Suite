@@ -1,3 +1,4 @@
+import { getFlagsContainer } from "./attackDialogFlags.js";
 import { resolveEnglishName } from "./compendiumNameResolver.js";
 import {
   getDictionaryNumber,
@@ -34,6 +35,7 @@ import {
   getRacialSpellLikeTraitSources,
   getTransmuterOfKoradaSource,
   getWayangSpellhunterSource,
+  getWayangSpellhunterSlotAdjustment,
   promptTransmuterOfKoradaSpellSelection,
   promptWayangSpellhunterSpellSelection,
   setTransmuterOfKoradaSelectedSpellName,
@@ -87,11 +89,13 @@ export const GRAPPLE_CMB_MARKER = "0[NAS_Grapple_CMB]";
 export const METAMAGIC_FORM_KEY = "metamagic";
 export const METAMAGIC_SELECT_KEY = "metamagicSelection";
 export const METAMAGIC_NAMES_KEY = "metamagicNames";
+export const METAMAGIC_SOURCES_KEY = "metamagicSources";
 export const METAMAGIC_DROPDOWN_KEY = "metamagicDropdownOpen";
 export const METAMAGIC_OPTIONS_KEY = "metamagicOptions";
 export const METAMAGIC_FEATURE_STATE_KEY = "classFeatures";
 export const TRAIT_OPTIONS_KEY = "traitOptions";
 export const FEAT_OPTIONS_KEY = "featOptions";
+const WAYANG_PREVIEW_SOURCE_KEY = "wayangSpellhunterPreviewSource";
 const METAMAGIC_PREVIEW_MODE_NONE = "none";
 const METAMAGIC_PREVIEW_MODE_CONCISE = "concise";
 const METAMAGIC_PREVIEW_MODE_DETAILED = "detailed";
@@ -125,9 +129,12 @@ const METAMAGIC_SLOT_COSTS = {
   "Persistent Spell": 2,
   "Intensified Spell": 1,
   "Maximize Spell": 3,
+  "Widen Spell": 3,
   "Empower Spell": 2,
 };
+
 const SPONTANEOUS_METAFOCUS_SELECTED_FLAG = "SMFSC";
+
 const SPONTANEOUS_METAFOCUS_SPELL_FLAG_PREFIX = "SMFSS";
 
 function localizeMetamagic(path) {
@@ -237,21 +244,6 @@ export function commitPersistentFeatureStatesFromOptions(actor, options) {
   Object.entries(featureStates).forEach(([featureId, enabled]) => {
     setPersistentFeatureState(actor, featureId, enabled === true);
   });
-}
-
-function getFlagsContainer(form) {
-  let container = form.querySelector('div.form-group.stacked.flags');
-  if (container) return container;
-
-  container = document.createElement('div');
-  container.classList.add('form-group', 'stacked', 'flags');
-  const label = document.createElement('label');
-  label.textContent = ` ${game.i18n.localize('PF1.Misc')} `;
-  container.appendChild(label);
-  const sibling = form.querySelector('.form-group.flags') || form.querySelector('.form-group');
-  if (sibling) sibling.after(container);
-  else form.appendChild(container);
-  return container;
 }
 
 function createGrappleCmbDialogAttack(dialog) {
@@ -690,6 +682,7 @@ export async function addMetamagicCheckbox(dialog, html) {
   let checkboxLabel = "Metamagic";
   if (getActionItemType(dialog) === "spell") {
     metamagicSources = await getAvailableMetamagicSources(actor, { resolveEnglishNames: false });
+
     const invocationSources = await getKineticInvocationSpellMetamagicSources(actor, item);
     if (invocationSources?.length) {
       metamagicSources = [...metamagicSources, ...invocationSources];
@@ -757,6 +750,7 @@ export async function addMetamagicCheckbox(dialog, html) {
     maleficiumSource = isEvilDescriptorSpellItem(item) ? await getMaleficiumSource(actor) : null;
     maskFocusSource = !isSpellLikeSpellbookItem(item) ? await getMaskFocusSource(actor) : null;
   } else if (isSpellLikeAbilityItem(dialog)) {
+
     metamagicSources = await getKineticistMetamagicSources(actor, item);
     checkboxLabel = "Metakinesis";
     traitModifierSources = await getRacialSpellLikeTraitSources(actor, item);
@@ -783,6 +777,8 @@ export async function addMetamagicCheckbox(dialog, html) {
     maleficiumSource = null;
     maskFocusSource = null;
   }
+  DialogStateTracker.set(dialog.appId, WAYANG_PREVIEW_SOURCE_KEY,
+    traitModifierSources.find(source => source.id === WAYANG_SPELLHUNTER_ID) ?? null);
   const filteredSources = filterMetamagicSourcesForDialog(dialog, metamagicSources, { preparedVariantState });
   const maskFocusForMetamagicUi =
     maskFocusSource && filteredSourcesIncludeExtendSpell(filteredSources) ? maskFocusSource : null;
@@ -878,6 +874,11 @@ function renderMetamagicControls(dialog, form, metamagicSources, options = {}) {
   dataInput.name = METAMAGIC_NAMES_KEY;
   container.appendChild(dataInput);
 
+  const sourcesInput = document.createElement('input');
+  sourcesInput.type = 'hidden';
+  sourcesInput.name = METAMAGIC_SOURCES_KEY;
+  container.appendChild(sourcesInput);
+
   const optionsInput = document.createElement('input');
   optionsInput.type = 'hidden';
   optionsInput.name = METAMAGIC_OPTIONS_KEY;
@@ -952,6 +953,7 @@ function renderMetamagicControls(dialog, form, metamagicSources, options = {}) {
     DialogStateTracker.set(dialog.appId, METAMAGIC_FORM_KEY, input.checked);
     dropdown.style.display = input.checked ? '' : 'none';
     updateMetamagicNames(dataInput, input.checked, listContainer);
+    updateMetamagicSources(sourcesInput, input.checked, listContainer);
     updateMetamagicInfoSection(infoContainer, {
       baseSpellLevel: Number(options.baseSpellLevel ?? 0),
       baseSaveDc: Number.isFinite(Number(options.baseSaveDc)) ? Number(options.baseSaveDc) : null,
@@ -988,6 +990,24 @@ function updateMetamagicNames(dataInput, isChecked, listContainer) {
   )
     .map((input) => input.dataset.metaName)
     .filter(Boolean);
+
+  dataInput.value = selections.length ? JSON.stringify(selections) : "";
+}
+
+function updateMetamagicSources(dataInput, isChecked, listContainer) {
+  if (!dataInput) return;
+  if (!isChecked) {
+    dataInput.value = "";
+    return;
+  }
+
+  const selections = Array.from(
+    listContainer.querySelectorAll('input[type="checkbox"][data-meta-name]:checked')
+  ).map((input) => ({
+    type: (input.dataset.type ?? "").toString(),
+    itemUuid: (input.value ?? "").toString(),
+    metamagicName: resolveMetamagicNameFromDatabase(input.dataset.metaName) ?? input.dataset.metaName ?? ""
+  })).filter((source) => source.metamagicName);
 
   dataInput.value = selections.length ? JSON.stringify(selections) : "";
 }
@@ -2094,6 +2114,16 @@ function renderTraitModifierControls(dialog, form, traitSources = []) {
     const next = JSON.stringify(Array.from(selected));
     DialogStateTracker.set(dialog.appId, TRAIT_OPTIONS_KEY, next);
     optionsInput.value = next;
+    updateMetamagicInfoSection(form.querySelector(".nas-metamagic-info"), {
+      baseSpellLevel: getSpellBaseLevel(dialog),
+      baseSaveDc: getDialogSaveDc(dialog),
+      metamagicEnabled: metamagicToggleInput?.checked !== false,
+      options: getCurrentMetamagicOptions(dialog, form),
+      featOptions: getCurrentFeatOptions(dialog, form),
+      actionItem: dialog?.action?.item ?? null,
+      selectedMetaNames: metamagicListContainer ? getSelectedMetaNames(metamagicListContainer) : [],
+      dialog
+    });
   };
   const resolveTraitItemFromSource = (source) => {
     if (!actor?.items) return null;
@@ -2295,6 +2325,9 @@ function getPreviewMetamagicSlotAdjustment({
   selectedMetaNames = [],
   options = {},
   featOptions = {},
+  traitOptions = [],
+  wayangSource = null,
+  timelessSoulActive = false,
   actionItem = null,
   hasSlotSurchargeMetamagic = false
 } = {}) {
@@ -2333,6 +2366,11 @@ function getPreviewMetamagicSlotAdjustment({
   const features = getFeatureStatesFromOptions(options);
   if (features?.retribution === true) {
     adjustment -= 1;
+  }
+  if (traitOptions.includes(WAYANG_SPELLHUNTER_ID) && wayangSource?.selectedSpellMatches === true) {
+    adjustment += getWayangSpellhunterSlotAdjustment({
+      featEffects: { [WAYANG_SPELLHUNTER_ID]: wayangSource }
+    }, { hasAppliedMetamagic: hasSlotSurchargeMetamagic, timelessSoulActive });
   }
   return adjustment;
 }
@@ -2431,6 +2469,9 @@ function updateMetamagicInfoSection(infoContainer, {
     selectedMetaNames: selected,
     options,
     featOptions,
+    traitOptions: parseTraitSelectionInput(DialogStateTracker.get(dialog?.appId, TRAIT_OPTIONS_KEY)),
+    wayangSource: DialogStateTracker.get(dialog?.appId, WAYANG_PREVIEW_SOURCE_KEY),
+    timelessSoulActive: timelessSoulApplies,
     actionItem,
     hasSlotSurchargeMetamagic
   });
@@ -3867,6 +3908,7 @@ function updateMetamagicCheckboxOptions(dialog, listContainer, dataInput, option
   const baseSpellLevel = Number(options.baseSpellLevel ?? 0);
   const baseSaveDc = Number.isFinite(Number(options.baseSaveDc)) ? Number(options.baseSaveDc) : null;
   const metamagicToggleInput = options.metamagicToggleInput ?? null;
+  const sourcesInput = form?.querySelector?.(`input[name="${METAMAGIC_SOURCES_KEY}"]`) ?? null;
   if (maskFocusSource && !filteredSourcesIncludeExtendSpell(metamagicSources)) {
     maskFocusSource = null;
     if (
@@ -3901,6 +3943,7 @@ function updateMetamagicCheckboxOptions(dialog, listContainer, dataInput, option
         ).map((checkbox) => checkbox.value);
         DialogStateTracker.set(dialog.appId, METAMAGIC_SELECT_KEY, checkedIds);
         updateMetamagicNames(dataInput, true, listContainer);
+        updateMetamagicSources(sourcesInput, true, listContainer);
         const currentOptions = DialogStateTracker.get(dialog.appId, METAMAGIC_OPTIONS_KEY) || {};
         updateMetamagicOptionsInput(optionsInput, currentOptions);
         updateMetamagicInfoSection(infoContainer, {
@@ -4003,6 +4046,7 @@ function updateMetamagicCheckboxOptions(dialog, listContainer, dataInput, option
   ).map((checkbox) => checkbox.value);
   DialogStateTracker.set(dialog.appId, METAMAGIC_SELECT_KEY, renderedCheckedIds);
   updateMetamagicNames(dataInput, true, listContainer);
+  updateMetamagicSources(sourcesInput, true, listContainer);
   updateMetamagicOptionsInput(optionsInput, storedOptions);
   renderFeatureSection(
     dialog,

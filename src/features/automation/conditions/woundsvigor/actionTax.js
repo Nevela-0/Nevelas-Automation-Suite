@@ -1,3 +1,4 @@
+import { setHealthCondition } from '../healthConditions.js';
 import { MODULE } from '../../../../common/module.js';
 import { isWoundsVigorActive, isWvNoWoundsActor, isWvWounded } from '../../utils/woundsVigor.js';
 
@@ -31,6 +32,7 @@ export async function handleWoundsVigorActionTax(action) {
   const actor = action?.token?.actor ?? action?.item?.actor ?? action?.actor;
   if (!actor?.isOwner) return;
   if (!isWoundsVigorActive(actor)) return;
+
   if (isWvNoWoundsActor(actor)) return;
   if (!isWvWounded(actor)) return;
 
@@ -49,7 +51,7 @@ export async function handleWoundsVigorActionTax(action) {
   if (total === null) return;
 
   if (total < 10) {
-    await actor.setCondition('unconscious', true);
+    await setHealthCondition(actor, 'unconscious', true);
     ui.notifications.warn(
       game.i18n.format('NAS.conditions.main.WoundsVigorConCheckFailed', { name: actor.name, total, dc: 10 })
     );

@@ -1,0 +1,248 @@
+
+.combatant.nas-at-host {
+  flex-wrap: wrap;
+  row-gap: 2px;
+  height: auto;
+}
+.combatant.nas-at-host > .token-name { min-width: 0; }
+.combatant.nas-at-host > .nas-action-tracker {
+  flex: 0 0 100%;
+  width: 100%;
+}
+.nas-action-tracker {
+  --nas-at-border: var(--color-border-light-2, #8886);
+  --nas-at-muted: var(--color-text-secondary, inherit);
+  flex: 0 0 auto;
+  min-width: 0;
+  box-sizing: border-box;
+  margin-top: 2px;
+  padding: 0 2px;
+  font-size: 12px;
+  font-weight: normal;
+  line-height: 1.35;
+  text-align: start;
+  cursor: default;
+  color: inherit;
+  overflow-wrap: anywhere;
+}
+.nas-action-tracker .nas-at-strip,
+.nas-action-tracker .nas-at-actions,
+.nas-action-tracker .nas-at-history-heading,
+.nas-action-tracker .nas-at-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
+}
+.nas-action-tracker .nas-at-strip { font-size: 11px; }
+.nas-action-tracker .nas-at-counter {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 3px;
+  border: 1px solid var(--nas-at-border);
+  border-radius: 3px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.nas-action-tracker .nas-at-icon {
+  flex: 0 0 auto;
+  width: 1em;
+  margin: 0;
+  text-align: center;
+}
+
+.nas-action-tracker .nas-at-counter-label,
+.nas-action-tracker .nas-at-expand-label { display: none; }
+.nas-action-tracker .nas-at-caption { font-size: 11px; }
+.nas-action-tracker .nas-at-count { min-width: 1ch; text-align: center; }
+.nas-action-tracker .nas-at-used { font-weight: bold; }
+.nas-action-tracker .nas-at-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 0;
+  min-height: 23px;
+  height: auto;
+  padding: 2px 5px;
+  margin: 1px 0;
+  border: 1px solid var(--nas-at-border);
+  border-radius: 3px;
+  font: inherit;
+  color: inherit;
+  line-height: 1.3;
+  white-space: normal;
+  box-shadow: none;
+  background: var(--button-background-color, transparent);
+  cursor: pointer;
+}
+.nas-action-tracker .nas-at-button:hover:not(:disabled),
+.nas-action-tracker .nas-at-button:focus-visible {
+  outline: 2px solid var(--color-warm-2, #ad742b);
+  outline-offset: 1px;
+}
+.nas-action-tracker .nas-at-button:disabled { opacity: .5; cursor: default; }
+.nas-action-tracker .nas-at-expand {
+  flex: 0 0 24px;
+  width: 24px;
+  min-height: 24px;
+  padding: 2px;
+  margin-left: auto;
+}
+.nas-action-tracker .nas-at-panel {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--nas-at-border);
+}
+.nas-action-tracker p { margin: 3px 0; }
+.nas-action-tracker .nas-at-note,
+.nas-action-tracker .nas-at-turn { color: var(--nas-at-muted); }
+.nas-action-tracker .nas-at-actions { margin: 5px 0; }
+.nas-action-tracker .nas-at-actions .nas-at-button { flex: 1 1 65px; }
+.nas-action-tracker .nas-at-history-heading { justify-content: space-between; margin-top: 7px; }
+.nas-action-tracker .nas-at-history { list-style: none; padding: 0; margin: 3px 0; }
+.nas-action-tracker .nas-at-history-entry { padding: 5px 0; margin: 0; border-bottom: 1px solid var(--nas-at-border); }
+.nas-action-tracker .nas-at-use-label { display: block; }
+.nas-action-tracker .nas-at-undone .nas-at-use-label { text-decoration: line-through; }
+.nas-action-tracker .nas-at-undo-status { font-style: italic; }
+.nas-action-tracker .nas-at-deferred,
+.nas-action-tracker .nas-at-later { font-style: italic; margin: 2px 0; }
+.nas-action-tracker .nas-at-error { border-left: 3px solid var(--color-level-error, #be5644); padding-left: 5px; }
+.nas-action-tracker .nas-at-pagination { justify-content: space-between; }
+.nas-action-tracker .nas-at-movement { font-size: 0.85em; line-height: 1.4; overflow-wrap: anywhere; }
+.nas-action-tracker .nas-at-movement-history { border-top: 1px solid var(--color-border-light-tertiary, #777); margin-top: 0.4rem; padding-top: 0.4rem; }
+.nas-action-tracker .nas-at-history-open {
+  flex: 0 0 24px;
+  width: 24px;
+  min-height: 24px;
+  padding: 2px;
+}
+.nas-at-history-app .window-content { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.nas-at-history-app .nas-at-history-shell,
+.nas-at-history-app .nas-at-history-mount {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+}
+.nas-action-tracker.nas-at-history-window {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  gap: 8px;
+  padding: 6px;
+  font-size: 13px;
+}
+.nas-at-history-window .nas-at-history-filters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  flex: 0 0 auto;
+  gap: 6px 12px;
+}
+.nas-at-history-window .nas-at-history-filter { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.nas-at-history-window select { width: 100%; min-width: 0; font: inherit; color: inherit; }
+.nas-at-history-window .nas-at-history-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 3px 6px; }
+.nas-at-history-window .nas-at-pagination { flex: 0 0 auto; }
+.nas-at-history-window .nas-at-history-entry { padding: 4px 0; }
+.nas-at-history-window .nas-at-movement-summary { border: 1px solid var(--nas-at-border); padding: 6px; margin: 6px 0; }
+.nas-at-history-window .nas-at-origin,
+.nas-at-history-window .nas-at-submitter,
+.nas-at-history-window .nas-at-entry-type { font-size: .9em; color: var(--nas-at-muted); }
+.nas-at-history-window :is(select, .nas-at-history-scroll, .nas-at-history-entry):focus-visible { outline: 2px solid var(--color-warm-2, #ad742b); outline-offset: 1px; }
+.nas-action-tracker .nas-at-movement-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.4rem;
+}
+.nas-action-tracker .nas-at-movement-controls label,
+.nas-action-tracker .nas-at-payment-choice {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  width: 100%;
+}
+.nas-action-tracker .nas-at-mode,
+.nas-action-tracker .nas-at-payment-sequence {
+  flex: 1 1 8rem;
+  min-width: 0;
+  max-width: 100%;
+  color: inherit;
+}
+.nas-action-tracker .nas-at-payment-status {
+  font-style: italic;
+}
+.nas-action-tracker .nas-at-step-status { flex-basis: 100%; font-weight: 600; overflow-wrap: anywhere; }
+.nas-action-tracker .nas-at-step-environment { display: flex; flex-wrap: wrap; gap: .3rem; margin: .3rem 0; }
+.nas-action-tracker .nas-at-step-assessment { flex: 1 1 7rem; min-width: 0; max-width: 100%; color: inherit; font: inherit; }
+.nas-at-region-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: end;
+  padding-block: 0.5rem;
+}
+.nas-at-region-presets label { flex: 1 1 12rem; display: grid; gap: 0.25rem; }
+.nas-at-region-presets p { flex: 1 1 100%; font-size: var(--font-size-12, 0.75rem); }
+.nas-action-tracker .nas-at-activity-status {
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+.nas-action-tracker .nas-at-toolbar,
+.nas-action-tracker .nas-at-tools,
+.nas-action-tracker .nas-at-context,
+.nas-action-tracker .nas-at-request-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
+}
+.nas-action-tracker .nas-at-tools { margin-inline-start: auto; flex-wrap: nowrap; }
+.nas-action-tracker .nas-at-icon-button { width: 24px; min-height: 24px; padding: 2px; flex: 0 0 24px; }
+.nas-action-tracker .nas-at-icon-button i { margin: 0; }
+.nas-action-tracker .nas-at-context { font-size: 11px; }
+.nas-action-tracker .nas-at-context .nas-at-activity-status { flex: 1 1 auto; }
+.nas-action-tracker .nas-at-warning { color: var(--color-level-warning, #bd831f); }
+.nas-action-tracker .nas-at-panel .nas-at-actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 3px; }
+.nas-action-tracker .nas-at-panel .nas-at-actions .nas-at-button { padding-inline: 2px; font-size: 11px; }
+.nas-at-history-window .nas-at-entry-summary { cursor: pointer; padding: 3px; border-radius: 3px; }
+.nas-at-history-window .nas-at-entry-heading { display: inline-flex; width: calc(100% - 1.4em); gap: 6px; align-items: baseline; }
+.nas-at-history-window .nas-at-entry-heading .nas-at-use-label { flex: 1 1 auto; min-width: 0; }
+.nas-at-history-window .nas-at-entry-cost { flex: 0 1 auto; text-align: end; font-size: .9em; }
+.nas-at-history-window .nas-at-entry-meta { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .85em; color: var(--nas-at-muted); }
+.nas-at-history-window .nas-at-entry-badges { display: block; font-size: .85em; font-style: italic; }
+.nas-at-history-window .nas-at-entry-body { padding: 5px 6px; margin: 3px 0; border-inline-start: 2px solid var(--nas-at-border); }
+.nas-at-history-window .nas-at-entry-body .nas-at-button { margin: 3px 3px 0 0; }
+.nas-at-history-window .nas-at-history-help { font-size: .85em; color: var(--nas-at-muted); }
+.nas-at-history-window summary:focus-visible { outline: 2px solid var(--color-warm-2, #ad742b); outline-offset: 1px; }
+.nas-at-history-window details:not([open]) > :not(summary) { display: none; }
+
+.nas-at-movement-dialog {
+  width: 420px;
+  min-width: 0;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 24px);
+}
+.nas-at-movement-dialog .window-content { min-height: 0; overflow-y: auto; padding: 12px; }
+.nas-at-movement-dialog .dialog-form,
+.nas-at-movement-dialog .dialog-content { gap: 10px; min-width: 0; }
+.nas-at-movement-dialog .nas-at-dialog-body { display: flex; flex-direction: column; gap: 6px; }
+.nas-at-movement-dialog p { margin: 0; font-size: 12px; line-height: 1.4; white-space: normal; overflow-wrap: anywhere; }
+.nas-at-movement-dialog .nas-at-dialog-body label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.nas-at-movement-dialog select { width: 100%; min-width: 0; font: inherit; }
+.nas-at-movement-dialog .nas-at-choice-cost { font-weight: bold; }
+.nas-at-movement-dialog .nas-at-choice-warning { color: var(--color-level-warning, #bd831f); }
+.nas-at-movement-dialog .nas-at-dialog-details { margin-block: 4px; font-size: 12px; }
+.nas-at-movement-dialog .nas-at-dialog-details summary { cursor: pointer; }
+.nas-at-movement-dialog .nas-at-dialog-details[open] > :not(summary) { margin-block: 8px; }
+.nas-at-movement-dialog .nas-at-dialog-details:not([open]) > :not(summary),
+.nas-at-movement-dialog [hidden] { display: none; }
+.nas-at-movement-dialog .dialog-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+.nas-at-movement-dialog .dialog-buttons button { flex: 1 1 100px; min-width: 0; height: auto; min-height: 30px; white-space: normal; }

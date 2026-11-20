@@ -1,3 +1,5 @@
+import { setHealthCondition } from '../healthConditions.js';
+import { syncDiehardStability } from './diehard.js';
 import { MODULE } from "../../../../common/module.js";
 import { getPrimaryHealthValue, hasPrimaryHealthUpdate } from "../../utils/healthUpdates.js";
 import { isWoundsVigorActive } from "../../utils/woundsVigor.js";
@@ -33,27 +35,29 @@ export async function handleDyingOnUpdate(actorDocument, change) {
 
   if (isDead || newHp >= 0) {
     if (actorDocument.statuses?.has?.("dying")) {
-      await actorDocument.setCondition("dying", false);
+      await setHealthCondition(actorDocument, "dying", false);
     }
     if (newHp >= 0 && actorDocument.statuses?.has?.("stable")) {
-      await actorDocument.setCondition("stable", false);
+      await setHealthCondition(actorDocument, "stable", false);
     }
     return;
   }
 
+  if (await syncDiehardStability(actorDocument)) return;
+
   if (actorDocument.statuses?.has?.("stable")) {
     if (actorDocument.statuses?.has?.("dying")) {
-      await actorDocument.setCondition("dying", false);
+      await setHealthCondition(actorDocument, "dying", false);
     }
     return;
   }
 
   if (!actorDocument.statuses?.has?.("dying")) {
-    await actorDocument.setCondition("dying", true);
+    await setHealthCondition(actorDocument, "dying", true);
   }
 
   if (!actorDocument.statuses?.has?.("unconscious")) {
-    await actorDocument.setCondition("unconscious", true);
+    await setHealthCondition(actorDocument, "unconscious", true);
   }
 }
 
@@ -89,18 +93,20 @@ export async function handleDyingCombatUpdate(combat, update) {
   const actor = token?.actor;
   if (!actor) return;
   if (!isDyingStateRelevant(actor)) return;
+  if (await syncDiehardStability(actor)) return;
   if (actor.statuses?.has?.("stable")) return;
 
   if (!actor.statuses?.has?.("dying")) {
-    await actor.setCondition("dying", true);
+    await setHealthCondition(actor, "dying", true);
   }
   if (!actor.statuses?.has?.("unconscious")) {
-    await actor.setCondition("unconscious", true);
+    await setHealthCondition(actor, "unconscious", true);
   }
 
   const hp = Number(actor.system?.attributes?.hp?.value ?? 0) || 0;
   const conScore = Number(actor.system?.abilities?.con?.total ?? actor.system?.abilities?.con?.value ?? 0) || 0;
   if (conScore > 0 && hp <= -conScore) {
+
     return;
   }
 
@@ -108,7 +114,7 @@ export async function handleDyingCombatUpdate(combat, update) {
     skipDialog: true,
     token: token?.document ?? actor.token,
     dc: 10,
-    bonus: `${hp}[${game.i18n.localize("NAS.conditions.main.DyingHpPenalty")}]` 
+    bonus: `${hp}[${game.i18n.localize("NAS.conditions.main.DyingHpPenalty")}]`  
   });
 
   const rollData = getRollDataFromResult(result);
@@ -118,10 +124,10 @@ export async function handleDyingCombatUpdate(combat, update) {
 
   if (success) {
     if (!actor.statuses?.has?.("stable")) {
-      await actor.setCondition("stable", true);
+      await setHealthCondition(actor, "stable", true);
     }
     if (actor.statuses?.has?.("dying")) {
-      await actor.setCondition("dying", false);
+      await setHealthCondition(actor, "dying", false);
     }
     return;
   }

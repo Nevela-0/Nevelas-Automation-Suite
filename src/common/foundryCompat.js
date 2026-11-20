@@ -1,6 +1,10 @@
 export function chatMessageStyle(styleName = "OTHER") {
   const styles = globalThis.CONST?.CHAT_MESSAGE_STYLES;
-  if (styles?.[styleName] != null) return { style: styles[styleName] };
+  if (styles) {
+
+    const selected = ["ROLL", "WHISPER"].includes(styleName) ? "OTHER" : styleName;
+    return styles[selected] != null ? { style: styles[selected] } : {};
+  }
 
   const types = globalThis.CONST?.CHAT_MESSAGE_TYPES;
   if (types?.[styleName] != null) return { type: types[styleName] };
@@ -8,12 +12,35 @@ export function chatMessageStyle(styleName = "OTHER") {
   return {};
 }
 
-export function isFoundryV13Plus() {
-  const generation = Number(globalThis.game?.release?.generation);
-  if (Number.isFinite(generation)) return generation >= 13;
+export function foundryGeneration(game = globalThis.game) {
+  const raw = game?.release?.generation;
+  const generation = typeof raw === "number" || (typeof raw === "string" && /^\d+$/.test(raw)) ? Number(raw) : NaN;
+  if (Number.isSafeInteger(generation) && generation > 0) return generation;
 
-  const version = String(globalThis.game?.version ?? "");
-  return version ? foundry.utils.isNewerVersion(version, "12.999") : false;
+  const version = String(game?.version ?? "").trim().match(/^(\d+)(?:\.|$)/);
+  const major = version ? Number(version[1]) : NaN;
+  return Number.isSafeInteger(major) && major > 0 ? major : null;
+}
+
+export function isFoundryV13Plus(game = globalThis.game) {
+  return (foundryGeneration(game) ?? 0) >= 13;
+}
+
+export function legacyFormApplicationConstructor() {
+  return globalThis.foundry?.appv1?.api?.FormApplication
+    ?? (typeof FormApplication === "function" ? FormApplication : null);
+}
+
+export function legacyDialogConstructor() {
+  return globalThis.foundry?.appv1?.api?.Dialog
+    ?? (typeof Dialog === "function" ? Dialog : null);
+}
+
+export function tokenDocumentPosition(token) {
+  return Object.fromEntries(["x", "y", "elevation", "width", "height", "shape"].map((key) => [key,
+    (["x", "y", "elevation"].includes(key) ? token?._source?.[key] : undefined)
+      ?? token?.[key] ?? (["width", "height"].includes(key) ? 1 : 0)
+  ]));
 }
 
 export function chatRenderHookName() {
@@ -43,10 +70,16 @@ export function isActorDocument(value) {
   return value.documentName === "Actor" || value.constructor?.name === "ActorPF";
 }
 
+export function clonePlainData(value) {
+  const deepClone = globalThis.foundry?.utils?.deepClone;
+  if (deepClone) return deepClone(value);
+  return JSON.parse(JSON.stringify(value ?? null));
+}
+
 export function elementFromHtmlLike(html) {
   const HTMLElementCtor = globalThis.HTMLElement;
 
-  if (HTMLElementCtor && html instanceof HTMLElementCtor) return html;
+  if (html?.nodeType === 1 || (HTMLElementCtor && html instanceof HTMLElementCtor)) return html;
   if (Array.isArray(html)) return elementFromHtmlLike(html[0]);
   if (html?.jquery) return elementFromHtmlLike(html[0]);
   if (HTMLElementCtor && html?.[0] instanceof HTMLElementCtor) return html[0];

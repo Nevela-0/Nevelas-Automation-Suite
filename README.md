@@ -7,7 +7,7 @@ Nevela’s Automation Suite is a Foundry VTT module for the **Pathfinder First E
 ## Requirements
 
 - Foundry VTT v12/v13
-- Pathfinder 1st Edition v11+
+- Pathfinder 1st Edition v11.9 or later
 - SocketLib module
 - LibWrapper
 
@@ -18,7 +18,7 @@ Nevela’s Automation Suite is a Foundry VTT module for the **Pathfinder First E
 Automatically applies buffs when spells, consumables, or class features are used.
 
 ### Highlights
-- Requires spells/consumables/class features to have valid targets
+- For buffs that need a target, **Strict** cancels the use if none are selected. **Lenient** lets you use the item and skips the automatic buff.
 - Supports multiple buff compendia including PF1 core and PF-Content
 - Smart buff selection system that handles:
   - Exact matches
@@ -37,7 +37,23 @@ Automatically applies buffs when spells, consumables, or class features are used
   - Maintains buff duration information
   - Supports custom buff compendia
 
-> **Note:** You need to add a boolean flag called **`buff`** in the **Advanced** tab of class features to set a class feature to apply buffs.
+On the action sheet, check **Buff** to enable automatic application for that action. Use **Choose buffs** to apply one or more buffs to the same targets, or leave it empty to look up the item name. Existing items with the old `buff` flag still work.
+
+### Saves and duration
+
+- An action can apply its buff on a failed save, on a successful save, or without a save. Choose **Any**, **Allies**, or **Enemies** for the recipients. You can also let allies bypass the save.
+- A communal spell can divide its duration among several recipients with one spell slot. For abilities with a finite duration that you can use in separate intervals, choose **Non-consecutive** on the action.
+
+### Buffs in the NAS compendium
+
+| Buff | What NAS handles |
+|---|---|
+| Ablative Barrier | Grants +2 armor AC, converts up to 5 lethal damage per hit to nonlethal, and reduces incoming nonlethal damage by 5. Ends when its pool or duration runs out. |
+| Defending Bone | Grants DR 5/bludgeoning until its pool or duration runs out. Bludgeoning bypasses the protection and leaves the pool intact. |
+| Firewalker’s Meditation | Tracks DR 5/magic and fire resistance 10 from a shared pool. Apply the save bonus against pain manually. |
+| Draconic Reservoir | Absorbs damage of the chosen energy type. Resolve attacks that use the stored energy manually. |
+
+**Mirror Image** also tracks remaining images on the token when cast from a potion, wand, or scroll.
 
 ---
 
@@ -55,39 +71,39 @@ Adds additional PF1E conditions and automates behavior for many conditions to ke
 
 ### Sub-Conditions
 - **Anchored**: Applies a movement restriction on tokens (immovable)
-- **Immobilized**: Denies Dex bonus to AC and prevents movement
+- **Immobilized**: A sub-condition added by Grappled.
 - **Slowed**: Reduces movement speeds by half
 
 These sub-conditions work with other conditions like **entangled**, **grappled**, and more.
 
 ### Automated Behaviors (Toggleable Where Noted)
-- **Anchored**: Applies a movement restriction on tokens, making them immovable; automatically applied to conditions like *cowering, dazed, dying, helpless, paralyzed, petrified, pinned*. (Toggleable in settings.)
+- **Anchored**: With movement restrictions enabled, NAS blocks token movement for Anchored, Cowering, Dazed, Grappled, Helpless, Paralyzed, Petrified and Pinned. The GM can apply restrictions to everyone or just players.
 - **Blind**: Moving a token more than half its speed prompts an Acrobatics check—failure results in no movement and the **prone** condition. (Toggleable.)
 - **Concealed**: When Concealment is applied, the user will be prompted to select between the normal or total concealment. Currently it supports the Blind-Fight feat.
 - **Confused**: Creates a chat message every round showing how affected tokens act. During combat, posts on the affected token’s turn. Includes proper damage application compatibility with damage automation. (Toggleable.)
-- **Dead**: Applied automatically when HP is ≤ total Constitution score; can be toggled off and disables Monk’s Combat Detail’s similar setting for compatibility.
+- **Dead**: With standard HP, a creature reaches the usual death threshold at negative Constitution. For example, a creature with CON 14 reaches it at −14 HP. The setting can also make NPCs die as soon as their HP drops below 0. Enabling NAS death handling turns off automatic defeat in Monk’s Combat Details when applicable.
 - **Disabled**: Applied automatically when HP is exactly 0; prompts user decisions for actions and condition changes based on abilities like Diehard. (Toggleable.)
-- **Dying**: Applied automatically at negative hp (but not dead). On the creature's turn, it rolls a constitution check automatically with a DC of 10 + a penalty equal to the negative HP.
+- **Dying**: At negative HP, a dying creature rolls a DC 10 Constitution check on its turn to stabilize. Its current negative HP is applied as a penalty to the roll.
 - **Energy Drained**: Automatically applied to tokens with above 0 negative levels. (Toggleable.)
 - **Entangled**: Applies **slowed** automatically and prompts concentration checks for spellcasting. (Toggleable.)
 - **Fascinated**: Applies a **-4 penalty** on Perception checks.
 - **Flat-Footed**: Applied automatically based on initiative rolls, with considerations for abilities like Uncanny Dodge. (Toggleable.)
 - **Grappled**: The token is immobile. Prompts concentration checks for spellcasting with somatic components. (Toggleable.)
-- **Grappling**: A grapple checkbox will be attack to your attack dialogs. When used with a target, the module will process your roll and the target's CMD and apply grappling on the attacker and grapple and the defender upon success.
-- **Immobilized**: Sub-condition that renders the token immovable and denies Dex bonus to AC. (Toggleable.)
+- **Grappling**: Check **Grapple** in the attack dialog and choose a target. NAS compares the roll to the target’s CMD and applies Grappling to the attacker and Grappled to the defender on a success.
 - **Invisible**: Applies Total Concealment automatically as a sub-condition.
+- **Nauseated**: Strict handling allows move actions and blocks concentration checks. Lenient handling shows a reminder.
 - **Prone**: Applied automatically when certain conditions are met like falling unconscious and blind movement check failure.
 - **Slowed**: Sub-condition applied automatically to tokens with conditions like *disabled, entangled, exhausted, and grappling*.
-- **Staggered**: Applies automatically when the token has taken nonlethal damage equal to the token's current HP.
-- **Squeezed / Squeezing**: Applied automatically when the token is entering a narrow area (wall based). When attempting to enter an area smaller by more than half of the token's width, the module automatically rolls for Escape Artist with a DC of 30 and upon success the token is moved into the area, upon failure the token moves to the square before the narrow area's entry. By default, each token has a base body width and a base head width. These percentage based values for width and the DC can be modified in the module settings and the token settings.
-- **Unconscious**: Applied automatically when tokens fall below 0 HP, unless affected by abilities like Diehard. Also applied automatically when the token has taken nonlethal damage equal to more than the token's current HP.
+- **Staggered**: Applies when nonlethal damage equals current HP and current HP is above 0.
+- **Squeezed / Squeezing**: NAS measures the space between walls. A passage narrower than half the token’s width calls for Escape Artist (DC 30 by default). A gap smaller than its configured head width blocks entry. You can change the widths, DC, and where movement stops after a failed check.
+- **Unconscious**: Can apply below 0 HP or when nonlethal damage exceeds current HP. A character with Diehard who chooses to fall unconscious also becomes Stable.
 
 ### Surprise Rounds
 Surprise Rounds are available only if the **Flat-Footed** setting is enabled.
 
 - Start a surprise round by clicking the **“Surprise Round”** button above **“Begin Combat”**.
-- Applies **Flat-Footed** to all tokens until their turns in the second round.
-- To exclude tokens from being surprised, select them or toggle the new <span><img src="https://github.com/user-attachments/assets/0f2cb882-8a1e-46c5-8542-5a6fde928bfd" width="23"></span> icon on the before clicking the "Surprise Round" button.
+- Surprised combatants can remain **Flat-Footed** until their turn in round two. Combatants who act in the surprise round can lose it on their first turn. Abilities such as Uncanny Dodge still apply.
+- Before starting combat, use the <span><img src="https://github.com/user-attachments/assets/0f2cb882-8a1e-46c5-8542-5a6fde928bfd" width="23"></span> **Surprised** toggle on the combat tracker to mark the combatants who are surprised. If you use the toggles, unmarked combatants can act. If you use canvas selection instead, select the tokens that can act. **Skip Surprised Tokens** advances past surprised combatants in round one.
 
 ---
 
@@ -97,7 +113,9 @@ Enhances and streamlines PF1E damage calculation and application by automaticall
 
 ### Damage Calculation
 - Calculates damage based on the target’s **Damage Reduction (DR)**, **resistances**, **immunities**, and **vulnerabilities**, including logic differences such as spell vs weapon handling.
-- You can still apply damage differently using normal PF1E behavior (e.g., **shift-click**).
+- Shift-click a damage button to toggle whether the PF1 damage dialog opens.
+- **Clustered Shots** is available on ranged weapon cards with at least two attacks when the attacker has the feat. Select the hits to combine before applying DR.
+- **Massive Damage Rule** is optional. A single hit dealing at least half the target’s maximum HP (rounded down), with a minimum of 50 damage, triggers a DC 15 Fortitude save.
 
 ### Personalized Damage Types
 
@@ -145,7 +163,7 @@ The module supports ability damage immunity. Use the following formats in the da
 - Comes with Pathfinder’s default DR priority table
 - You can add, remove, and edit rows
 - Includes a **Reset to Defaults** button
-- Each enhancement row bypasses the damage types in the enhancement row before it
+- An enhancement bonus bypasses the types in its own row and every lower-numbered row.
 - Supports system-provided materials/alignments and custom values
 
 ---
@@ -234,10 +252,9 @@ This returns a `ChatMessage` and integrates with defenses (DR, hardness, resista
 ---
 
 ### Ammunition
-Because ammunition does not have material/enhancement fully supported by the PF1E system yet:
+For ranged attacks, NAS can read the ammunition’s enhancement through **Roll Bonuses**. Without Roll Bonuses, you can add a **`Magic`** boolean flag to the ammunition to bypass DR/magic.
 
-- **Material**: Add a dictionary flag named **`Material`** with the material you want the ammo to be. You can include `magic` in this dictionary flag to treat the ammo as magic to overcome DR.
-- **Enhancement Bonus**: If you do not use Roll Bonuses, add a boolean flag named **`Magic`** in the ammo to treat the ammo as magic to overcome magic DR.
+The legacy damage system also read `Material` and `Alignment` dictionary flags on ammunition. If an arrow has only those flags, they no longer let it bypass the matching DR.
 
 ---
 
@@ -246,13 +263,15 @@ Because ammunition does not have material/enhancement fully supported by the PF1
 - On the item sheet (details tab) \ action sheet (action tab) you will find a "On Hit" section with a checkbox for items that have damage actions. Checking it opens configuration that allows you to configure special effects when the attack hits the target (when damage is applied), such as lifesteal or applying a buff or condition to the attacker or the target.
 - Similarly, on items such as armor or buffs, you will find a "On Struck" section with a checkbox. Checking it opens configuration that allows you to configure similar effects that happen when that token \ actor is struck.
 
-> This allows you to configure things like the fire shield spell.
+For example, **Fire Shield** can damage an attacker on a hit and halve the matching energy damage you take. Other damage types in the same hit are resolved separately.
+
+Buffs can also grant defenses or absorb damage from a limited pool. Any damage left over keeps its types for DR, resistance and immunity. For effects that grant **Temporary HP**, you can choose how repeated grants stack and when the pool expires.
 
 ---
 
 ### Wounds & Vigor
 
-- The module has a setting to toggle on wounds and vigor support. This is dependent on the system setting as well. When both are enabled, the module handles damage as the Wounds & Vigor rules. The module also includes a house rule for construct and undead creatures.
+- Enable Wounds & Vigor in PF1’s health settings for the actor and in NAS. On an attack card, use the Vigor/Wounds control to choose where to apply damage. The optional construct and undead house rule gives those creatures Vigor only and destroys them at 0 Vigor.
 
 ---
 
@@ -264,7 +283,7 @@ Adds a metamagic picker to spell dialogs and automatically applies supported met
 - Metamagic selection UI on spell dialogs (Attack Dialog → **Metamagic**)
 - Pulls available metamagics from the caster’s:
   - **Metamagic feats** (feat tags containing “metamagic”)
-  - **Metamagic rods** in inventory (supports common rod naming patterns and checks remaining daily uses)
+  - **Metamagic rods** in inventory (a completed rod cast spends one rod use)
 - Smart filtering: only shows metamagics that are **valid for the current spell** (components, range, duration, save, damage, etc.)
 - Spontaneous caster support:
   - Automatically consumes the **correct higher-level spell slot**
@@ -285,7 +304,7 @@ Adds a metamagic picker to spell dialogs and automatically applies supported met
   - Applies 1.5× damage (rounded down) by rewriting damage formulas.
   - Preserves readable roll tooltips for empowered rolls.
 - **Enlarge Spell**
-  - Increases the range of spells with the close, medium, or long categories by 100% (excludes other range values).
+  - Doubles close, medium, or long range. The optional **Homebrew Enlarge Spell Numeric Ranges** setting also allows fixed distances.
 - **Extend Spell**
   - Doubles duration (excludes concentration, instantaneous, and permanent durations).
 - **Heighten Spell**
@@ -299,53 +318,52 @@ Adds a metamagic picker to spell dialogs and automatically applies supported met
     - On a successful save, automatically rolls the **second** save.
 - **Reach Spell**
   - Steps range upward (**Touch → Close → Medium → Long**).
-  - Prompts you to choose how many steps to apply.
+  - Prompts you to choose how many steps to apply. A ranged touch attack still targets touch AC.
   - Converts melee spell attacks (**msak**) to ranged spell attacks (**rsak**) when applicable.
 - **Selective Spell**
   - For **instantaneous area** spells, prompts you to exclude targets.
-  - Max exclusions are based on your spellcasting ability modifier for the spellbook.
+  - Choose exclusions from the template or from manually selected targets. Your spellcasting ability modifier limits how many you can exclude. Canceling keeps the spell slot and removes the newly placed template.
 - **Silent Spell**
-  - Removes verbal components.
+  - Removes verbal components. NAS skips Silent Spell if Bard appears on the spell’s class list.
 - **Still Spell**
   - Removes somatic components.
-  - **Blocked for bard spells** (warns and skips).
 - **Quicken Spell**
   - Sets casting time to **swift**.
+- **Widen Spell**
+  - Doubles eligible bursts, emanations, spreads, and lines for a +3 slot adjustment. A widened line stops at the spell’s range. The chat card shows the resulting area.
 
 ---
 
-### Support for over 20 Class Features \ Feats \ Traits
+### Supported class features, feats and traits
 
-- **Full List of supported items**:
-  Arcane Apotheosis
-  Arcane Bloodline
-  Arcane Prodigy (Drow)
-  Curator of Mystic Secrets
-  Eldritch Researcher
-  Extended Scrying
-  Grand Maestro
-  Healer's Blessing
-  Intense Celebration
-  Magical Lineage
-  Maleficium
-  Mask Focus
-  Metamagic Adept
-  Metamagic Mastery
-  Metamixing
-  Mimic Metamagic
-  Nanite Bloodline
-  One Body
-  Two Minds
-  Peerless Speed
-  Prolong Magic (Tiefling)
-  Retribution
-  Seeker of the Eternal Emperor
-  Spell Perfection
-  Spontaneous Metafocus
-  Succor Final Revelation
-  Timeless Soul
-  Transmuter of Korada
-  Wayang Spellhunter (Minata)
+- Arcane Apotheosis
+- Arcane Bloodline
+- Arcane Prodigy (Drow)
+- Curator of Mystic Secrets
+- Eldritch Researcher
+- Extended Scrying
+- Grand Maestro
+- Healer's Blessing
+- Intense Celebration
+- Magical Lineage
+- Maleficium
+- Mask Focus
+- Metamagic Adept
+- Metamagic Mastery
+- Metamixing
+- Mimic Metamagic
+- Nanite Bloodline
+- One Body, Two Minds
+- Peerless Speed
+- Prolong Magic (Tiefling)
+- Retribution
+- Seeker of the Eternal Emperor
+- Spell Perfection
+- Spontaneous Metafocus
+- Succor Final Revelation
+- Timeless Soul
+- Transmuter of Korada
+- Wayang Spellhunter (Minata)
 
 ---
 
@@ -363,9 +381,51 @@ Adds a metamagic picker to spell dialogs and automatically applies supported met
 ### Settings
 - **Metamagic Cast Time**
   - Controls how metamagic affects **spontaneous** casting time.
-- **Persistent Spell Targets**
-  - Controls how targets are determined when using the **chat save button** for Persistent/Dazing workflows:
-    - current user targets / selected tokens / targets stored on the chat card
+- **Metamagic Preview Display** and **Metamagic Chat Card Name** control the cast preview and how the spell is named in chat.
+
+---
+
+## Spellbook Preparation
+
+With **Enable Metamagic Automation** and **Full spellbook preparation** enabled, open **Prepare this spellbook** on the actor sheet. Prepared and hybrid spellbooks are supported, including separate domain slots. **Metamagic variants only** keeps prepared variants available without the full book. **Classic / off** uses the ordinary PF1 preparation workflow.
+
+### Preparing spells
+
+1. Choose **Copy spells from sheet** to bring the actor’s spells into the book, or **Start empty** to begin with an empty list. Both keep the actor’s original spells and existing preparation. Use **Add missing spells** for spells you learn later.
+2. Use the bookmarks or search to find a spell. Set its prepared count, or click the quill to inscribe a metamagic copy. Click the quill again to close it. The book shows the slot the copy will use. Its save DC uses the original spell level unless Heighten Spell changes it.
+3. Click **Prepare spells** to save your spell choices. **Random preparation** chooses spells within your limits for you to review. **Remove from spellbook** removes the selected spell when you prepare spells. **Remove inscription** removes only its metamagic copy. The original spell stays on your sheet.
+
+### Managing a book and resting
+
+- Open **Manage this spellbook** on the inside cover. Turning off **Use NAS for this spellbook** restores PF1 preparation and sets the NAS copies aside for later. **Hide Source Spellbook Spells** hides original rows in managed books. The originals stay on the actor.
+- Under **After resting**, choose **Prepare the same spells again** to restore uses after rest, **Choose again** to pick new spells, or **Prepare randomly**. **Use module setting** follows the world default. This applies when the rest restores daily uses and **Prepare Spellbook** is checked.
+- **Save options** saves the management and rest choices for this book. Use **Prepare spells** for changes to spells. Turning off the module’s metamagic setting keeps your saved preferences.
+- In your personal settings you can show the actor-sheet button, open books that need preparation after a rest, or change page motion. **Page motion** is also on the inside cover and respects your reduced-motion preference.
+
+---
+
+## Combat Action Tracker
+
+The tracker is off by default. In **Configure Settings → NAS → Action Tracker**, turn on **Enable Action Tracker Interface** to show counters beside combatants. They show actions used this turn. Open the manual controls to record an action, or enable **Automatic Action Tracking** to record completed PF1 item uses. Both the standard and unchained action economies are supported.
+
+### Movement and history
+
+- **Enable Movement Tracking** records distance and elevation on the combatant’s own turn. Turn on **Automatic Movement Spending** to count actions from movement and speed. Split drags can share a movement allowance. The tracker lets you move beyond it.
+- You can declare a 5-foot step, Run, Charge, Withdraw, or a Spring Attack. Check the route and the activity’s requirements yourself. In the standard action economy, use PF1’s **Charge** checkbox for the attack. Spring Attack applies the included attack penalties. Resolve attacks of opportunity manually, and spend any declared mythic power on the actor.
+- Owners and GMs can use **History** to correct a record or undo a recorded action. This changes tracked usage and distance only. The token stays in place, rolls stand, and spent resources stay spent.
+- **Action Counter Visibility** controls whose counters appear in the tracker. Only owners and GMs can open detailed history or make changes there. Foundry document and API permissions still apply. You can hide free actions and nonactions from your counters and still record them manually.
+- On v12, **Show Starting-Position Marker** shows owners and GMs where the combatant started until its next turn. It requires movement tracking. On v13, Foundry provides the ruler.
+- If you switch from the original **PF1 Action Tracker**, disable it in **Manage Modules**. Leaving both enabled records actions in both trackers.
+
+### Region movement presets (v13)
+
+Open a Region’s **Modify Movement Cost** behavior and choose a **Terrain movement cost**.
+
+- **Difficult Terrain ×2** doubles the cost of walking.
+- **Heavy Undergrowth ×4** makes walking cost four times as much.
+- Both presets set Fly, Swim, and Burrow to ×1. Choose **None** to keep the current slider values.
+
+You can adjust the sliders before clicking **Update Region Behavior** to save. Where Regions overlap, their movement costs multiply. These presets set movement costs only. Handle concealment, skill checks, conditions, and movement restrictions separately.
 
 ---
 
@@ -373,7 +433,8 @@ Adds a metamagic picker to spell dialogs and automatically applies supported met
 
 ### On Card Save
 
-- When an action that has a save is used, the chat card typically is created with a save button. The module adds an optional setting that allows you to add an interactable and clickable icon of the token that is making the save. This helps when using a the save button while selection multiple tokens that have the same name and icon such as NPCs.
+- Click the save button on an action card to roll for the tokens you have selected on the canvas. With no selection, NAS uses the targets saved on the card. Persistent Spell rerolls a successful save, and Dazing Spell and save-based buffs use the DC accepted in the save dialog.
+- Enable the token icon on save messages to tell identical NPCs apart. **Hide Private Save Outcomes from Players** hides the success or failure text for saves whispered to the GM.
 
 ### Enhanced Dice Tooltips
 
@@ -381,15 +442,17 @@ Adds a metamagic picker to spell dialogs and automatically applies supported met
 
 ### Combat Text
 
-- This setting causes the floating combat text to change how it moves and looks.
+- Choose **Enhanced** or **Cinematic** to change how floating health changes appear. Cinematic mode also lets you choose the movement style.
 
 ### Enforce Spell Ability Minimum
 
-- This setting enforces the PF1E rule where you have to have a casting ability score of 10 + spell level to be able to cast spells of certain level. While the system already handles it partially, this setting also completely hides those spell levels from the actor sheet when the casting ability score is too low.
+- Requires a casting ability score of 10 + spell level to cast or assign a spell, and hides levels above that limit on the actor sheet. Spellbooks marked with **No Ability Limit** are exempt.
 
 ---
 
 ## Installation
+In Foundry’s **Install Module** window, paste the manifest URL below. Enable the suite and its required modules in your world. If you used **PF1 Automate Damage** or **PF1 Improved Conditions**, disable those predecessor modules so NAS can start. The legacy migration tool is available in module settings.
+
 **Manifest URL:** https://github.com/Nevela-0/Nevelas-Automation-Suite/releases/latest/download/module.json
 
 ---
@@ -409,6 +472,7 @@ This suite includes components licensed under different terms:
 
 ## Credits
 - **Nevela**: Lead developer and creator.
+- **Mana (MKAh)** created [Action Tracker for Pathfinder 1e](https://gitlab.com/mkahvi/fvtt-micro-modules/-/tree/master/pf1-action-tracker). Thank you for letting us integrate it into NAS. The original module is no longer maintained or supported for Foundry v13 and later.
 - **Contributors**: PF1E system and module developers for their support.
 - **Claudekennilol**: Huge general support with compatibility and module settings.
 - **[McGreger](https://github.com/McGreger)**: Help with German localization.

@@ -1,6 +1,7 @@
 import { moduleConfig, registerNasSettings } from '../common/config.js';
 import { htmlElementFromRenderArg, onRenderChatMessageCompat } from '../common/foundryCompat.js';
 import { MODULE } from '../common/module.js';
+import { registerActionTrackerHooks } from '../features/actionTracker/index.js';
 import { MigrationSettingsMenu, runSuiteMigrations } from '../common/migrations.js';
 import { onRenderChatMessage } from '../features/buttons/healing.js';
 import { addPerAttackHealthModeChip } from '../features/buttons/healthModeChip.js';
@@ -21,6 +22,7 @@ import { registerConditions, setupConditionsI18n } from '../features/automation/
 import { registerConditionFootnoteWrapper } from './conditionFootnoteWrappers.js';
 import { registerActionUseWrapper } from './actionUseWrappers.js';
 import { registerItemActionWrappers } from './itemActionWrappers.js';
+import { registerSpellConsumableWrappers } from './spellConsumableWrappers.js';
 import { registerConfusionChatMessageHook } from '../features/automation/conditions/confusion/chatMessageHook.js';
 import { handleConfusionOnCombatStart } from '../features/automation/conditions/confusion/confusion.js';
 import { addGrappleCheckbox, addMetamagicCheckbox } from '../features/automation/utils/attackDialogControls.js';
@@ -109,6 +111,7 @@ let _blockedByLegacyModules = false;
 let _activeLegacy = [];
 
 function ensureMigrationMenuRegistered() {
+
   try {
     const versionKey = `${MODULE.ID}.migrationVersion`;
     if (!game.settings.settings.has(versionKey)) {
@@ -138,6 +141,7 @@ function ensureMigrationMenuRegistered() {
 }
 
 function ensureMigrationPersistenceSettingsRegistered() {
+
   try {
     if (!game.settings.settings.has(`${MODULE.ID}.customDamageTypes`)) {
       game.settings.register(MODULE.ID, "customDamageTypes", {
@@ -219,8 +223,7 @@ function computeLegacyBlockIfPossible() {
         const i18n = globalThis.game?.i18n;
         const msg = (i18n?.format && (!i18n.has || i18n.has(key))) ? i18n.format(key, { legacyList }) : fallback;
         globalThis.ui?.notifications?.error?.(msg && msg !== key ? msg : fallback, { permanent: true });
-      } catch {
-      }
+      } catch {}
     });
   }
 }
@@ -285,6 +288,7 @@ Hooks.once("init", () => {
   }
 
   registerNasSettings();
+  registerActionTrackerHooks();
 
   registerDamageSettingsHandlebarsHelpers();
   registerSharedFootnoteHooks();
@@ -297,6 +301,7 @@ Hooks.once("init", () => {
   registerConditionFootnoteWrapper(isGrappleSelected);
   registerActionUseWrapper();
   registerItemActionWrappers();
+  registerSpellConsumableWrappers();
   registerConcealedConditionWrappers();
   registerConfusionChatMessageHook();
   registerTokenEffectBadges();
@@ -339,6 +344,7 @@ Hooks.once("socketlib.ready", () => {
 });
 
 Hooks.once("ready", () => {
+
   runSuiteMigrations();
   if (isBlocked()) return;
 
@@ -501,6 +507,7 @@ Hooks.on('updateCombat', async (combat, update, options, userId) => {
     };
 
     if (game.user.isGM) {
+
       handleCombatTurn(combat, combatData);
       if (conditionAutomationEnabled) {
         updateFlatFootedTracker(combat);
@@ -508,6 +515,7 @@ Hooks.on('updateCombat', async (combat, update, options, userId) => {
         await handleDyingCombatUpdate(combat, update);
       }
     } else if (!game.user.isGM) {
+
       if (conditionAutomationEnabled) {
         checkNextTokenFlatFooted(combat, combatData);
       }
@@ -525,7 +533,9 @@ Hooks.on('preUpdateActor', (actorDocument, change, options) => {
     if (hasHpUpdate(change)) {
       options._nasPrevHp = actorDocument.system?.attributes?.hp?.value;
     }
-  } catch (_err) {}
+  } catch (_err) {
+
+  }
 });
 
 Hooks.on('updateActor', async (actorDocument, change, options, userId) => {
@@ -537,6 +547,7 @@ Hooks.on('updateActor', async (actorDocument, change, options, userId) => {
   const activeNonGMOwner = ownerUsers.find((u) => !u.isGM && u.active);
   const activeOwner = ownerUsers.find((u) => u.active);
   const preferredUserId = activeNonGMOwner?.id ?? activeOwner?.id ?? ownerUsers[0]?.id ?? null;
+
   if (!preferredUserId || game.user.id !== preferredUserId) return;
 
   await handleDisabledOnUpdate(actorDocument, change);

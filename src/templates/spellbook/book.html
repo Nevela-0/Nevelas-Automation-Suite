@@ -1,0 +1,277 @@
+<form class="nas-proto-root nas-proto-layout-{{displayMode}} nas-proto-motion-{{motionMode}}">
+  <div class="nas-proto-workbench">
+    <main class="nas-proto-book-workspace">
+      <section
+        class="nas-proto-book-stage"
+        data-cover="{{#if coverOpen}}open{{else}}closed{{/if}}"
+        data-phase="idle"
+        tabindex="-1"
+        aria-label="{{localize "NAS.spellbookUI.medde618"}}">
+        <div class="nas-proto-rear-cover" aria-hidden="true"></div>
+        <div class="nas-proto-page-stack nas-proto-page-stack-left" aria-hidden="true"></div>
+        <div class="nas-proto-page-stack nas-proto-page-stack-right" aria-hidden="true"></div>
+        <div class="nas-proto-spine" aria-hidden="true"></div>
+        <div class="nas-proto-gutter-shadow" aria-hidden="true"></div>
+
+        <section class="nas-proto-canonical" aria-label="{{faceStatus}}" {{#unless coverOpen}}inert{{/unless}}>
+          {{#each faces as |face|}}
+          <article
+            class="nas-proto-face nas-proto-face-{{face.kind}} {{#if face.visible}}nas-proto-face-active{{/if}} {{#if face.left}}nas-proto-face-left{{/if}} {{#if face.right}}nas-proto-face-right{{/if}} {{#if face.single}}nas-proto-face-single{{/if}}"
+            data-face-index="{{face.index}}"
+            data-kind="{{face.kind}}"
+            data-level="{{face.level}}"
+            {{#unless face.visible}}hidden inert{{/unless}}>
+            {{#if face.content}}
+            <header class="nas-proto-page-header">
+              <div>
+                <span class="nas-proto-page-kicker">{{localize "NAS.spellbookUI.mfe6dafae" level=face.level}}</span>
+                <h3>{{face.title}}</h3>
+                <small>{{localize "NAS.spellbookUI.mce325826" number=face.pageNumber total=face.pageCount}}</small>
+              </div>
+              <div class="nas-proto-slot-ink">
+                <span data-proto-slot-counter-label>{{face.slotCounterLabel}}</span>
+                <strong data-proto-level-counter data-level="{{face.level}}">{{face.preparedTotal}} / {{face.preparedCap}}</strong>
+                {{#if face.hasDomainCounter}}
+                <small><span data-proto-domain-counter-label>{{face.domainCounterLabel}}</span> <span data-proto-domain-counter data-level="{{face.level}}">{{face.domainUsed}} / {{face.domainCap}}</span></small>
+                {{/if}}
+              </div>
+            </header>
+
+            <ol class="nas-proto-spell-list">
+              {{#each face.spells as |spell|}}
+              <li class="nas-proto-spell-row" data-spell-id="{{spell.id}}">
+                <span class="nas-proto-school-rune" data-proto-slot-level role="img" aria-label="{{spell.preparedLevelLabel}}" title="{{spell.preparedLevelLabel}}">{{spell.level}}</span>
+                <span class="nas-proto-spell-copy">
+                  <button type="button" class="nas-proto-spell-name" data-proto-details title="{{spell.spellClickTitle}}">{{spell.displayName}}</button>
+                  <small data-proto-slot-summary id="nas-proto-slot-summary-{{spell.id}}" title="{{spell.slotDetail}}">{{spell.slotSummary}}</small>
+                  <span class="nas-proto-slot-warning" data-proto-slot-warning data-state="{{spell.slotWarningState}}" aria-describedby="nas-proto-slot-warning-{{spell.id}}" {{#if spell.slotWarning}}tabindex="0"{{else}}hidden inert tabindex="-1"{{/if}}>
+                    <span aria-hidden="true">&#9888;&#65038;</span>
+                    <span class="nas-proto-slot-warning-label" data-proto-slot-warning-label>{{spell.slotWarning}}</span>
+                    <span class="nas-proto-slot-tooltip" data-proto-slot-warning-detail id="nas-proto-slot-warning-{{spell.id}}" role="tooltip">{{spell.slotWarningDetail}}</span>
+                  </span>
+                </span>
+                <span class="nas-proto-spell-tools">
+                  <button type="button" class="nas-proto-ink-button" data-proto-inscribe aria-label="{{localize "NAS.spellbookUI.m6f256529" name=spell.name}}" title="{{localize "NAS.spellbookUI.m748a25b0"}}" {{#unless spell.canInscribe}}disabled{{/unless}}>
+                    <svg class="nas-proto-ink-glyph" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                      <path d="M5 19 18 6M8 16c-1-7 4-12 12-13 1 8-4 13-11 13M13 11l4 1M10 14l-1-4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+                      <path d="M4 21h7" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+                    </svg>
+                  </button>
+                  {{#if spell.atWill}}
+                  <span class="nas-proto-at-will">{{localize "NAS.spellbookUI.mfad21f14"}}</span>
+                  {{else}}
+                  <span class="nas-proto-count-control">
+                    <button type="button" data-proto-step="-1" aria-label="{{localize "NAS.spellbookUI.m54144043" name=spell.displayName}}" {{#if spell.countDisabled}}disabled{{/if}}>
+                      <span aria-hidden="true">−</span>
+                    </button>
+                    <input
+                      class="nas-proto-prepared-count"
+                      type="number"
+                      min="0"
+                      step="1"
+                      {{#if spell.hasCountMax}}max="{{spell.countMax}}"{{/if}}
+                      name="entries.{{spell.id}}"
+                      value="{{spell.prepared}}"
+                      data-spell-id="{{spell.id}}"
+                      aria-describedby="nas-proto-slot-summary-{{spell.id}}"
+                      title="{{spell.slotDetail}}"
+                      aria-label="{{localize "NAS.spellbookUI.mfa3dfd1f" name=spell.displayName}}" {{#if spell.countDisabled}}disabled{{/if}}>
+                    <button type="button" data-proto-step="1" aria-label="{{localize "NAS.spellbookUI.mbd1dd957" name=spell.displayName}}" {{#if spell.increaseDisabled}}disabled{{/if}}>
+                      <span aria-hidden="true">+</span>
+                    </button>
+                  </span>
+                  {{/if}}
+                </span>
+              </li>
+              {{/each}}
+            </ol>
+            <footer class="nas-proto-folio">{{face.folio}}</footer>
+            {{else}}
+            {{#if face.setup}}
+            <section class="nas-proto-setup-page" aria-label="{{localize "NAS.spellbookUI.me317067a"}}">
+              <header class="nas-proto-setup-heading">
+                <span class="nas-proto-endpaper-kicker">{{localize "NAS.spellbookUI.m709ec2e3"}}</span>
+                <h3>{{@root.fixture.bookName}}</h3>
+                <p>{{localize "NAS.spellbookUI.m8a68d296" name=@root.fixture.actorName}}</p>
+              </header>
+              <div class="nas-proto-setup-fields">
+                {{#if @root.isActor}}
+                <label>{{localize "NAS.spellbookUI.mb449dc5a"}}
+                  <select data-proto-control="actor">
+                    {{#each @root.actorOptions as |option|}}
+                    <option value="{{option.id}}" {{#if option.selected}}selected{{/if}}>{{option.name}}</option>
+                    {{/each}}
+                  </select>
+                </label>
+                <label>{{localize "NAS.spellbookUI.m8ea4b78c"}}
+                  <select data-proto-control="book">
+                    {{#each @root.bookOptions as |option|}}
+                    <option value="{{option.id}}" {{#if option.selected}}selected{{/if}}>{{option.label}}</option>
+                    {{/each}}
+                  </select>
+                </label>
+                <p class="nas-proto-context-status">{{@root.actorStatus}}</p>
+                {{#if @root.showFirstTimeSetup}}
+                <section class="nas-proto-catalogue-setup" data-proto-first-time-setup aria-label="{{localize "NAS.spellbookUI.m5dd968ff"}}">
+                  <h4>{{localize "NAS.spellbookUI.m3d636daf"}}</h4>
+                  <div class="nas-proto-setup-actions">
+                    <button type="button" data-proto-action="import-actor" {{#if @root.importDisabled}}disabled{{/if}}>{{@root.importButtonLabel}} ({{@root.importableSpellCount}})</button>
+                    <button type="button" data-proto-action="start-empty" {{#if @root.startEmptyDisabled}}disabled{{/if}}>{{localize "NAS.spellbookUI.m30c2b2c6"}}</button>
+                  </div>
+                </section>
+                {{else}}
+                {{#if @root.showEmptyBook}}
+                <section class="nas-proto-catalogue-setup" data-proto-empty-book aria-label="{{localize "NAS.spellbookUI.me3d485f9"}}">
+                  <h4>{{localize "NAS.spellbookUI.m29f8b2fb"}}</h4>
+                  {{#if @root.emptyBookNotice}}<p>{{@root.emptyBookNotice}}</p>{{/if}}
+                  <button type="button" data-proto-action="import-actor" {{#if @root.importDisabled}}disabled{{/if}}>{{@root.importButtonLabel}} ({{@root.importableSpellCount}})</button>
+                </section>
+                {{else}}
+                <div class="nas-proto-catalogue-import">
+                  <button type="button" data-proto-action="import-actor" {{#if @root.importDisabled}}disabled{{/if}}>{{@root.importButtonLabel}} ({{@root.importableSpellCount}})</button>
+                </div>
+                {{/if}}
+                {{/if}}
+                <button type="button" class="nas-proto-actor-sheet-action" data-proto-action="open-current-sheet">{{localize "NAS.spellbookUI.m32d6519"}}</button>
+                {{/if}}
+                <label>{{localize "NAS.spellbookUI.m8fdc01a8"}}
+                    <select data-proto-control="motion" {{#if @root.motionPreferenceSaving}}disabled{{/if}}>
+                      {{#each @root.motionOptions as |option|}}
+                      <option value="{{option.value}}" {{#if option.selected}}selected{{/if}}>{{option.label}}</option>
+                      {{/each}}
+                    </select>
+                </label>
+                {{#if @root.isActor}}
+                <details class="nas-proto-management" data-proto-management>
+                  <summary>{{localize "NAS.spellbookUI.m6fc9245"}}</summary>
+                  <label>{{localize "NAS.spellbookUI.mf0de6306"}}
+                    <select data-proto-control="selected-spell">
+                      {{#each @root.spellOptions as |option|}}
+                      <option value="{{option.id}}" {{#if option.selected}}selected{{/if}}>{{option.name}}</option>
+                      {{/each}}
+                    </select>
+                  </label>
+                  <button type="button" data-proto-action="remove-selected" {{#unless @root.canEditActor}}disabled{{/unless}}>{{@root.removalLabel}}</button>
+                  <fieldset class="nas-proto-policy-preview">
+                    <legend>{{localize "NAS.spellbookUI.m7b9589e2"}}</legend>
+                    <label class="nas-proto-check"><input type="checkbox" data-proto-control="managed" {{#if @root.managementEnabled}}checked{{/if}} {{#unless @root.canEditActor}}disabled{{/unless}}>{{localize "NAS.spellbookUI.mc7ce375c"}}</label>
+                    <label>{{localize "NAS.spellbookUI.m4fd4ebf3"}}
+                      <select data-proto-control="rest-mode" {{#unless @root.canEditActor}}disabled{{/unless}}>
+                        {{#each @root.restOptions as |option|}}
+                        <option value="{{option.value}}" {{#if option.selected}}selected{{/if}}>{{option.label}}</option>
+                        {{/each}}
+                      </select>
+                    </label>
+                    <button type="button" data-proto-action="save-options" {{#if @root.saveOptionsDisabled}}disabled{{/if}}>{{localize "NAS.spellbookUI.m5f2bf4e6"}}</button>
+                  </fieldset>
+                </details>
+                {{/if}}
+              </div>
+            </section>
+            {{else}}
+            <div class="nas-proto-endpaper">
+              {{#if face.hard}}
+              <span class="nas-proto-endpaper-kicker">{{localize "NAS.spellbookUI.m709ec2e3"}}</span>
+              <span class="nas-proto-bookplate" aria-hidden="true"></span>
+              {{else}}
+              <span class="nas-proto-title-flourish" aria-hidden="true">✦</span>
+              {{/if}}
+              {{#if face.title}}<h3>{{face.title}}</h3>{{/if}}
+              {{#if face.subtitle}}<p>{{face.subtitle}}</p>{{/if}}
+            </div>
+            {{/if}}
+            {{/if}}
+          </article>
+          {{/each}}
+        </section>
+
+        <div class="nas-proto-motion-layer" aria-hidden="true" hidden></div>
+
+        <div class="nas-proto-cover-leaf" data-proto-cover>
+          <button type="button" class="nas-proto-cover-face nas-proto-cover-front" aria-label="{{localize "NAS.spellbookUI.md0184a99"}}">
+            <span class="nas-proto-cover-corner nas-proto-cover-corner-tl" aria-hidden="true"></span>
+            <span class="nas-proto-cover-corner nas-proto-cover-corner-tr" aria-hidden="true"></span>
+            <span class="nas-proto-cover-corner nas-proto-cover-corner-bl" aria-hidden="true"></span>
+            <span class="nas-proto-cover-corner nas-proto-cover-corner-br" aria-hidden="true"></span>
+          </button>
+          <div class="nas-proto-cover-face nas-proto-cover-inside" aria-hidden="true">
+            <div class="nas-proto-face nas-proto-face-insideFront nas-proto-face-left nas-proto-cover-endpaper">
+              <div class="nas-proto-endpaper">
+                <span class="nas-proto-endpaper-kicker">{{localize "NAS.spellbookUI.m709ec2e3"}}</span>
+                <span class="nas-proto-bookplate" aria-hidden="true"></span>
+                <h3>{{fixture.bookName}}</h3>
+                <p>{{localize "NAS.spellbookUI.m8a68d296" name=fixture.actorName}}</p>
+              </div>
+            </div>
+            <div class="nas-proto-cover-binding-paper" aria-hidden="true"></div>
+            <div class="nas-proto-cover-binding-shadow" aria-hidden="true"></div>
+          </div>
+        </div>
+
+        <div class="nas-proto-corner-controls">
+        <button
+          type="button"
+          class="nas-proto-turn-corner nas-proto-turn-previous"
+          data-proto-turn="previous"
+          aria-label="{{localize "NAS.spellbookUI.m92dce6ac"}}"
+          {{#unless canPrevious}}disabled{{/unless}}></button>
+        <button
+          type="button"
+          class="nas-proto-turn-corner nas-proto-turn-next"
+          data-proto-turn="next"
+          aria-label="{{localize "NAS.spellbookUI.ma94984e0"}}"
+          {{#unless canNext}}disabled{{/unless}}></button>
+
+        </div>
+
+        <nav class="nas-proto-bookmarks" aria-label="{{localize "NAS.spellbookUI.m5b83d1a8"}}">
+          {{#each bookmarks as |bookmark|}}
+          <button
+            type="button"
+            class="nas-proto-bookmark {{#if bookmark.active}}nas-proto-bookmark-active{{/if}}"
+            data-proto-bookmark
+            data-face-index="{{bookmark.faceIndex}}"
+            data-level="{{bookmark.level}}"
+            aria-label="{{localize "NAS.spellbookUI.mbd869c4a" name=bookmark.label}}">
+            {{bookmark.shortLabel}}
+          </button>
+          {{/each}}
+        </nav>
+
+        <button type="button" class="nas-proto-drag-grip" data-proto-drag data-proto-open-only aria-label="{{localize "NAS.spellbookUI.me49926a4"}}" title="{{localize "NAS.spellbookUI.m8bedc47d"}}"><span aria-hidden="true">···</span></button>
+        <nav class="nas-proto-book-tools" aria-label="{{localize "NAS.spellbookUI.mb5f2a40a"}}">
+          {{#if isActor}}
+          <button type="button" data-proto-action="toggle-search" data-proto-open-only aria-label="{{localize "NAS.spellbookUI.m7d304473"}}" aria-expanded="false" title="{{localize "NAS.spellbookUI.m7d304473"}}"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8" cy="8" r="4.5"/><path d="m11.5 11.5 5 5"/></svg></button>
+          {{/if}}
+          {{#if popout.moduleActive}}
+          <button type="button" data-proto-action="popout-book" data-proto-open-only aria-label="{{popout.label}}" title="{{#if popout.available}}{{popout.label}}{{else}}{{popout.reason}}{{/if}}" {{#unless popout.available}}disabled{{/unless}}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M11 3h6v6M17 3l-8 8M8 4H4v12h12v-4"/></svg></button>
+          {{/if}}
+          <button type="button" data-proto-action="close-cover" data-proto-open-only aria-label="{{localize "NAS.spellbookUI.m1ff3f453"}}" title="{{localize "NAS.spellbookUI.m1ff3f453"}}"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 3h10v14H5zM7 3v14"/></svg></button>
+          <button type="button" data-proto-action="dismiss-book" aria-label="{{localize "NAS.spellbookUI.m724ebd97"}}" title="{{localize "NAS.spellbookUI.m724ebd97"}}"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"/></svg></button>
+        </nav>
+        <button type="button" class="nas-proto-settings-bookmark" data-proto-action="show-settings" data-proto-open-only aria-label="{{localize "NAS.spellbookUI.mc59363c8"}}" title="{{localize "NAS.spellbookUI.me317067a"}}"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 4h12M4 10h12M4 16h12"/><circle cx="7" cy="4" r="2"/><circle cx="13" cy="10" r="2"/><circle cx="8" cy="16" r="2"/></svg></button>
+        {{#if isActor}}
+        <div class="nas-proto-search-box" data-proto-search-tray data-proto-open-only hidden>
+          <label for="nas-proto-search">{{localize "NAS.spellbookUI.m7d304473"}}</label>
+          <input id="nas-proto-search" type="search" data-proto-search value="{{searchValue}}" placeholder="{{localize "NAS.spellbookUI.md467a5bf"}}" autocomplete="off">
+          <div class="nas-proto-search-results" data-proto-search-results hidden></div>
+        </div>
+        {{/if}}
+        <div class="nas-proto-book-commit" data-proto-open-only>
+          <nav class="nas-proto-rest-requests" data-proto-rest-requests aria-label="{{localize "NAS.spellbookUI.me1822471"}}" aria-live="polite" hidden></nav>
+          {{#if isActor}}
+          <p class="nas-proto-draft-status" data-proto-draft-status aria-live="polite">{{draftNotice}}</p>
+          <div class="nas-proto-apply-actions">
+            <button type="button" data-proto-action="reset-draft">{{localize "NAS.spellbookUI.m690c678c"}}</button>
+            <button type="button" data-proto-action="random-preparation" title="{{localize "NAS.spellbookUI.mac3eb30e"}}" {{#if randomDisabled}}disabled{{/if}}>{{localize "NAS.spellbookUI.m6ffeff13"}}</button>
+            <button type="submit" data-proto-apply {{#if applyDisabled}}disabled{{/if}}>{{applyLabel}}</button>
+          </div>
+          {{/if}}
+        </div>
+        <button type="button" class="nas-proto-resize-grip" data-proto-resize data-proto-open-only aria-label="{{localize "NAS.spellbookUI.mfc990b91"}}" title="{{localize "NAS.spellbookUI.md95024b7"}}"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 10h14M6 7l-3 3 3 3M14 7l3 3-3 3"/></svg></button>
+        <div class="nas-proto-view-status" aria-hidden="true">{{faceStatus}}</div>
+        <div class="nas-proto-live-region" aria-live="polite">{{faceStatus}}</div>
+      </section>
+    </main>
+  </div>
+</form>

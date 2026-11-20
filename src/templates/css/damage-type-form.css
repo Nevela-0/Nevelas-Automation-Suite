@@ -1,13 +1,13 @@
 .damage-type-form .form-group,
 .edit-damage-type .form-group {
-    position: relative;
+    position: relative; 
 }
 
 .damage-type-form .form-group.field-group,
 .edit-damage-type .form-group.field-group {
-    border: 1px solid #0a0a0a;
-    border-radius: 5px;
-    padding: 0.1rem;
+    border: 1px solid #0a0a0a; 
+    border-radius: 5px; 
+    padding: 0.1rem; 
 }
 
 .damage-type-form .input-group,
@@ -28,8 +28,8 @@
 
 .damage-type-form .color-picker,
 .edit-damage-type .color-picker {
-    border: 1px solid #0a0a0a;
-    border-radius: 5px;
+    border: 1px solid #0a0a0a; 
+    border-radius: 5px; 
     margin-left: 0.1rem;
     padding: 0;
 }
@@ -52,7 +52,7 @@
 .damage-type-form .saved-damage-types-grid,
 .edit-damage-type .saved-damage-types-grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(3, 1fr); 
     gap: 1rem;
     list-style: none;
     padding: 0;
@@ -63,10 +63,10 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: space-between;
+    justify-content: space-between; 
     padding: 0.5rem;
-    border: 1px solid #000000;
-    height: 200px;
+    border: 1px solid #000000; 
+    height: 200px; 
 }
 
 .damage-type-form .value-details,
@@ -82,20 +82,20 @@
     display: flex;
     gap: 0.5rem;
     margin-top: 0.5rem;
-    justify-content: center;
+    justify-content: center; 
 }
 
 .damage-type-form .saved-damage-type-icon,
 .edit-damage-type .saved-damage-type-icon {
-    width: 96px;
+    width: 96px; 
     height: 96px;
-    margin-bottom: 0.5rem;
-    border-radius: 5px;
+    margin-bottom: 0.5rem; 
+    border-radius: 5px; 
 }
 
 .damage-type-form .with-border,
 .edit-damage-type .with-border {
-    border-radius: 5px;
+    border-radius: 5px; 
 }
 
 .damage-type-form .icon-btn,
@@ -118,12 +118,13 @@
 
 .damage-type-form .saved-damage-type-icon.with-border,
 .edit-damage-type .saved-damage-type-icon.with-border {
-    font-size: 4.5rem;
-    width: 96px;
-    height: 96px;
-    line-height: 96px;
-    text-align: center;
+    font-size: 4.5rem; 
+    width: 96px; 
+    height: 96px; 
+    line-height: 96px; 
+    text-align: center; 
 }
+
 
 .damage-type-form .input-group.radio-buttons {
     display: flex;
@@ -181,7 +182,6 @@
     gap: 0;
 }
 
-
 .damage-type-form .form-group.field-group .input-group input[type="hidden"],
 .damage-type-form .form-group.field-group .input-group input[type="text"] {
     flex: 1 1 auto;
@@ -237,4 +237,30 @@
 .damage-type-form .image-color-picker::-webkit-color-swatch,
 .edit-damage-type .image-color-picker::-webkit-color-swatch {
     border: none;
+}
+
+
+.pf1-v2.application.damage-type-selector {
+    max-height: calc(100vh - max(2rem, 1.5 * var(--hotbar-height, 0px)));
+}
+
+.pf1-v2.application.damage-type-selector .window-content {
+    min-height: 0;
+}
+
+.pf1-v2.application.damage-type-selector .form-body {
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.pf1-v2.application.damage-type-selector .form-body .damage-type-container {
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.pf1-v2.application.damage-type-selector .form-body .misc-container,
+.pf1-v2.application.damage-type-selector .form-footer {
+    flex: 0 0 auto;
 }

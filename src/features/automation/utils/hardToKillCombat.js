@@ -1,3 +1,4 @@
+import { setHealthCondition } from '../conditions/healthConditions.js';
 import { MODULE } from "../../../common/module.js";
 import { detectHardToKillItems, getHtkFlag } from "./hardToKill.js";
 
@@ -29,7 +30,7 @@ async function maybeApplyFerocityRoundLoss(actor) {
     Boolean(htkItems.ferocityUmr) ||
     Boolean(htkItems.ferocityOrc) ||
     Boolean(htkItems.ferociousResolve) ||
-    Boolean(htkItems.unstoppableRavager); 
+    Boolean(htkItems.unstoppableRavager);  
 
   if (!hasFerocity) return;
 
@@ -82,7 +83,7 @@ async function maybeEndFightOnWindowForPrevious(combat) {
   const value = Number(hp?.value ?? 0) || 0;
 
   if (value <= 0) {
-    await actor.setCondition?.("unconscious", true);
+    await setHealthCondition(actor, "unconscious", true);
     await actor.setCondition?.("prone", true);
   }
 
@@ -96,6 +97,7 @@ async function maybeEndFightOnWindowForPrevious(combat) {
 
 export function handleHtkCombatUpdate(combat, update) {
   if (!combat) return;
+
   if (update?.turn === undefined && update?.round === undefined) return;
 
   void (async () => {
@@ -118,4 +120,3 @@ export function handleHtkCombatUpdate(combat, update) {
     }
   })();
 }
-

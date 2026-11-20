@@ -1,4 +1,5 @@
 import { MODULE } from "../../../common/module.js";
+
 import { METAMAGIC_DEFINITION as StillSpell, applyStillSpell } from "./stillSpell.js";
 import { METAMAGIC_DEFINITION as SilentSpell, applySilentSpell } from "./silentSpell.js";
 import {
@@ -9,6 +10,7 @@ import {
   isDurationEligibleForExtendSpell
 } from "./extendSpell.js";
 import { METAMAGIC_DEFINITION as EnlargeSpell, applyEnlargeSpell } from "./enlargeSpell.js";
+import { METAMAGIC_DEFINITION as WidenSpell, applyWidenSpell } from "./widenSpell.js";
 import { METAMAGIC_DEFINITION as ReachSpell, applyReachSpell } from "./reachSpell.js";
 import { METAMAGIC_DEFINITION as QuickenSpell, QUICKEN_SPELL_NAME, applyQuickenSpell } from "./quickenSpell.js";
 import { METAMAGIC_DEFINITION as SelectiveSpell, applySelectiveSpell } from "./selectiveSpell.js";
@@ -52,6 +54,7 @@ import {
   getMaleficiumSlotAdjustment,
   getSpontaneousMetafocusStatus,
   getSpellPerfectionStatus,
+  prepareExtendedScryingContext,
   MASK_FOCUS_FEATURE_ID,
   MASK_FOCUS_ID
 } from "./feats/index.js";
@@ -62,6 +65,7 @@ import {
   resolveFeatSaveDcBase,
 } from "../utils/saveDcUtils.js";
 import { getRuntimeSpellLevel } from "../utils/spellLevels.js";
+import { refreshSpellCasterLevelData, refreshSpellSaveDc } from "../utils/spellActionData.js";
 import { shouldDeferPreparedVariantHigherSlotConsumption } from "../spellcasting/preparation/preparedVariantConsumption.js";
 
 const SHORT_CAST_TYPES = new Set(["swift", "immediate", "move"]);
@@ -263,6 +267,43 @@ function promptSelectiveExclusions(targets, maxSelections) {
       },
     }).render(true);
   });
+}
+
+export async function resolvePendingSelectiveSpellExclusions(action, context = action?.shared?.nasSpellContext) {
+  if (context?.metamagic?.selectiveExclusionsPending !== true) return { skipped: true };
+  context.metamagic.selectiveExclusionsPending = false;
+
+  const targets = Array.isArray(action?.shared?.targets) ? action.shared.targets : [];
+  const maxExclusions = getSelectiveMaxExclusions(action);
+  if (maxExclusions <= 0 || targets.length === 0) return { skipped: true };
+
+  const actionTokenDisposition = action?.token?.document?.disposition ?? action?.token?.disposition;
+  const entries = targets.map((target, index) => ({
+    id: getTargetId(target),
+    label: getTargetLabel(target, `Target ${index + 1}`),
+    target,
+    actionTokenDisposition,
+  })).filter((entry) => entry.id);
+  if (!entries.length) return { skipped: true };
+
+  const selected = await promptSelectiveExclusions(entries, maxExclusions);
+  if (selected === null) {
+    action.shared.reject = true;
+    action.shared.scriptData ??= {};
+    action.shared.scriptData.reject = true;
+    return { rejected: true };
+  }
+
+  const excludedIds = selected.slice(0, maxExclusions);
+  if (excludedIds.length) {
+    const excludedSet = new Set(excludedIds);
+    action.shared.targets = targets.filter((target) => !excludedSet.has(getTargetId(target)));
+  }
+  context.metamagicOptions = {
+    ...(context.metamagicOptions ?? {}),
+    selectiveExcluded: excludedIds,
+  };
+  return { excludedIds };
 }
 
 function resolveTargetToken(target) {
@@ -580,6 +621,7 @@ function applyGrandMaestroComponents(context) {
 }
 
 function applyHealersBlessingDamageBonus(context) {
+
   const overrides = mapDamagePartFormulas(context, (formula) => applyEmpowerToFormula(formula));
   if (!appendDamagePartOverrides(context, overrides)) return false;
   return true;
@@ -634,6 +676,7 @@ function applyOneBodyTwoMindsEffects(context, action, { allowMindAffectingExtend
 
   context.metamagic ??= { applied: [], slotIncrease: 0 };
   context.metamagic.oneBodyTwoMindsCastTimeSurcharge = true;
+
   if (touched || appliedExtend) {
     context.metamagic.oneBodyTwoMindsApplied = true;
   }
@@ -723,6 +766,7 @@ function getNominalMetamagicLevelIncrease(metaName, context, baseSpellLevel, mim
       return 2;
     case "Dazing Spell":
     case "Maximize Spell":
+    case "Widen Spell":
       return 3;
     case "Quicken Spell":
       return isTimelessSoulEnabled(context) ? 3 : 4;
@@ -742,11 +786,23 @@ function getNominalMetamagicLevelIncrease(metaName, context, baseSpellLevel, mim
 
 function computeConsumedSlotIncreaseForMetamagic(context, baseSpellLevel, hasAppliedMetamagic) {
   const otherIncrease = Number(context?.metamagic?.slotIncrease ?? 0);
+  const rodMetamagicNames = new Set(
+    Array.isArray(context?.metamagic?.rodMetamagicNames) ? context.metamagic.rodMetamagicNames : []
+  );
+  const rodOtherSlotWaiver = Array.from(rodMetamagicNames).reduce((total, metamagicName) => {
+    if (metamagicName === HeightenSpell.name) return total;
+    return total + getNominalMetamagicLevelIncrease(metamagicName, context, baseSpellLevel, null);
+  }, 0);
   const heightenLevel = Number(context?.metamagic?.heightenLevel ?? 0);
-  const heightenDelta = Number.isFinite(baseSpellLevel)
+  const rawHeightenDelta = Number.isFinite(baseSpellLevel)
     ? Math.max(0, heightenLevel - baseSpellLevel)
     : 0;
-  const normalizedOtherIncrease = Number.isFinite(otherIncrease) ? otherIncrease : 0;
+  const rodHeightenSlotWaiver = rodMetamagicNames.has(HeightenSpell.name) ? rawHeightenDelta : 0;
+  const heightenDelta = Math.max(0, rawHeightenDelta - rodHeightenSlotWaiver);
+  const normalizedOtherIncrease = Math.max(
+    0,
+    (Number.isFinite(otherIncrease) ? otherIncrease : 0) - rodOtherSlotWaiver
+  );
   const timelessSoulActive = isTimelessSoulEnabled(context);
   const quickenNominalIncrease = timelessSoulActive ? 4 : 0;
   const quickenBaseIncrease = Math.min(
@@ -788,7 +844,9 @@ function computeConsumedSlotIncreaseForMetamagic(context, baseSpellLevel, hasApp
   }
   return {
     normalizedOtherIncrease,
+    rodOtherSlotWaiver,
     heightenDelta,
+    rodHeightenSlotWaiver,
     slotAdjustment,
     timelessSoulReduction,
     timelessSoulActive,
@@ -865,24 +923,6 @@ function applyTraitDurationExtension(context) {
     total: doubled
   };
   return true;
-}
-
-async function recomputeDurationEvaluationFromRollData(action, context) {
-  const duration = context?.duration;
-  const formula = (duration?.value ?? "").toString().trim();
-  if (!formula) return false;
-  const rollData = action?.shared?.rollData ?? {};
-  try {
-    const total = Roll?.defaultImplementation?.safeRollSync?.(formula, rollData)?.total;
-    if (!Number.isFinite(total)) return false;
-    duration.evaluated = {
-      ...(duration.evaluated ?? {}),
-      total: Number(total)
-    };
-    return true;
-  } catch (_error) {
-    return false;
-  }
 }
 
 async function applyRacialTraitSelections(action, context, traitSources = null) {
@@ -970,51 +1010,106 @@ function getSpellSlotData(action, slotIncrease) {
   };
 }
 
-async function consumeHigherSpellSlot(action, slotIncrease) {
+const pendingHigherSlots = new WeakMap();
+const higherSlotWrites = new WeakMap();
+
+function rejectHigherSpellSlot(action, remaining = 0) {
+  action.shared.reject = true;
+  action.shared.scriptData ??= {};
+  action.shared.scriptData.reject = true;
+  ui.notifications.warn(game.i18n.format("NAS.buffs.NotEnoughSpellSlots", { remaining, needed: 1 }));
+  return { rejected: true };
+}
+
+function prepareHigherSpellSlot(action, slotIncrease) {
   if (!action?.item || slotIncrease <= 0) return { skipped: true };
   if (action.item.type !== "spell") return { skipped: true };
 
   const slotData = getSpellSlotData(action, slotIncrease);
-  if (!slotData) {
-    action.shared.reject = true;
-    ui.notifications.warn(
-      game.i18n.format("NAS.buffs.NotEnoughSpellSlots", {
-        remaining: 0,
-        needed: 1,
-      })
-    );
-    return { rejected: true };
-  }
+  if (!slotData) return rejectHigherSpellSlot(action);
 
   if (!slotData.spellbookData?.spontaneous) return { skipped: true, prepared: true };
 
   const remainingSlots = Number(slotData.spellLevelData.value ?? 0);
-  if (remainingSlots < 1) {
-    action.shared.reject = true;
-    ui.notifications.warn(
-      game.i18n.format("NAS.buffs.NotEnoughSpellSlots", {
-        remaining: remainingSlots,
-        needed: 1,
-      })
-    );
-    return { rejected: true };
-  }
+  if (remainingSlots < 1) return rejectHigherSpellSlot(action, remainingSlots);
 
-  const updatePath = `system.attributes.spells.spellbooks.${slotData.spellbook}.spells.${slotData.spellLevelKey}.value`;
-  await slotData.actor.update({ [updatePath]: remainingSlots - 1 });
-
-  if (typeof action.shared?.rollData?.chargeCost === "number") {
-    action.shared.rollData.chargeCost = 0;
-  }
+  const { actor, spellbook, spellLevelKey } = slotData;
+  pendingHigherSlots.set(action, { actor, spellbook, spellLevelKey });
   action.shared.cost = 0;
   action.shared.rollData.chargeCost = 0;
   action.shared.rollData.chargeCostBonus = 0;
+}
+
+export async function consumePendingHigherSpellSlot(action) {
+  const slot = pendingHigherSlots.get(action);
+  if (!slot) return;
+  pendingHigherSlots.delete(action);
+  const { actor, spellbook, spellLevelKey } = slot;
+  const previous = higherSlotWrites.get(actor) ?? Promise.resolve();
+  const write = previous.then(async () => {
+    if (action.shared.reject || action.shared.scriptData?.reject) return;
+    const pool = actor.system.attributes.spells.spellbooks[spellbook]?.spells?.[spellLevelKey];
+    const remaining = Number(pool?.value ?? 0);
+    if (remaining < 1) return rejectHigherSpellSlot(action, remaining);
+    const path = `system.attributes.spells.spellbooks.${spellbook}.spells.${spellLevelKey}.value`;
+    await actor.update({ [path]: remaining - 1 });
+  });
+  higherSlotWrites.set(actor, write.catch(() => {}));
+  await write;
+}
+
+function getSelectedMetamagicSources(context) {
+  const sources = Array.isArray(context?.metamagicSources) ? context.metamagicSources : [];
+  return sources.map((source) => ({
+    type: (source?.type ?? "").toString(),
+    itemUuid: (source?.itemUuid ?? "").toString(),
+    metamagicName: resolveMetamagicNameFromDatabase(source?.metamagicName) ?? source?.metamagicName ?? ""
+  })).filter((source) => source.metamagicName);
+}
+
+async function resolveSelectedMetamagicRods(action, context) {
+  const actor = action?.actor ?? action?.token?.actor ?? null;
+  const selected = getSelectedMetamagicSources(context).filter((source) => source.type === "rod");
+  const unique = Array.from(new Map(selected.map((source) => [source.itemUuid, source])).values());
+  const rods = [];
+
+  for (const source of unique) {
+    let item = null;
+    if (source.itemUuid && typeof fromUuid === "function") {
+      try {
+        item = await fromUuid(source.itemUuid);
+      } catch (_error) {
+        item = null;
+      }
+    }
+    if (!item || (item.actor?.id && actor?.id && item.actor.id !== actor.id)) {
+      action.shared.reject = true;
+      ui.notifications.warn(`${source.metamagicName}: selected metamagic rod could not be resolved.`);
+      return { rejected: true, rods: [], names: new Set() };
+    }
+
+    const uses = item.system?.uses;
+    const consumesDailyUse = uses?.per === "day";
+    if (consumesDailyUse) {
+      const remaining = Number(uses.value ?? 0);
+      if (!Number.isFinite(remaining) || remaining <= 0) {
+        action.shared.reject = true;
+        ui.notifications.warn(`${item.name}: ${game.i18n.localize("PF1.ChargesDepleted")}`);
+        return { rejected: true, rods: [], names: new Set() };
+      }
+    }
+
+    rods.push({
+      itemUuid: source.itemUuid,
+      metamagicName: source.metamagicName,
+      consumesDailyUse
+    });
+  }
 
   return {
-    spellbook: slotData.spellbook,
-    spellLevelKey: slotData.spellLevelKey,
-    targetLevel: slotData.targetLevel,
-    consumed: true,
+    rejected: false,
+    rods,
+    names: new Set(rods.map((rod) => rod.metamagicName))
   };
 }
 
@@ -1027,6 +1122,9 @@ export async function applyMetamagicSelections(action, context) {
   }
   if (action?.shared && Object.prototype.hasOwnProperty.call(action.shared, "nasPendingMaskFocusUse")) {
     delete action.shared.nasPendingMaskFocusUse;
+  }
+  if (action?.shared && Object.prototype.hasOwnProperty.call(action.shared, "nasPendingMetamagicRodUses")) {
+    delete action.shared.nasPendingMetamagicRodUses;
   }
   if (action?.shared && Object.prototype.hasOwnProperty.call(action.shared, "nasPendingArcaneReservoirSpend")) {
     delete action.shared.nasPendingArcaneReservoirSpend;
@@ -1091,9 +1189,10 @@ export async function applyMetamagicSelections(action, context) {
     if (Number.isFinite(currentCl)) {
       action.shared.rollData.cl = currentCl + passiveTransmuterCasterLevelBonus;
       transmuterCasterLevelBonusApplied = true;
-      await recomputeDurationEvaluationFromRollData(action, context);
     }
   }
+  await refreshSpellCasterLevelData(action, context);
+  await prepareExtendedScryingContext(action, context);
   let transmuterUsed = false;
   if (transmuterRequestedForExtendLike) {
     const useValidation = validateTraitSourceUse(transmuterSource);
@@ -1165,6 +1264,8 @@ export async function applyMetamagicSelections(action, context) {
     }
   }
   const selections = Array.isArray(context?.metamagicNames) ? context.metamagicNames : [];
+  const rodState = await resolveSelectedMetamagicRods(action, context);
+  if (rodState.rejected) return;
   const selectionsWithoutExtend = transmuterUsed
     ? selections
       .map((name) => resolveMetamagicNameFromDatabase(name) ?? name)
@@ -1423,42 +1524,9 @@ export async function applyMetamagicSelections(action, context) {
     if (!canApplySelectiveSpell(context)) {
       context.metamagicNames = normalizedSelections.filter((name) => name !== SelectiveSpell.name);
     } else {
-      const targets = Array.isArray(action?.shared?.targets) ? action.shared.targets : [];
-      const maxExclusions = getSelectiveMaxExclusions(action);
-      let excludedIds = [];
-      if (maxExclusions > 0 && targets.length) {
-        const actionTokenDisposition = action?.token?.disposition;
-        const entries = targets
-          .map((target, index) => ({
-            id: getTargetId(target) ?? `target-${index}`,
-            label: getTargetLabel(target, `Target ${index + 1}`),
-            target,
-            actionTokenDisposition,
-          }))
-          .filter((entry) => entry.id);
-        if (entries.length) {
-          const selected = await promptSelectiveExclusions(entries, maxExclusions);
-          if (selected === null) {
-            action.shared.reject = true;
-            context.metamagicNames = normalizedSelections.filter((name) => name !== SelectiveSpell.name);
-          } else {
-            excludedIds = selected;
-          }
-        }
-      }
-
-      if (context.metamagicNames.includes(SelectiveSpell.name)) {
-        applySelectiveSpell(context);
-        applied.push({ name: SelectiveSpell.name });
-        if (excludedIds.length) {
-          const excludedSet = new Set(excludedIds);
-          action.shared.targets = targets.filter((target) => !excludedSet.has(getTargetId(target)));
-          context.metamagicOptions = {
-            ...(context.metamagicOptions ?? {}),
-            selectiveExcluded: excludedIds,
-          };
-        }
-      }
+      applySelectiveSpell(context);
+      context.metamagic.selectiveExclusionsPending = true;
+      applied.push({ name: SelectiveSpell.name });
     }
   }
 
@@ -1490,6 +1558,7 @@ export async function applyMetamagicSelections(action, context) {
       }
       if (typeof action?.action?.getDC === "function") {
         action.shared.saveDC = action.action.getDC(action.shared.rollData);
+        refreshSpellSaveDc(action, context);
       }
     } else {
       context.metamagicNames = normalizedSelections.filter((name) => name !== HeightenSpell.name);
@@ -1535,6 +1604,15 @@ export async function applyMetamagicSelections(action, context) {
       applied.push({ name: EnlargeSpell.name });
     } else {
       context.metamagicNames = normalizedSelections.filter((name) => name !== EnlargeSpell.name);
+    }
+  }
+
+  if (normalizedSelections.includes(WidenSpell.name)) {
+    if (applyWidenSpell(context, action)) {
+      applied.push({ name: WidenSpell.name });
+    } else {
+      context.metamagicNames = context.metamagicNames.filter((name) => name !== WidenSpell.name);
+      ui.notifications.warn(game.i18n.localize("NAS.metamagic.widenNotApplicable"));
     }
   }
 
@@ -1648,6 +1726,14 @@ export async function applyMetamagicSelections(action, context) {
 
   const sorcererState = await getSorcererArcaneMetamagicState(context?.actor ?? action?.actor, action?.item ?? null);
   const hasAppliedMetamagic = Array.isArray(context?.metamagic?.applied) && context.metamagic.applied.length > 0;
+  const appliedRodMetamagicNames = Array.from(rodState.names).filter((name) => appliedNames.includes(name));
+  context.metamagic.rodMetamagicNames = appliedRodMetamagicNames;
+  const pendingRodUses = rodState.rods
+    .filter((rod) => rod.consumesDailyUse && appliedRodMetamagicNames.includes(rod.metamagicName))
+    .map((rod) => ({ itemUuid: rod.itemUuid, debitCount: 1 }));
+  if (pendingRodUses.length) {
+    action.shared.nasPendingMetamagicRodUses = pendingRodUses;
+  }
   const preparedSpellbookRuntime = getPreparedSpellbookMetamagicRuntimeState(
     context,
     context?.metamagic?.applied ?? []
@@ -1982,7 +2068,9 @@ export async function applyMetamagicSelections(action, context) {
 
   const {
     normalizedOtherIncrease,
+    rodOtherSlotWaiver,
     heightenDelta,
+    rodHeightenSlotWaiver,
     slotAdjustment,
     timelessSoulReduction,
     timelessSoulActive,
@@ -1999,7 +2087,9 @@ export async function applyMetamagicSelections(action, context) {
   const consumedSlotIncrease = metamagicMasterySlotBypass ? 0 : dynamicConsumedSlotIncrease;
 
   context.metamagic.otherSlotIncrease = normalizedOtherIncrease;
+  context.metamagic.rodOtherSlotWaiver = rodOtherSlotWaiver;
   context.metamagic.heightenDelta = Number.isFinite(heightenDelta) ? heightenDelta : 0;
+  context.metamagic.rodHeightenSlotWaiver = rodHeightenSlotWaiver;
   context.metamagic.slotAdjustment = slotAdjustment;
   context.metamagic.timelessSoulReduction = Number.isFinite(timelessSoulReduction) ? timelessSoulReduction : 0;
   context.metamagic.timelessSoulActive = timelessSoulActive === true;
@@ -2013,6 +2103,7 @@ export async function applyMetamagicSelections(action, context) {
   context.metamagic.appliedPreparedMetamagicNames = preparedSpellbookRuntime.appliedPreparedNames;
   context.metamagic.appliedDynamicMetamagicNames = preparedSpellbookRuntime.appliedDynamicNames;
   context.metamagic.consumedSlotIncrease = consumedSlotIncrease;
+
   context.metamagic.effectiveSlotIncrease = consumedSlotIncrease;
 
   const heightenApplied = Array.isArray(context?.metamagic?.applied)
@@ -2041,7 +2132,7 @@ export async function applyMetamagicSelections(action, context) {
   context.metamagic.preparedSpellbookHigherSlotConsumptionDeferred = deferPreparedSpellbookHigherSlotConsumption;
 
   if (consumedSlotIncrease > 0 && !deferPreparedSpellbookHigherSlotConsumption) {
-    await consumeHigherSpellSlot(action, consumedSlotIncrease);
+    prepareHigherSpellSlot(action, consumedSlotIncrease);
   }
 
   await applyRacialTraitSelections(action, context, allTraitSources);

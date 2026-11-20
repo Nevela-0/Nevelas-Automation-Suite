@@ -12,10 +12,17 @@ export const SPELLBOOK_ANIMATION_MODES = Object.freeze({
   OFF: "off"
 });
 
+export const SPELLBOOK_DEFAULT_REST_MODES = Object.freeze({
+  RETAIN: "retain",
+  RESELECT: "reselect",
+  RANDOM: "random"
+});
+
 export const SPELLBOOK_PREPARATION_SETTING_KEYS = Object.freeze({
   MODE: "spellbookPreparationMode",
   ALLOW_EXTRA_CAST_TIME_METAMAGIC: "spellbookAllowExtraCastTimeMetamagic",
   REST_RESET: "spellbookRestReset",
+  DEFAULT_REST_MODE: "spellbookDefaultRestMode",
   HIDE_SOURCE_SPELLS: "spellbookHideSourceSpells",
   AUTO_OPEN_AFTER_REST: "spellbookAutoOpenAfterRest",
   SHOW_ACTOR_SHEET_PREPARE_CONTROL: "spellbookShowActorSheetPrepareControl",
@@ -64,7 +71,34 @@ export function isSpellbookPreparedVariantSupportEnabled() {
 
 export function isSpellbookRestResetEnabled() {
   return isSpellbookPreparationFullModeEnabled()
-    && getSetting(SPELLBOOK_PREPARATION_SETTING_KEYS.REST_RESET, true) !== false;
+    && getSpellbookDefaultRestMode() === SPELLBOOK_DEFAULT_REST_MODES.RESELECT;
+}
+
+export function getLegacySpellbookRestMode() {
+  return getSetting(SPELLBOOK_PREPARATION_SETTING_KEYS.REST_RESET, true) === false
+    ? SPELLBOOK_DEFAULT_REST_MODES.RETAIN
+    : SPELLBOOK_DEFAULT_REST_MODES.RESELECT;
+}
+
+export function getSpellbookDefaultRestMode() {
+  const legacy = getLegacySpellbookRestMode();
+  const key = SPELLBOOK_PREPARATION_SETTING_KEYS.DEFAULT_REST_MODE;
+  if (!settingRegistered(key)) return legacy;
+
+  const id = `${MODULE.ID}.${key}`;
+  try {
+    const storage = globalThis.game?.settings?.storage?.get?.("world");
+    if (typeof storage?.getSetting === "function") {
+      if (!storage.getSetting(id, null)) return legacy;
+    } else if (typeof storage?.getItem === "function") {
+      if (storage.getItem(id) == null) return legacy;
+    } else if (typeof storage?.has === "function" && !storage.has(id)) return legacy;
+  } catch (_error) {
+    return legacy;
+  }
+
+  const mode = getSetting(key, null);
+  return Object.values(SPELLBOOK_DEFAULT_REST_MODES).includes(mode) ? mode : legacy;
 }
 
 export function shouldAutoOpenSpellbookPreparationAfterRest() {

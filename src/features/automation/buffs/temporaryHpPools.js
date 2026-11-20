@@ -5,6 +5,8 @@ import { refreshTokenEffectBadgesForActor } from "../utils/tokenEffectBadges.js"
 import { showTemporaryHpCombatText, showTemporaryHpGainCombatText } from "../utils/healthDeltaText.js";
 import { createNasId, ensureNasId } from "../utils/nasIds.js";
 import { getStoredBuffCasterLevel } from "../utils/spellLevels.js";
+import { actorUsesWoundsVigor } from "../utils/woundsVigor.js";
+
 import {
   isNasFeatureLikeItem,
   isNasFeatureLikeItemActive,
@@ -19,8 +21,18 @@ import {
 
 const REACTIVE_FLAG_KEY = "itemReactiveEffects";
 const TEMP_HP_FLAG_KEY = "temporaryHp";
+export const DEFAULT_TEMP_HP_BUFF_UUID = "Compendium.nevelas-automation-suite.Buffs.Item.ZlhaaFOfhZ3v2ct1";
 const TEMP_HP_STACKING_MODES = new Set(["replaceSameSource", "keepHigherSameSource", "stackSeparate"]);
 const TEMP_HP_COMPATIBILITY_MODES = new Set(["stacksWithAll", "noNative", "noNas", "noAny"]);
+const TEMP_HEALTH_INPUT_SELECTOR = '[name="system.attributes.hp.temp"], [name="system.attributes.vigor.temp"]';
+
+function temporaryHpAttribute(actor) {
+  return actorUsesWoundsVigor(actor) ? "attributes.vigor" : "attributes.hp";
+}
+
+function temporaryHpInputSelector(actor) {
+  return `[name="system.${temporaryHpAttribute(actor)}.temp"]`;
+}
 
 function flagPath(path) {
   return `flags.${MODULE.ID}.${REACTIVE_FLAG_KEY}.${TEMP_HP_FLAG_KEY}.${path}`;
@@ -400,8 +412,17 @@ async function ensureSourceItem(actor, { sourceBuffUuid = "", sourceItemUuid = "
   if (!actor || !sourceUuid) return null;
   const doc = await resolveItemDocumentByUuid(sourceUuid);
   const buff = buffApplicationFromDocument(doc);
-  const appliedBuffName = buff ? temporaryHpBuffName(buff.name, sourceName) : "";
+  const isDefaultBuff = sourceUuid === DEFAULT_TEMP_HP_BUFF_UUID;
+  const vigorName = game.i18n.localize("NAS.reactive.temporaryVigorBuffName");
+  const useVigorName = isDefaultBuff && actorUsesWoundsVigor(actor);
+  const appliedBuffName = buff ? temporaryHpBuffName(useVigorName ? vigorName : buff.name, sourceName) : "";
   if (buff) {
+
+    if (isDefaultBuff && !actorSourceItemByNameAndSourceId(actor, appliedBuffName, sourceUuid)) {
+      const previousName = temporaryHpBuffName(useVigorName ? buff.name : vigorName, sourceName);
+      const previous = actorSourceItemByNameAndSourceId(actor, previousName, sourceUuid);
+      if (previous && hasTemporaryHpData(previous)) await previous.update({ name: appliedBuffName }, { render: false });
+    }
     const durationForBuff = duration ?? (clearDuration ? null : undefined);
     await applyBuffToTargets({ ...buff, name: appliedBuffName }, [actorTargetForBuffApplication(actor)], durationForBuff, undefined, { silent: true });
     const applied =
@@ -558,13 +579,19 @@ function activeTokenObjectsForActor(actor) {
   const candidates = [];
   try {
     candidates.push(...(actor.getActiveTokens?.(true, false) ?? []));
-  } catch (_err) {}
+  } catch (_err) {
+
+  }
   try {
     candidates.push(...(actor.getActiveTokens?.(true, true) ?? []));
-  } catch (_err) {}
+  } catch (_err) {
+
+  }
   try {
     candidates.push(...(actor.getActiveTokens?.() ?? []));
-  } catch (_err) {}
+  } catch (_err) {
+
+  }
 
   const objects = [];
   const seen = new Set();
@@ -1061,7 +1088,7 @@ export async function resetNasTemporaryHpItem(item) {
 }
 
 export function hpBarDataWithNasTemporaryHp(token, data) {
-  if (data?.attribute !== "attributes.hp") return data;
+  if (data?.attribute !== temporaryHpAttribute(token?.actor)) return data;
   const effectiveTemp = getEffectiveTemporaryHpTotal(token?.actor);
   const nativeDataTemp = numberOrZero(data?.temp);
   if (effectiveTemp <= nativeDataTemp) return data;
@@ -1081,7 +1108,7 @@ function htmlRootFromRenderArg(html) {
 }
 
 function nativeActorTempHp(actor) {
-  return numberOrZero(actor?.system?.attributes?.hp?.temp);
+  return numberOrZero(foundry.utils.getProperty(actor?.system ?? {}, `${temporaryHpAttribute(actor)}.temp`));
 }
 
 function nativeTempHpSheetValue(actor) {
@@ -1102,7 +1129,7 @@ function setSheetFieldValue(input, value) {
 }
 
 function setTempHpSheetDisplay(input, actor) {
-  if (!input) {
+  if (!input || !actor || !input.matches(temporaryHpInputSelector(actor))) {
     return;
   }
   if (document.activeElement === input) {
@@ -1115,7 +1142,7 @@ function setTempHpSheetDisplay(input, actor) {
 }
 
 function setTempHpSheetNativeEditValue(input, actor) {
-  if (!input) return;
+  if (!input || !actor || !input.matches(temporaryHpInputSelector(actor))) return;
   input.dataset.nasNativeTempHp = nativeTempHpSheetValue(actor);
   input.dataset.nasTemporaryHpTotal = String(getNasTemporaryHpTotal(actor));
   input.dataset.nasTemporaryHpDisplayMode = "native";
@@ -1128,7 +1155,7 @@ function renderTemporaryHpSheetDisplay(app, html, hookContext = {}) {
     return;
   }
   const root = htmlRootFromRenderArg(html);
-  const input = root?.querySelector?.('.hp-temp-input[name="system.attributes.hp.temp"]');
+  const input = root?.querySelector?.(temporaryHpInputSelector(actor));
   if (!input) {
     return;
   }
@@ -1159,14 +1186,14 @@ function actorFromTempHpInput(input) {
 }
 
 function restoreTempHpSheetDisplayFromEventTarget(target) {
-  const input = target?.closest?.('.hp-temp-input[name="system.attributes.hp.temp"]');
+  const input = target?.closest?.(TEMP_HEALTH_INPUT_SELECTOR);
   if (!input) return;
   const actor = actorFromTempHpInput(input);
   const appRoot = input.closest?.("[data-appid]");
   const appId = appRoot?.dataset?.appid;
   globalThis.setTimeout?.(() => {
     const root = appId ? document.querySelector(`[data-appid="${CSS.escape(appId)}"]`) : appRoot;
-    const currentInput = root?.querySelector?.('.hp-temp-input[name="system.attributes.hp.temp"]') ?? input;
+    const currentInput = root?.querySelector?.(temporaryHpInputSelector(actor)) ?? input;
     if (document.activeElement !== currentInput) setTempHpSheetDisplay(currentInput, actor);
   }, 0);
 }
@@ -1175,7 +1202,7 @@ function registerTemporaryHpSheetDocumentListeners() {
   if (tempHpSheetDocumentListenersRegistered) return;
   tempHpSheetDocumentListenersRegistered = true;
   const handler = (event) => {
-    const input = event.target?.closest?.('.hp-temp-input[name="system.attributes.hp.temp"]');
+    const input = event.target?.closest?.(TEMP_HEALTH_INPUT_SELECTOR);
     if (!input) return;
     const actor = actorFromTempHpInput(input);
     if (event.type === "pointerdown" || event.type === "focusin") {
@@ -1230,9 +1257,9 @@ function tooltipActor() {
   return null;
 }
 
-function tooltipHasHpBreakdown(tooltip) {
+function tooltipHasHpBreakdown(tooltip, actor) {
   return Array.from(tooltip?.querySelectorAll?.(".path") ?? [])
-    .some((el) => (el.textContent ?? "").trim() === "@attributes.hp.temp");
+    .some((el) => (el.textContent ?? "").trim() === `@${temporaryHpAttribute(actor)}.temp`);
 }
 
 function insertAfter(reference, ...nodes) {
@@ -1249,31 +1276,28 @@ function appendNasTemporaryHpTooltip() {
     return;
   }
   const alreadyEnhanced = Array.from(tooltip.querySelectorAll(".path"))
-    .some((el) => (el.textContent ?? "").trim() === "NAS temporary HP");
+    .some((el) => ["NAS temporary HP", "NAS temporary Vigor"].includes((el.textContent ?? "").trim()));
   if (alreadyEnhanced) {
     tooltip.dataset.nasTemporaryHpEnhanced = "true";
     return;
   }
   delete tooltip.dataset.nasTemporaryHpEnhanced;
-  const paths = Array.from(tooltip.querySelectorAll(".path")).map((el) => (el.textContent ?? "").trim());
-  const hasHpBreakdown = tooltipHasHpBreakdown(tooltip);
-  const activeElement = game.tooltip?.element;
-  if (!hasHpBreakdown) {
+  const actor = tooltipActor();
+  if (!actor || !tooltipHasHpBreakdown(tooltip, actor)) {
     return;
   }
-  const actor = tooltipActor();
   const nasTotal = getNasTemporaryHpTotal(actor);
   if (nasTotal <= 0) {
     return;
   }
 
   const tempPath = Array.from(tooltip.querySelectorAll(".path"))
-    .find((el) => (el.textContent ?? "").trim() === "@attributes.hp.temp");
+    .find((el) => (el.textContent ?? "").trim() === `@${temporaryHpAttribute(actor)}.temp`);
   const tempValue = tempPath?.nextElementSibling;
   if (tempPath && tempValue?.classList?.contains("value")) {
     const path = document.createElement("span");
     path.className = "path";
-    path.textContent = "NAS temporary HP";
+    path.textContent = actorUsesWoundsVigor(actor) ? "NAS temporary Vigor" : "NAS temporary HP";
     const value = document.createElement("span");
     value.className = "value";
     value.textContent = `+${nasTotal}`;

@@ -24,6 +24,7 @@ const STATIC_SLOT_INCREASES = {
   persistentSpell: 2,
   intensifiedSpell: 1,
   maximizeSpell: 3,
+  widenSpell: 3,
   empowerSpell: 2
 };
 

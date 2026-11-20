@@ -1,24 +1,28 @@
 import { MODULE } from '../../../../common/module.js';
+import { setHealthCondition } from '../healthConditions.js';
 import { socket, getPreferredOwnerUserId } from '../../../../integration/moduleSockets.js';
 import { getPrimaryHealthValue, hasPrimaryHealthUpdate } from '../../utils/healthUpdates.js';
 import { detectHardToKillItems, getHtkFlag } from '../../utils/hardToKill.js';
 import { isWoundsVigorActive, shouldBeStaggeredFromWv } from '../../utils/woundsVigor.js';
 
 export async function handleDisabledOnUpdate(actorDocument, change) {
+
   const disableSetting = game.settings.get(MODULE.ID, 'disableAtZeroHP');
-  const actorType = actorDocument.type;
+  const actorType = actorDocument.type;   
 
   if ((disableSetting === 'everyone' || 
      (disableSetting === 'player' && actorType === 'character') || 
      (disableSetting === 'npc' && actorType === 'npc')) && 
-     hasPrimaryHealthUpdate(actorDocument, change)) {
-      const isWv = isWoundsVigorActive(actorDocument);
-      const newHealth = getPrimaryHealthValue(actorDocument, change);
-      const shouldDisable = isWv
-        ? shouldBeStaggeredFromWv(actorDocument)
-        : newHealth === 0;
-      if (shouldDisable) {
-        await actorDocument.setCondition("disabled", true);
+    hasPrimaryHealthUpdate(actorDocument, change)) {
+    const isWv = isWoundsVigorActive(actorDocument);
+    const newHealth = getPrimaryHealthValue(actorDocument, change);
+    const shouldDisable = isWv
+      ? shouldBeStaggeredFromWv(actorDocument)
+      : newHealth === 0;
+    if (shouldDisable) {
+        await setHealthCondition(actorDocument, "disabled", true);
+    } else if (isWv || newHealth > 0 || actorDocument.statuses?.has?.("dead")) {
+        await setHealthCondition(actorDocument, "disabled", false);
     }
   }
 }
@@ -37,7 +41,7 @@ export async function handleDisabledStrenuousAction(action) {
         let hp = actor.system?.attributes?.hp;
         const conScore = actor.system?.abilities?.con?.total;
         let newHp = hp.value - 1;
-        
+
         if(hp.max > 0 && hp.value == 0 && !actor.statuses.has("unconscious")) {
           await handleHTK(actor, newHp, conScore);
         } else if(hp.max > 0 && hp.value < 0 && !actor.statuses.has("unconscious") && hp.value >= (conScore * -1)) {
@@ -53,10 +57,6 @@ async function handleHTK(actor, newHp, conScore) {
   const htkFlag = getHtkFlag(actor);
 
   const diehardActive = htkFlag?.diehardMode === "fight" && Boolean(htkItems.diehard);
-  const hasFerocity =
-    Boolean(htkItems.ferocityUmr) ||
-    Boolean(htkItems.ferocityOrc) ||
-    Boolean(htkItems.ferociousResolve);
 
   const hasDeathlessMaster = Boolean(htkItems.deathlessMaster);
   if (hasDeathlessMaster && (diehardActive || actor.system?.attributes?.hp?.value <= 0)) {
@@ -64,6 +64,7 @@ async function handleHTK(actor, newHp, conScore) {
   }
 
   if (newHp < 0 && newHp > -conScore) {
+
     if (!diehardActive) {
       await actor.update({"system.attributes.hp.value": newHp});
       return;
@@ -78,6 +79,7 @@ async function handleHTK(actor, newHp, conScore) {
     }
 
     if (choice === "fight") {
+
       await actor.setFlag(MODULE.ID, "htk", { ...(htkFlag ?? {}), diehardMode: "fight" });
       await actor.update({"system.attributes.hp.value": newHp});
       return;
@@ -88,9 +90,7 @@ async function handleHTK(actor, newHp, conScore) {
     }
     await actor.update({"system.attributes.hp.value": newHp});
   } else if (newHp <= -conScore) {
+
     await actor.update({"system.attributes.hp.value": newHp});
   }
 }
-
-
-

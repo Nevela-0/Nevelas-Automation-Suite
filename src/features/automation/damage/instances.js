@@ -35,7 +35,7 @@ export function toDamagePartModel(data) {
         return data;
     }
 
-    const base = data?.toObject?.() ?? data;
+    const base = data?.toObject?.() ?? foundry.utils.deepClone(data);
     const m = new Ctor(base);
     copyEnumerableExtras(m, data);
     if (!Number.isFinite(m.value)) {

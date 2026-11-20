@@ -1,3 +1,4 @@
+import { getConsumableSpellName, SPELL_CONSUMABLE_SOURCE_FLAG } from "../utils/spellConsumables.js";
 import { MODULE } from "../../../common/module.js";
 import { createNasId } from "../utils/nasIds.js";
 import { elementFromHtmlLike } from "../../../common/foundryCompat.js";
@@ -53,13 +54,14 @@ function sourceIdForItem(item) {
 function itemMatchesMirrorImageSpell(item) {
   if (!item) return false;
   const ids = [
+    item.type === "consumable" ? item.flags?.[MODULE.ID]?.[SPELL_CONSUMABLE_SOURCE_FLAG] : null,
     item.uuid,
     item.flags?.core?.sourceId,
     item._stats?.compendiumSource,
     item.flags?.[MODULE.ID]?.sourceId
   ].map((v) => String(v ?? "").trim()).filter(Boolean);
   if (ids.includes(MIRROR_IMAGE_SPELL_UUID)) return true;
-  return String(item.name ?? "").trim().toLowerCase() === "mirror image";
+  return getConsumableSpellName(item).toLowerCase() === "mirror image";
 }
 
 function actorCanModify(actor) {

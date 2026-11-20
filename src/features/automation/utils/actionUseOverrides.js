@@ -20,6 +20,7 @@ export function applyActionUseOverrides(actionUse, context) {
 
   if (context.components) {
     Object.entries(context.components).forEach(([key, value]) => {
+
       const path = `system.components.${key}`;
       setOverride(overrides, item, path, value);
     });
@@ -37,8 +38,27 @@ export function applyActionUseOverrides(actionUse, context) {
     }
   }
 
+  if (context.measureTemplateOverrides?.size !== undefined) {
+    setOverride(overrides, action, "measureTemplate.size", context.measureTemplateOverrides.size);
+  }
+
   if (context.save && contextHasSavingThrow(context, actionUse)) {
-    setOverride(overrides, action, "save.dc", context.save.dc);
+    if (Number.isFinite(context.save.nativeDc) && typeof action?.getDC === "function") {
+
+      const nativeDc = action.getDC(actionUse.shared?.rollData ?? {});
+      const adjustment = context.save.dc - nativeDc;
+      if (Number.isFinite(adjustment) && adjustment !== 0) {
+        const rawDc = actionUse.shared?.rollData?.action?.save?.dc ?? action.save?.dc;
+        const adjusted = `(${rawDc || "0"}) + (${adjustment})`;
+        setOverride(overrides, action, "save.dc", adjusted);
+
+        if (actionUse.shared?.rollData?.action?.save) {
+          setOverride(overrides, actionUse.shared.rollData, "action.save.dc", adjusted);
+        }
+      }
+    } else {
+      setOverride(overrides, action, "save.dc", context.save.dc);
+    }
     setOverride(overrides, action, "save.type", context.save.type);
     setOverride(overrides, action, "save.description", context.save.description);
     setOverride(overrides, action, "save.harmless", context.save.harmless);
