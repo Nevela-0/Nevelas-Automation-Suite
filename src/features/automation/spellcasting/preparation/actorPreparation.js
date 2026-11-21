@@ -11,8 +11,9 @@ import {
 } from "./knownSpells.js";
 import {
   addPreparedSpellVariant,
-  findGeneratedPreparedSpellItemForEntry,
+  getGeneratedPreparedSpellItemsForEntry,
   getGeneratedPreparedCount,
+  getSpentPreparationCount,
   getPreparedEntriesForKnownSpells,
   getSourceItemForKnownSpell,
   isSpellbookPreparedItemsManaged,
@@ -27,7 +28,7 @@ import {
   getPreparedMetamagicChoices,
   normalizeMetamagicSelections
 } from "./metamagicInscription.js";
-import { getSpellbookLevelPreparationCaps } from "./slotAvailability.js";
+import { allocatePreparationCopies, canUseRegularPreparationSlots, getSpellbookLevelPreparationCaps } from "./slotAvailability.js";
 import { completeSpellbookPreparation, isSpellbookPreparationPending } from "./flags.js";
 import { getSpellbookPreferences, isSpellbookManagementEnabled } from "./preferences.js";
 import { isSpellbookPreparationFullModeEnabled } from "./settings.js";
@@ -64,9 +65,12 @@ function makeSpell(actor, bookId, known, entry, mode, managed) {
   const selections = isVariant ? normalizeMetamagicSelections(entry.metamagic, { originalLevel, sourceItem: source }) : [];
   const level = isVariant ? calculatePreparedSlotLevel(originalLevel, selections) : originalLevel;
   const atWill = source.system?.atWill === true;
-  const generated = findGeneratedPreparedSpellItemForEntry(actor, bookId, entry);
-  const prepared = !live || atWill ? 0 : managed && generated ? getGeneratedPreparedCount(generated, mode)
-    : !managed && !isVariant ? preparationCount(live, mode) : 0;
+  const preparations = managed ? getGeneratedPreparedSpellItemsForEntry(actor, bookId, entry)
+    : !isVariant && live ? [live] : [];
+  const prepared = !live || atWill ? 0 : preparations.reduce((sum, item) =>
+    sum + (managed ? getGeneratedPreparedCount(item, mode) : preparationCount(item, mode)), 0);
+  const domain = source.isDomain === true || source.system?.domain === true;
+  const regularEligible = domain && canUseRegularPreparationSlots(spellbook(actor, bookId), source);
   const schoolKey = source.system?.school ?? known.school ?? "";
   const school = globalThis.pf1?.config?.spellSchools?.[schoolKey] ?? schoolKey;
   const rawCost = Number(source.slotCost ?? source.system?.slotCost ?? 1);
@@ -90,7 +94,8 @@ function makeSpell(actor, bookId, known, entry, mode, managed) {
     prepared,
     count: prepared,
     slotCost: Number.isFinite(rawCost) ? Math.max(0, rawCost) : 1,
-    domain: source.isDomain === true || source.system?.domain === true,
+    domain, regularEligible,
+    spent: mode === "prepared" ? preparations.reduce((sum, item) => sum + getSpentPreparationCount(item), 0) : 0,
     atWill,
     missing: !live,
     isVariant,
@@ -179,19 +184,24 @@ export function getActorPreparationValidation(fixture, draft) {
   const levels = (fixture.levels ?? []).map((level) => ({ ...level, normalUsed: 0, domainUsed: 0, overLimit: false }));
   const byLevel = new Map(levels.map((level) => [level.level, level]));
   const counts = new Map();
-  for (const spell of fixture.spells ?? []) {
+  const domainCopies = new Map();
+
+  const spells = fixture.spells ?? [];
+  for (const spell of [...spells.filter(s => !s.regularEligible), ...spells.filter(s => s.regularEligible)]) {
     if (counts.has(spell.id)) errors.push(t("Duplicate prepared entry: {id}.", {id: spell.id}));
     const raw = Number(draftValue(draft, spell));
     if (!Number.isFinite(raw) || raw < 0 || !Number.isInteger(raw)) errors.push(t("{name}: preparation must be a non-negative whole number.", {name: spell.name}));
     const count = fixture.mode === "hybrid" ? (raw > 0 ? 1 : 0) : integer(raw);
     counts.set(spell.id, count);
+    if (count < spell.spent) errors.push(t("{name}: spent preparations cannot be replaced before resting.", {name: spell.name}));
     if (count > 0 && spell.missing) errors.push(t("{name}: the original spell is missing.", {name: spell.name}));
     if (count > 0 && spell.atWill) errors.push(t("{name}: at-will spells do not use prepared copies.", {name: spell.name}));
     const level = byLevel.get(spell.level);
     if (!level && count > 0) errors.push(t("{name}: invalid prepared spell level.", {name: spell.name}));
     if (level && count > 0) {
-      const availability = spell.domain ? level.domainAvailability : level.normalAvailability;
-      const cap = spell.domain ? level.domainCap : level.normalCap;
+      const special = spell.domain && (!spell.regularEligible || level.domainCap > 0);
+      const availability = special ? level.domainAvailability : level.normalAvailability;
+      const cap = special ? level.domainCap : level.normalCap;
       const unavailable = availability
         ? availability.unavailable === true || availability.state === "unavailable"
         : cap !== null && cap !== undefined && Number(cap) <= 0;
@@ -202,7 +212,7 @@ export function getActorPreparationValidation(fixture, draft) {
       }
     }
     if (level && !spell.missing && !spell.atWill) {
-      level[spell.domain ? "domainUsed" : "normalUsed"] += count * spell.slotCost;
+      domainCopies.set(spell.id, allocatePreparationCopies(level, spell, count));
     }
   }
   for (const level of levels) {
@@ -215,7 +225,7 @@ export function getActorPreparationValidation(fixture, draft) {
     }
   }
   return { valid: errors.length === 0, overLimit: levels.some((level) => level.overLimit), errors,
-    levels, counts, totals: new Map(levels.map((level) => [level.level, { normal: level.normalUsed, domain: level.domainUsed }])) };
+    levels, counts, domainCopies, totals: new Map(levels.map((level) => [level.level, { normal: level.normalUsed, domain: level.domainUsed }])) };
 }
 
 function stagedFixture(actor, bookId, fixture, fresh) {
@@ -246,8 +256,13 @@ function stagedFixture(actor, bookId, fixture, fresh) {
     }
     return staged;
   });
-  const included = new Set(spells.map((spell) => spell.id));
+  const included = new Map(spells.map((spell) => [spell.id, spell]));
   for (const spell of fresh.spells) {
+    const replacement = included.get(spell.id);
+    if (spell.spent && (!replacement || replacement.level !== spell.level
+      || JSON.stringify(replacement.metamagicSelections) !== JSON.stringify(spell.metamagicSelections))) {
+      throw new Error(t("{name}: spent preparations cannot be replaced before resting.", {name: spell.name}));
+    }
     if (!included.has(spell.id) && !removedKnown.has(spell.knownSpellId) && !removedEntries.has(spell.id)) {
       throw new Error(t("A spell is missing from your preparation. Reopen the spellbook before preparing spells."));
     }
@@ -305,7 +320,8 @@ export async function applyActorPreparation(actor, bookId, fixture, draft) {
   const known = getKnownSpells(actor, normalizedBookId);
   const counts = new Map([...validation.counts].map(([entryId, count]) => [idMap.get(entryId) ?? entryId, count]));
   const entries = staged.spells.map((spell) => ({ ...spell.preparedEntry, id: idMap.get(spell.id) ?? spell.id }));
-  const result = await syncGeneratedPreparedSpellItems(actor, normalizedBookId, known, entries, counts, fresh.mode);
+  const domainCopies = new Map([...validation.domainCopies].map(([key, count]) => [idMap.get(key) ?? key, count]));
+  const result = await syncGeneratedPreparedSpellItems(actor, normalizedBookId, known, entries, counts, fresh.mode, domainCopies);
   await completeSpellbookPreparation(actor, normalizedBookId);
   if (actor.sheet?.rendered) actor.sheet.render(false);
   return { fixture: loadActorSpellbook(actor, normalizedBookId), idMap, ...result };

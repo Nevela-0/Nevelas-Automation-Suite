@@ -212,12 +212,6 @@ export function makeGeneratedPreparedItemData(bookId, knownSpell, preparedEntry,
   return data;
 }
 
-function buildGeneratedPreparedItemUpdate(item, bookId, knownSpell, preparedEntry, sourceItem, count, mode) {
-  const data = makeGeneratedPreparedItemData(bookId, knownSpell, preparedEntry, sourceItem, count, mode);
-  data._id = item.id;
-  return data;
-}
-
 export function getSourceItemForKnownSpell(actor, bookId, knownSpell) {
   const source = getActorItem(actor, knownSpell?.sourceItemId);
   return isLiveSourceSpell(source, bookId) ? source : null;
@@ -237,6 +231,11 @@ export function isGeneratedPreparedSpellItem(item) {
 
 export function getGeneratedPreparedSpellItemFlag(item) {
   return getPreparedItemFlag(item);
+}
+
+export function isRegularBasePreparation(item) {
+  const flag = getPreparedItemFlag(item);
+  return flag?.regularSlotCopy === true && flag.variant === BASE_PREPARED_VARIANT;
 }
 
 export function getPreparedSpellbooksFlag(actor) {
@@ -428,13 +427,13 @@ export function findGeneratedPreparedSpellItem(actor, bookId, knownSpellId, vari
   }) ?? null;
 }
 
-export function findGeneratedPreparedSpellItemForEntry(actor, bookId, preparedEntry) {
+export function getGeneratedPreparedSpellItemsForEntry(actor, bookId, preparedEntry) {
   const entryId = normalizeId(preparedEntry?.id);
   const knownSpellId = normalizeId(preparedEntry?.knownSpellId);
   const variant = normalizeId(preparedEntry?.variant) || BASE_PREPARED_VARIANT;
-  if (!entryId || !knownSpellId) return null;
+  if (!entryId || !knownSpellId) return [];
 
-  return getGeneratedPreparedSpellItems(actor, bookId).find((item) => {
+  return getGeneratedPreparedSpellItems(actor, bookId).filter((item) => {
     const flag = getPreparedItemFlag(item);
     const flagEntryId = normalizeId(flag?.preparedEntryId);
     if (flagEntryId) return flagEntryId === entryId;
@@ -442,7 +441,16 @@ export function findGeneratedPreparedSpellItemForEntry(actor, bookId, preparedEn
     return variant === BASE_PREPARED_VARIANT
       && normalizeId(flag?.knownSpellId) === knownSpellId
       && (normalizeId(flag?.variant) || BASE_PREPARED_VARIANT) === BASE_PREPARED_VARIANT;
-  }) ?? null;
+  });
+}
+
+export function findGeneratedPreparedSpellItemForEntry(actor, bookId, preparedEntry) {
+  return getGeneratedPreparedSpellItemsForEntry(actor, bookId, preparedEntry)[0] ?? null;
+}
+
+export function getSpentPreparationCount(item) {
+  const prep = item?.system?.preparation;
+  return Math.max(0, coerceNonNegativeInteger(prep?.max) - coerceNonNegativeInteger(prep?.value ?? prep?.max));
 }
 
 export function getGeneratedPreparedCount(item, mode) {
@@ -514,7 +522,7 @@ export async function clearSourceSpellPreparationCounts(actor, bookId) {
   return updates.length;
 }
 
-export async function syncGeneratedPreparedSpellItems(actor, bookId, knownSpells, preparedEntries, desiredById, mode) {
+export async function syncGeneratedPreparedSpellItems(actor, bookId, knownSpells, preparedEntries, desiredById, mode, domainCopies = new Map()) {
   const normalizedBookId = normalizeId(bookId);
   if (!normalizedBookId) return { created: 0, updated: 0, deleted: 0 };
   if (!isSpellbookManagementEnabled(actor, normalizedBookId)) {
@@ -556,19 +564,42 @@ export async function syncGeneratedPreparedSpellItems(actor, bookId, knownSpells
     const sourceAtWill = isAtWillSpell(sourceItem ?? knownSpell?.itemData);
     const desiredCount = coerceNonNegativeInteger(desiredById?.get?.(entryId) ?? 0);
     const count = mode === "hybrid" ? (desiredCount > 0 ? 1 : 0) : desiredCount;
-    const primaryExisting = existing[0] ?? null;
-
     if (!knownSpell || !sourceItem || sourceAtWill || count <= 0) {
       deleteIds.push(...existing.map((item) => item.id).filter(Boolean));
       continue;
     }
 
-    if (primaryExisting) {
-      updates.push(buildGeneratedPreparedItemUpdate(primaryExisting, normalizedBookId, knownSpell, preparedEntry, sourceItem, count, mode));
-      deleteIds.push(...existing.slice(1).map((item) => item.id).filter(Boolean));
-    } else {
-      creates.push(makeGeneratedPreparedItemData(normalizedBookId, knownSpell, preparedEntry, sourceItem, count, mode));
+    const domain = sourceItem.isDomain === true || sourceItem.system?.domain === true;
+    const mainCount = domain ? domainCopies.get(entryId) ?? count : count;
+    const stacks = [mainCount, count - mainCount].map((max, index) => {
+      const regularCopy = index === 1;
+      const item = existing.find(candidate => (getPreparedItemFlag(candidate)?.regularSlotCopy === true) === regularCopy);
+      return { max, regularCopy, item, spent: Math.min(max, getSpentPreparationCount(item)) };
+    });
+    const previous = existing.length ? existing : preparedEntry.variant === BASE_PREPARED_VARIANT ? [sourceItem] : [];
+    let spentToMove = mode === "prepared"
+      ? previous.reduce((sum, item) => sum + getSpentPreparationCount(item), 0) - stacks.reduce((sum, stack) => sum + stack.spent, 0)
+      : 0;
+    const kept = new Set();
+    for (const stack of stacks) {
+      if (!stack.max) continue;
+      const data = makeGeneratedPreparedItemData(normalizedBookId, knownSpell, preparedEntry, sourceItem, stack.max, mode);
+      if (stack.regularCopy) {
+        data.system.domain = false;
+        data.flags[MODULE.ID][SPELLBOOK_PREPARED_ITEM_FLAG].regularSlotCopy = true;
+      }
+      if (mode === "prepared") {
+        const transferred = Math.min(spentToMove, stack.max - stack.spent);
+        data.system.preparation.value -= stack.spent + transferred;
+        spentToMove -= transferred;
+      }
+      if (stack.item) {
+        data._id = stack.item.id;
+        kept.add(stack.item.id);
+        updates.push(data);
+      } else creates.push(data);
     }
+    deleteIds.push(...existing.filter(item => !kept.has(item.id)).map(item => item.id));
   }
 
   for (const [entryId, items] of existingByEntryId.entries()) {

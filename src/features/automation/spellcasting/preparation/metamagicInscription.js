@@ -4,7 +4,7 @@ import {
   canApplyMetamagicToSpellContext,
   getMetamagicSpellRangeUnits
 } from "../../metamagic/metamagicEligibility.js";
-import { getSpellbookLevelAvailability } from "./slotAvailability.js";
+import { canUseRegularPreparationSlots, getSpellbookLevelAvailability } from "./slotAvailability.js";
 
 export const AUTO_SUFFIX_MODE = "auto";
 export const MANUAL_SUFFIX_MODE = "manual";
@@ -317,7 +317,7 @@ function evaluatePreparedSlotChoice(actor, sourceItem, slotLevel) {
 
   const spellbook = getSpellbook(actor, sourceItem);
   const availability = getSpellbookLevelAvailability(spellbook, slotLevel, {
-    domain: isDomainSpell(sourceItem)
+    domain: isDomainSpell(sourceItem), regularEligible: canUseRegularPreparationSlots(spellbook, sourceItem)
   });
   const ok = availability.available === true;
   return {

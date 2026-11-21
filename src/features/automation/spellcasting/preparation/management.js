@@ -11,6 +11,7 @@ import {
   getPreparedSpellbook,
   getSourceItemForKnownSpell,
   isGeneratedPreparedSpellItem,
+  isRegularBasePreparation,
   makeGeneratedPreparedItemData
 } from "./preparedItems.js";
 import { getSpellbookLevelPreparationCaps } from "./slotAvailability.js";
@@ -62,7 +63,7 @@ function verifyRestoredCapacity(actor, bookId, generated, preparations, movedSou
     const flag = getGeneratedPreparedSpellItemFlag(item);
     const source = restorableSource(actor, bookId, flag);
     if (!source) continue;
-    add(source, integer(flag?.preparedSlotLevel ?? item.system?.level), preparations.get(item) ?? prep(item));
+    add(flag?.regularSlotCopy ? item : source, integer(flag?.preparedSlotLevel ?? item.system?.level), preparations.get(item) ?? prep(item));
   }
 
   for (const source of Array.from(actor.items ?? [])) {
@@ -96,6 +97,8 @@ async function saveOptions(actor, bookId, options) {
       suspended = generated.map(item => ({ itemId: item.id, ...prep(item) }));
       const restoredSources = new Set();
       for (const item of generated) {
+
+        if (isRegularBasePreparation(item)) continue;
         const flag = getGeneratedPreparedSpellItemFlag(item);
         const source = restorableSource(actor, bookId, flag);
         if ((flag?.variant || BASE_PREPARED_VARIANT) === BASE_PREPARED_VARIANT && source) {
@@ -111,6 +114,7 @@ async function saveOptions(actor, bookId, options) {
       const restorations = new Map();
       const movedSources = new Set();
       for (const item of generated) {
+        if (isRegularBasePreparation(item)) continue;
         const flag = getGeneratedPreparedSpellItemFlag(item);
         const source = restorableSource(actor, bookId, flag);
         if (!source) continue;

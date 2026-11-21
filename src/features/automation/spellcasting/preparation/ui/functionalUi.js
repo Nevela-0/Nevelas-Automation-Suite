@@ -450,9 +450,9 @@ export class PrototypeFunctionality {
     return normalized;
   }
 
-  _spellUi(spell) {
+  _spellUi(spell, validation) {
     const count = this.app.draft.get(spell.id) ?? spell.prepared ?? 0;
-    const info = getPrototypeSlotInformation(this.app.fixture, spell, { count });
+    const info = getPrototypeSlotInformation(this.app.fixture, spell, { count, domainCopies: validation?.domainCopies?.get(spell.id) });
     const disabled = this.isActor && (!this.canPrepare || this.busy || spell.missing || spell.atWill);
     let max = this.isActor && this.app.fixture.mode === "hybrid" ? 1 : null;
     if (info.slotUnavailable) max = Math.min(max ?? Infinity, Math.max(0, Number(count) || 0));
@@ -509,7 +509,7 @@ export class PrototypeFunctionality {
         ...getPrototypeSlotCounterLabels(this.app.fixture),
         ...(level ? { preparedTotal: level.normalUsed, preparedCap: level.normalCap ?? "?", overLimit: level.overLimit,
           domainUsed: level.domainUsed, domainCap: level.domainCap ?? "?", hasDomainCounter: level.domainCap > 0 || face.spells.some((spell) => spell.domain) } : {}),
-        spells: face.spells.map((spell) => ({ ...spell, ...this._spellUi(spell) }))
+        spells: face.spells.map((spell) => ({ ...spell, ...this._spellUi(spell, validation) }))
       };
     });
     return { ...data, isActor: this.isActor, isMock: !this.isActor,
@@ -624,7 +624,7 @@ export class PrototypeFunctionality {
     for (const row of root.querySelectorAll(".nas-proto-canonical .nas-proto-spell-row[data-spell-id]")) {
       const spell = this.app.fixture.spells.find((entry) => entry.id === row.dataset.spellId);
       if (!spell) continue;
-      const state = this._spellUi(spell);
+      const state = this._spellUi(spell, validation);
       for (const node of row.querySelectorAll(".nas-proto-prepared-count, [data-proto-step]")) {
         node.disabled = node.dataset.protoStep === "1" ? state.increaseDisabled : state.countDisabled;
       }

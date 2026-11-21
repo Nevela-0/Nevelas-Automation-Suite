@@ -13,6 +13,7 @@ import { openSpellbookOptions } from "./access.js";
 import {
   getGeneratedPreparedSpellItemFlag,
   isGeneratedPreparedSpellItem,
+  isRegularBasePreparation,
   isSpellbookPreparedItemsManaged
 } from "./preparedItems.js";
 import {
@@ -355,7 +356,7 @@ export function injectSpellbookPreparationActorSheetControls(app, html) {
       for (const item of getActorItems(actor)) {
         if (`${item.system?.spellbook ?? ""}` !== bookId) continue;
         for (const row of findItemSheetRows(body, item.id)) {
-          if (isGeneratedPreparedSpellItem(item)) {
+          if (isGeneratedPreparedSpellItem(item) && !isRegularBasePreparation(item)) {
             row.classList.add("nas-suspended-prepared-spell");
             row.style.display = "none";
           } else if (row.classList.contains("nas-hidden-known-spell-source")) {

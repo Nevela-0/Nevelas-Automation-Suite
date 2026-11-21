@@ -13,7 +13,7 @@ import {
   getMetamagicSummary,
   normalizeMetamagicSelections,
 } from "./metamagicInscription.js";
-import { getSpellbookLevelAvailability } from "./slotAvailability.js";
+import { allocatePreparationCopies, getSpellbookLevelAvailability } from "./slotAvailability.js";
 
 const MAX_CANDIDATES_PER_SPELL = 128;
 const MAX_RANDOM_COMBINATIONS = 16;
@@ -44,7 +44,7 @@ function candidateEntries(actor, source, base, random) {
     const increased = originalLevel + metamagic.filter((selection) => selection.key !== "heightenSpell")
       .reduce((total, selection) => total + selection.slotIncrease, 0);
     const level = calculatePreparedSlotLevel(originalLevel, metamagic);
-    if (increased > 9 || !getSpellbookLevelAvailability(book, level, { domain: base.domain }).available) return;
+    if (increased > 9 || !getSpellbookLevelAvailability(book, level, base).available) return;
     const entry = { ...empty, metamagic, preparedSlotLevel: level,
       metamagicOptions: buildMetamagicOptionsFromSelections(metamagic), suffix: buildMetamagicAutoSuffix(metamagic) };
     if (entries.size < MAX_CANDIDATES_PER_SPELL) entries.set(signature(entry, source), entry);
@@ -92,7 +92,7 @@ export function planRandomSpellbookPreparation(actor, requestedBookId, {
   const spells = (fixture.spells ?? []).filter((spell) => !(spell.randomPreparation === true && spell.id.startsWith("draft-")))
     .map((spell) => clonePlainData(spell));
   const originalOrder = new Map(spells.map((spell, index) => [spell.id, index]));
-  const counts = new Map(spells.map((spell) => [spell.id, 0]));
+  const counts = new Map(spells.map((spell) => [spell.id, spell.spent ?? 0]));
   const candidates = [];
   for (const base of spells.filter((spell) => !spell.isVariant && !spell.missing && !spell.atWill
     && !removedKnown.has(spell.knownSpellId) && !removedEntries.has(spell.id))) {
@@ -110,7 +110,7 @@ export function planRandomSpellbookPreparation(actor, requestedBookId, {
       const preparedSlotLevel = calculatePreparedSlotLevel(base.originalLevel, selections);
 
       const spell = matching && entrySignature === "[]" ? matching : { ...base, id: preparedEntry.id,
-        isVariant: true, preparedEntry, suffix: preparedEntry.suffix, level: preparedSlotLevel,
+        isVariant: true, spent: matching?.spent ?? 0, preparedEntry, suffix: preparedEntry.suffix, level: preparedSlotLevel,
         preparedSlotLevel, metamagicSelections: selections, metamagic: getMetamagicSummary(selections) };
       if (!spell || spell.missing || spell.atWill || !Number.isFinite(spell.slotCost) || spell.slotCost < 0) continue;
       candidates.push({ spell, entry: preparedEntry, existingId: matching?.id ?? null,
@@ -122,42 +122,50 @@ export function planRandomSpellbookPreparation(actor, requestedBookId, {
   const selected = new Map();
   for (const level of fixture.levels ?? []) {
     const summary = { level: level.level, normalUsed: 0, domainUsed: 0, normalRemaining: null, domainRemaining: null };
-    for (const pool of ["normal", "domain"]) {
+    const levelCandidates = candidates.filter(candidate => candidate.spell.level === level.level);
+    const rows = new Map(spells.filter(spell => spell.level === level.level && spell.spent > 0)
+      .map(spell => [spell.id, { spell, count: spell.spent, order: originalOrder.get(spell.id) }]));
+    const levelTotals = (added) => {
+      const trial = new Map(rows);
+      if (added) {
+        const id = added.existingId ?? added;
+        trial.set(id, { spell: added.spell, count: (trial.get(id)?.count ?? 0) + 1, order: added.order });
+      }
+      const ordered = [...trial.values()].sort((a, b) =>
+        Number(Boolean(a.spell.regularEligible)) - Number(Boolean(b.spell.regularEligible)) || a.order - b.order);
+      const total = { domainCap: level.domainCap, normalUsed: 0, domainUsed: 0 };
+      for (const row of ordered) allocatePreparationCopies(total, row.spell, row.count);
+      return total;
+    };
+    let totals = levelTotals();
+    for (const pool of ["domain", "normal"]) {
       const cap = level[`${pool}Cap`];
       const availability = level[`${pool}Availability`];
       if (cap === null || cap === undefined || !Number.isFinite(Number(cap))) {
         warnings.push(t("{level}: {pool} capacity is unknown; left unprepared.", {level: level.label ?? t("Level {level}", {level: level.level}), pool: t(pool)}));
         continue;
       }
-      let remaining = Math.max(0, Number(cap));
-      summary[`${pool}Remaining`] = remaining;
-      if (remaining <= 0 || availability?.unavailable === true || availability?.unknown === true) continue;
-      const poolCandidates = candidates.filter(({ spell }) => spell.level === level.level && Boolean(spell.domain) === (pool === "domain"));
-      const usedOnce = new Set();
-      const weightedSelected = new Map();
-      const usedWith = (added) => {
-        const rows = [...weightedSelected.keys()];
-        if (added && !weightedSelected.has(added)) rows.push(added);
-
-        rows.sort((a, b) => a.order === b.order ? 0 : a.order < b.order ? -1 : 1);
-        let total = 0;
-        for (const candidate of rows) total += ((weightedSelected.get(candidate) ?? 0) + (candidate === added ? 1 : 0)) * candidate.spell.slotCost;
-        return total;
-      };
+      summary[`${pool}Remaining`] = Math.max(0, cap - totals[`${pool}Used`]);
+      if (cap <= 0 || availability?.unavailable === true || availability?.unknown === true) continue;
+      const poolCandidates = levelCandidates.filter(({ spell }) => pool === "domain" ? spell.domain : !spell.domain || spell.regularEligible);
       let allocations = 0;
       while (allocations < MAX_ALLOCATIONS_PER_POOL) {
-        const fitting = poolCandidates.filter((candidate) => usedWith(candidate) <= Number(cap)
-          && (!(fixture.mode === "hybrid" || candidate.spell.slotCost === 0) || !usedOnce.has(candidate)));
+        const fitting = poolCandidates.filter(candidate => {
+          if ((fixture.mode === "hybrid" || candidate.spell.slotCost === 0) && rows.has(candidate.existingId ?? candidate)) return false;
+          const trial = levelTotals(candidate);
+          return trial.domainUsed <= level.domainCap && (level.normalCap === null || trial.normalUsed <= level.normalCap)
+            && (!candidate.spell.slotCost || trial[`${pool}Used`] > totals[`${pool}Used`]);
+        });
         if (!fitting.length) break;
         const candidate = fitting[randomIndex(random, fitting.length)];
         selected.set(candidate, (selected.get(candidate) ?? 0) + 1);
-        usedOnce.add(candidate);
-        if (candidate.spell.slotCost > 0) weightedSelected.set(candidate, selected.get(candidate));
-        remaining = Math.max(0, Number(cap) - usedWith(null));
+        const id = candidate.existingId ?? candidate;
+        rows.set(id, { spell: candidate.spell, count: (rows.get(id)?.count ?? 0) + 1, order: candidate.order });
+        totals = levelTotals();
         allocations++;
       }
-      summary[`${pool}Remaining`] = remaining;
-      summary[`${pool}Used`] = Math.max(0, Number(cap) - remaining);
+      summary[`${pool}Remaining`] = Math.max(0, cap - totals[`${pool}Used`]);
+      summary[`${pool}Used`] = totals[`${pool}Used`];
       if (allocations === MAX_ALLOCATIONS_PER_POOL) warnings.push(t("{level}: random preparation stopped at the safety limit.", {level: level.label ?? t("Level {level}", {level: level.level})}));
     }
     levels.push(summary);
@@ -178,7 +186,7 @@ export function planRandomSpellbookPreparation(actor, requestedBookId, {
       const index = spells.findIndex((spell) => spell.id === entryId);
       spells[index] = { ...candidate.spell, id: entryId, preparedEntry: { ...candidate.entry, id: entryId } };
     }
-    counts.set(entryId, count);
+    counts.set(entryId, (counts.get(entryId) ?? 0) + count);
   }
   const validation = getActorPreparationValidation({ ...fixture, spells }, counts);
   if (!validation.valid) throw new Error(validation.errors.join("\n"));

@@ -5,14 +5,15 @@ function availabilityFor(fixture, spell) {
   if (!fixture.mode) return null;
   const level = fixture.levels?.find(entry => entry.level === (spell.preparedSlotLevel ?? spell.level));
   if (!level) return { unavailable: true, reason: "missingLevelData" };
-  const availability = spell.domain ? level.domainAvailability : level.normalAvailability;
+  const special = spell.domain && (!spell.regularEligible || level.domainCap > 0);
+  const availability = special ? level.domainAvailability : level.normalAvailability;
   if (availability) return availability;
-  const cap = spell.domain ? level.domainCap : level.normalCap;
+  const cap = special ? level.domainCap : level.normalCap;
   if (cap === null || cap === undefined) return { unknown: true, reason: "unknownCapacity" };
   return Number(cap) > 0 ? { available: true } : { unavailable: true, reason: "zeroCapacity" };
 }
 
-export function getPrototypeSlotInformation(fixture, spell, { count = spell.prepared ?? 0 } = {}) {
+export function getPrototypeSlotInformation(fixture, spell, { count = spell.prepared ?? 0, domainCopies } = {}) {
   const hybrid = fixture.mode === "hybrid";
   const preparedLevel = spell.preparedSlotLevel ?? spell.level;
   const originalLevel = spell.originalSpellLevel ?? spell.originalLevel ?? preparedLevel;
@@ -21,8 +22,9 @@ export function getPrototypeSlotInformation(fixture, spell, { count = spell.prep
   const copies = quantity(count);
   const units = hybrid ? t("preparation choices") : `${spell.domain ? t("domain ") : ""}${t("slots")}`;
   const used = copies * cost;
+  const domainOnly = spell.domain && (!spell.regularEligible || domainCopies === copies);
   const usedUnits = hybrid ? (used === 1 ? t("preparation choice") : t("preparation choices"))
-    : `${spell.domain ? t("domain ") : ""}${used === 1 ? t("slot") : t("slots")}`;
+    : `${domainOnly ? t("domain ") : ""}${used === 1 ? t("slot") : t("slots")}`;
   const levelSummary = originalLevel !== preparedLevel ? t("Base {base} → Slot {slot}", {base: originalLevel, slot: preparedLevel}) : "";
   const costSummary = !spell.atWill && cost !== 1 ? t("{cost} {units} each", {cost, units: hybrid ? t("choices") : t("slots")}) : "";
   const school = `${spell.school ?? ""}`.replace(/^./u, first => first.toLocaleUpperCase());
@@ -31,7 +33,9 @@ export function getPrototypeSlotInformation(fixture, spell, { count = spell.prep
   const levelLabel = `${spell.atWill ? t("Spell level") : hybrid ? t("Prepared level") : t("Prepared slot")} ${preparedLevel}`;
   const detail = [summary, t("{level}; original spell level {original}.", {level: levelLabel, original: originalLevel}),
     spell.atWill ? t("At will; does not use preparation capacity.")
-      : t("{copies} prepared {copyVerb} {used} {units}.", {copies, copyVerb: copies === 1 ? t("copy uses") : t("copies use"), used, units: usedUnits})].filter(Boolean).join(" ");
+      : spell.regularEligible && domainCopies > 0 && domainCopies < copies
+        ? t("Domain slots: {domain}. Regular slots: {regular}.", {domain: domainCopies * cost, regular: (copies - domainCopies) * cost})
+        : t("{copies} prepared {copyVerb} {used} {units}.", {copies, copyVerb: copies === 1 ? t("copy uses") : t("copies use"), used, units: usedUnits})].filter(Boolean).join(" ");
   const availability = !spell.missing && !spell.atWill ? availabilityFor(fixture, spell) : null;
   const unavailable = availability?.unavailable === true || availability?.state === "unavailable";
   const unknown = !unavailable && (availability?.unknown === true || availability?.state === "unknown");

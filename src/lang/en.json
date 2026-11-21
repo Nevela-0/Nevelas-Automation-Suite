@@ -1778,6 +1778,8 @@
       "legacyWarning": "Both action trackers are enabled. Disable pf1-action-tracker in Manage Modules to switch to NAS."
     },
     "spellbookUI": {
+      "m66e5563d": "{name}: spent preparations cannot be replaced before resting.",
+      "mfe0f6f93": "Domain slots: {domain}. Regular slots: {regular}.",
       "md6cb2353": "Remove inscription",
       "m836d7f8f": "Preparation limit unknown",
       "m2f30a569": "Spells copied from sheet.",

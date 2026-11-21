@@ -150,10 +150,32 @@ export function getSpellbookLevelDomainAvailability(spellbook, level) {
   return unavailable(spellLevel, key, "zeroCapacity", candidates, levelData);
 }
 
-export function getSpellbookLevelAvailability(spellbook, level, { domain = false } = {}) {
-  return domain
-    ? getSpellbookLevelDomainAvailability(spellbook, level)
-    : getSpellbookLevelNormalAvailability(spellbook, level);
+export function canUseRegularPreparationSlots(spellbook, source) {
+  if (spellbook?.spellPreparationMode !== "prepared") return false;
+
+  const bookClass = spellbook.class;
+  if (bookClass === "wizard") return true;
+  return Object.entries(source?.system?.learnedAt?.class ?? {}).some(([classes, level]) =>
+    classes.split("/").includes(bookClass) && Number.isFinite(level) && level <= source.system.level);
+}
+
+export function allocatePreparationCopies(level, spell, count) {
+  let special = spell.domain ? count : 0;
+  if (spell.regularEligible && spell.slotCost > 0) {
+    const remaining = Math.max(0, level.domainCap - level.domainUsed);
+    special = Math.min(count, Math.floor(remaining / spell.slotCost));
+  }
+  level.domainUsed += special * spell.slotCost;
+  level.normalUsed += (count - special) * spell.slotCost;
+  return special;
+}
+
+export function getSpellbookLevelAvailability(spellbook, level, { domain = false, regularEligible = false } = {}) {
+  if (domain) {
+    const special = getSpellbookLevelDomainAvailability(spellbook, level);
+    if (special.available || !regularEligible) return special;
+  }
+  return getSpellbookLevelNormalAvailability(spellbook, level);
 }
 
 export function getSpellbookLevelPreparationCaps(spellbook, level) {
